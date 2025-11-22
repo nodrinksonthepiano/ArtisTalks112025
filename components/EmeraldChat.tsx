@@ -1,19 +1,27 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp } from 'lucide-react'
+import { ArrowUp, Undo2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
+import { Profile } from '@/hooks/useProfile'
 
-export default function EmeraldChat() {
+// Add prop type for the update function
+interface EmeraldChatProps {
+  onProfileUpdate?: (updates: Partial<Profile>) => void
+}
+
+export default function EmeraldChat({ onProfileUpdate }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
+  const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string}>>([])
   
   const currentStep = getStep(currentStepId)
   const supabase = createClient()
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
 
   // Initial Greeting
   useEffect(() => {
@@ -21,6 +29,47 @@ export default function EmeraldChat() {
       setHistory([{ role: 'assistant', content: currentStep.question }])
     }
   }, [])
+
+  // Live Typing Effect
+  useEffect(() => {
+    if (!onProfileUpdate) return
+    
+    // CRITICAL FIX: Don't update profile if input is empty or we're submitting
+    // This prevents empty strings from overwriting saved values when input is cleared
+    if (!input.trim() || isSubmitting) {
+      // Clear any pending debounce timer if input is empty
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
+        debounceTimer.current = null
+      }
+      return
+    }
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    
+    debounceTimer.current = setTimeout(() => {
+      // Double-check we still have a value (user might have cleared it during debounce)
+      if (!input.trim()) return
+      
+      if (currentStep.key === 'artist_name') {
+        onProfileUpdate({ artist_name: input })
+      } else if (currentStep.key === 'gift_to_world') {
+        onProfileUpdate({ mission_statement: input })
+      }
+    }, 300)
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    }
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting])
+
+  const handleUndo = () => {
+    if (previousStepId) {
+      setCurrentStepId(previousStepId)
+      setHistory(prev => prev.slice(0, -2))
+      setPreviousStepId(null)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,7 +87,7 @@ export default function EmeraldChat() {
     setInput('')
 
     try {
-      // 2. Save to Supabase
+      // 2. Save to Supabase (The Log)
       const { data: { user } } = await supabase.auth.getUser()
       
       if (user) {
@@ -47,33 +96,18 @@ export default function EmeraldChat() {
           user_id: user.id,
           question_key: currentStep.key,
           answer_data: { text: answer },
-          // CRITICAL: project_id is optional in SQL, so we omit it or send null explicitly to be safe
           project_id: null 
         })
         
         if (insertError) {
-          console.error('Error saving answer:', insertError.message, insertError.details, insertError.hint)
-          // We continue anyway so the user experience isn't broken
+          console.error('Error saving answer:', insertError.message)
         }
         
-        // Update Profile Fields
-        if (currentStep.key === 'artist_name') {
-          // Check if profile exists first (sometimes triggers happen async)
-          const { data: profile } = await supabase.from('profiles').select('id').eq('id', user.id).single()
-          
-          if (!profile) {
-            // Create profile if missing (first time save)
-            await supabase.from('profiles').insert({ 
-              id: user.id,
-              artist_name: answer,
-              email: user.email
-            })
-          } else {
-            await supabase.from('profiles').update({ artist_name: answer }).eq('id', user.id)
-          }
-        } 
-        else if (currentStep.key === 'gift_to_world') {
-          await supabase.from('profiles').update({ mission_statement: answer }).eq('id', user.id)
+        // Force a final "Hard Save" of the profile to ensure consistency
+        // This calls useProfile's updateProfile which handles the DB save for profile
+        if (onProfileUpdate) {
+           if (currentStep.key === 'artist_name') onProfileUpdate({ artist_name: answer })
+           if (currentStep.key === 'gift_to_world') onProfileUpdate({ mission_statement: answer })
         }
 
       } else {
@@ -84,13 +118,14 @@ export default function EmeraldChat() {
       const nextStepId = currentStep.nextStep
       const nextStep = getStep(nextStepId)
       
-      // Simulate "Thinking" Delay
       setTimeout(() => {
         if (nextStepId !== 'COMPLETE') {
           setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
+          setPreviousStepId(currentStepId)
           setCurrentStepId(nextStepId)
         } else {
           setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
+          setPreviousStepId(currentStepId)
           setCurrentStepId('COMPLETE')
         }
         setIsSubmitting(false)
@@ -127,7 +162,6 @@ export default function EmeraldChat() {
           </motion.div>
         ))}
         
-        {/* Typing Indicator when submitting */}
         {isSubmitting && (
           <motion.div 
             initial={{ opacity: 0 }}
@@ -146,6 +180,18 @@ export default function EmeraldChat() {
       {/* Input Area */}
       <div className="p-4 border-t border-emerald-500/20 bg-black/20">
         <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
+          {/* Undo Button */}
+          {history.length > 1 && !isSubmitting && currentStepId !== 'INIT' && (
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              title="Go Back"
+            >
+              <Undo2 size={20} />
+            </button>
+          )}
+
           <input
             type="text"
             value={input}

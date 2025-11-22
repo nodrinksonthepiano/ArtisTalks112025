@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowRight, Mail, Lock } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
@@ -11,6 +11,7 @@ export default function AuthPanel() {
   const [loading, setLoading] = useState(false)
   const [verifying, setVerifying] = useState(false) // New state for Step 2
   const [error, setError] = useState('')
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false)
 
   const supabase = createClient()
 
@@ -44,8 +45,8 @@ export default function AuthPanel() {
   }
 
   // Step 2: Verify the code
-  async function handleVerifyCode(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleVerifyCode(e?: React.FormEvent) {
+    if (e) e.preventDefault()
     if (!token) return
 
     setLoading(true)
@@ -65,8 +66,17 @@ export default function AuthPanel() {
       console.error('Verify error:', err)
       setError(err.message || 'Invalid code')
       setLoading(false) // Only stop loading on error; on success, page unmounts
+      setIsAutoSubmitting(false) // Reset lock
     }
   }
+
+  // Auto-submit effect
+  useEffect(() => {
+    if (token.length === 6 && !isAutoSubmitting && !loading) {
+      setIsAutoSubmitting(true)
+      handleVerifyCode()
+    }
+  }, [token])
 
   if (verifying) {
     return (
