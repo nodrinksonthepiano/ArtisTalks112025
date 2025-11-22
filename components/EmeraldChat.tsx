@@ -39,48 +39,65 @@ export default function EmeraldChat() {
 
     try {
       // 2. Save to Supabase
-      // We need the user's ID. For now, we'll fetch the session.
       const { data: { user } } = await supabase.auth.getUser()
       
-      // NOTE: If no user is logged in yet, this will fail or return null.
-      // For this Phase 2 test, we might need to handle "Guest" mode or just log the error.
-      
       if (user) {
-        await supabase.from('curriculum_answers').insert({
+        // Save the answer to the log
+        const { error: insertError } = await supabase.from('curriculum_answers').insert({
           user_id: user.id,
           question_key: currentStep.key,
-          answer_data: { text: answer }
+          answer_data: { text: answer },
+          // CRITICAL: project_id is optional in SQL, so we omit it or send null explicitly to be safe
+          project_id: null 
         })
         
-        // Also update profile if it's the name
-        if (currentStep.key === 'artist_name') {
-          await supabase.from('profiles').update({ artist_name: answer }).eq('id', user.id)
+        if (insertError) {
+          console.error('Error saving answer:', insertError.message, insertError.details, insertError.hint)
+          // We continue anyway so the user experience isn't broken
         }
+        
+        // Update Profile Fields
+        if (currentStep.key === 'artist_name') {
+          // Check if profile exists first (sometimes triggers happen async)
+          const { data: profile } = await supabase.from('profiles').select('id').eq('id', user.id).single()
+          
+          if (!profile) {
+            // Create profile if missing (first time save)
+            await supabase.from('profiles').insert({ 
+              id: user.id,
+              artist_name: answer,
+              email: user.email
+            })
+          } else {
+            await supabase.from('profiles').update({ artist_name: answer }).eq('id', user.id)
+          }
+        } 
+        else if (currentStep.key === 'gift_to_world') {
+          await supabase.from('profiles').update({ mission_statement: answer }).eq('id', user.id)
+        }
+
       } else {
-        console.log("No user logged in - skipping DB save for this test run.")
+        console.log("No user logged in - skipping DB save.")
       }
 
       // 3. Move to Next Step
       const nextStepId = currentStep.nextStep
       const nextStep = getStep(nextStepId)
       
-      if (nextStepId !== 'COMPLETE') {
-         // Simulate a small "thinking" delay for the Champion feel
-         setTimeout(() => {
-            setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
-            setCurrentStepId(nextStepId)
-            setIsSubmitting(false)
-         }, 600)
-      } else {
-         setTimeout(() => {
-            setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
-            setCurrentStepId('COMPLETE')
-            setIsSubmitting(false)
-         }, 600)
-      }
+      // Simulate "Thinking" Delay
+      setTimeout(() => {
+        if (nextStepId !== 'COMPLETE') {
+          setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
+          setCurrentStepId(nextStepId)
+        } else {
+          setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question }])
+          setCurrentStepId('COMPLETE')
+        }
+        setIsSubmitting(false)
+      }, 800)
 
     } catch (error) {
-      console.error("Error saving answer:", error)
+      console.error("Error in submit flow:", error)
       setIsSubmitting(false)
     }
   }
@@ -109,6 +126,21 @@ export default function EmeraldChat() {
             </div>
           </motion.div>
         ))}
+        
+        {/* Typing Indicator when submitting */}
+        {isSubmitting && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex justify-start"
+          >
+            <div className="bg-zinc-800/50 text-zinc-400 rounded-2xl rounded-tl-none px-5 py-3 text-sm flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}/>
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}/>
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}/>
+            </div>
+          </motion.div>
+        )}
       </div>
 
       {/* Input Area */}
@@ -120,7 +152,7 @@ export default function EmeraldChat() {
             onChange={(e) => setInput(e.target.value)}
             placeholder={currentStep.placeholder || "Type your answer..."}
             disabled={currentStepId === 'COMPLETE' || isSubmitting}
-            className="w-full bg-zinc-900/50 text-white placeholder-zinc-500 rounded-xl px-4 py-4 pr-12 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 border border-zinc-800 transition-all"
+            className="w-full bg-zinc-900/50 text-white placeholder-zinc-500 rounded-xl px-4 py-4 pr-12 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 border border-zinc-800 transition-all disabled:opacity-50"
             autoFocus
           />
           <button
@@ -135,4 +167,3 @@ export default function EmeraldChat() {
     </motion.div>
   )
 }
-

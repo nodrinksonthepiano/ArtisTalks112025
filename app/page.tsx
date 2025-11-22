@@ -1,6 +1,45 @@
+'use client'
+
+import { useEffect, useState } from 'react'
 import EmeraldChat from "@/components/EmeraldChat";
+import AuthPanel from "@/components/AuthPanel";
+import DataReset from "@/components/DataReset";
+import { createClient } from "@/utils/supabase/client";
 
 export default function Home() {
+  const [user, setUser] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const supabase = createClient()
+
+    // 1. Check active session on load
+    async function checkUser() {
+      const { data: { session } } = await supabase.auth.getSession()
+      setUser(session?.user ?? null)
+      setLoading(false)
+    }
+
+    checkUser()
+
+    // 2. Listen for changes (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setLoading(false)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  if (loading) {
+    // Simple loading spinner while checking auth
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-emerald-500">
+        <div className="animate-pulse">Loading Sanctuary...</div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 text-zinc-50 selection:bg-emerald-500/30">
       <main className="flex flex-col items-center gap-8 w-full px-4">
@@ -11,7 +50,14 @@ export default function Home() {
           <p className="text-zinc-400 text-lg">The Champion is ready for you.</p>
         </div>
         
-        <EmeraldChat />
+        {user ? (
+          <>
+            <DataReset />
+            <EmeraldChat />
+          </>
+        ) : (
+          <AuthPanel />
+        )}
       </main>
     </div>
   );
