@@ -137,14 +137,12 @@ export default function AuthPanel() {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-md mx-auto bg-black/40 backdrop-blur-md border border-emerald-500/30 rounded-2xl p-8 shadow-2xl shadow-emerald-900/20"
+      className="w-full max-w-md mx-auto"
     >
-      <div className="text-center mb-8">
-        <h2 className="text-2xl font-bold text-white mb-2">Identify Yourself</h2>
-        <p className="text-zinc-400 text-sm">Enter your email to access your legacy.</p>
-      </div>
+      <h3 className="access-headline">Welcome, Artist...</h3>
+      <p className="text-zinc-400 text-sm text-center mb-6">Enter your email to access your legacy.</p>
 
-      <form onSubmit={handleSendCode} className="space-y-4">
+      <form onSubmit={handleSendCode} className="email-login-container">
         <div className="relative">
           <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 w-5 h-5" />
           <input
@@ -152,7 +150,8 @@ export default function AuthPanel() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="artist@example.com"
-            className="w-full bg-zinc-900/50 text-white placeholder-zinc-600 rounded-xl pl-10 pr-4 py-3 border border-zinc-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+            className="email-input"
+            style={{ paddingLeft: '2.75rem', paddingRight: '1rem' }}
             required
           />
         </div>
@@ -170,10 +169,10 @@ export default function AuthPanel() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl py-3 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed group"
+          className="login-btn email"
         >
           {loading ? 'Sending...' : 'Send Code'}
-          {!loading && <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />}
+          {!loading && <ArrowRight className="w-4 h-4" />}
         </button>
       </form>
     </motion.div>

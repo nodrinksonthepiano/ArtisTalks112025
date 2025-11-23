@@ -6,6 +6,12 @@ export interface Profile {
   artist_name: string | null
   mission_statement: string | null
   email: string | null
+  logo_url?: string | null
+  primary_color?: string | null
+  accent_color?: string | null
+  font_family?: string | null
+  logo_use_background?: boolean | null
+  brand_color?: string | null
 }
 
 export function useProfile() {
