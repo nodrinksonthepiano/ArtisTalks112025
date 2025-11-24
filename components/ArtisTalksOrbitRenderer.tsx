@@ -51,10 +51,9 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
 
   useEffect(() => {
     const featuredElement = featuredContentRef.current;
-    const chatElement = chatRef.current;
     
-    // If no refs available, don't animate
-    if (!featuredElement && !chatElement) {
+    // If FeaturedContent not ready, don't animate (matches Zeyoda pattern)
+    if (!featuredElement) {
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = null;
@@ -69,44 +68,32 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
     }));
 
     // one-off position write to avoid starting at center before RAF begins
-    // COPIED FROM ZEYODA ThemeOrbitRenderer.tsx lines 108-140
+    // EXACT COPY FROM ZEYODA ThemeOrbitRenderer.tsx lines 119-140
     const positionOnce = () => {
       let contentWidth, contentHeight, rect;
       
-      // Priority 1: Measure FeaturedContent directly (always use it if it exists, even if empty)
+      // Priority 1: Measure FeaturedContent directly (like Zeyoda's videoElement)
       if (featuredElement) {
-        rect = featuredElement.getBoundingClientRect();
-        contentWidth = rect.width || featuredElement.offsetWidth;
-        contentHeight = rect.height || featuredElement.offsetHeight;
+        contentWidth = featuredElement.offsetWidth;  // ← offsetWidth FIRST (Zeyoda line 120)
+        contentHeight = featuredElement.offsetHeight;  // ← offsetHeight FIRST (Zeyoda line 121)
+        rect = featuredElement.getBoundingClientRect();  // ← getBoundingClientRect AFTER (Zeyoda line 122)
         
-        // Always use FeaturedContent center if element exists (even if small/empty)
-        if (rect && rect.width > 0 && rect.height > 0) {
-          centerRef.current = { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };
-          // Ensure minimum dimensions for orbit calculation
-          if (contentWidth < 200) contentWidth = 200;
-          if (contentHeight < 150) contentHeight = 150;
+        const isContentReady = contentWidth > 50 && contentHeight > 50 && rect && rect.width > 50;  // ← > 50 check (Zeyoda line 124)
+        
+        if (!isContentReady) {
+          // Fallback to viewport-based dimensions (Zeyoda lines 127-130)
+          contentWidth = Math.min(window.innerWidth * 0.7, 700);
+          contentHeight = contentWidth * (9 / 16);
+          centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };  // ← VIEWPORT center (Zeyoda line 130)
         } else {
-          // Fallback to chat if FeaturedContent not ready
-          if (chatElement) {
-            const chatRect = chatElement.getBoundingClientRect();
-            centerRef.current = { cx: chatRect.left + chatRect.width / 2, cy: chatRect.top + chatRect.height / 2 };
-          } else {
-            centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };
-          }
+          centerRef.current = { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };  // ← FeaturedContent center (Zeyoda line 132)
         }
       }
-      // Priority 2: Fallback to chat center
-      else if (chatElement) {
-        const chatRect = chatElement.getBoundingClientRect();
-        centerRef.current = { cx: chatRect.left + chatRect.width / 2, cy: chatRect.top + chatRect.height / 2 };
-        contentWidth = Math.min(window.innerWidth * 0.7, 700);
-        contentHeight = contentWidth * (9 / 16);
-      }
-      // Priority 3: Viewport fallback when nothing else available
+      // Priority 2: Viewport fallback when nothing else available (Zeyoda lines 136-140)
       else {
         contentWidth = Math.min(window.innerWidth * 0.7, 700);
         contentHeight = contentWidth * (9 / 16);
-        centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };
+        centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };  // ← VIEWPORT center (Zeyoda line 139)
       }
 
       const radiusX = (contentWidth / 2) + 60;
@@ -169,6 +156,16 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
 
     // Seed initial positions immediately, then start RAF
     positionOnce();
+    
+    // TEMPORARY DIAGNOSTIC LOG
+    console.log('[ORBIT] Tokens rendering:', {
+      tokenCount: phaseTokens.length,
+      featuredElementExists: !!featuredElement,
+      featuredElementWidth: featuredElement?.offsetWidth,
+      featuredElementHeight: featuredElement?.offsetHeight,
+      center: centerRef.current
+    });
+    
     animationFrameIdRef.current = requestAnimationFrame(animate);
 
     // Interaction handlers - COPIED FROM ZEYODA ThemeOrbitRenderer.tsx lines 226-343
@@ -284,6 +281,9 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
       }
     };
   }, [featuredContentRef, chatRef, isOrbitAnimationPaused, phaseTokens, brandColor]);
+
+  // Early return if FeaturedContent not ready (matches Zeyoda line 379: if (!artistConfig) return null;)
+  if (!featuredContentRef.current) return null;
 
   // Default colors for each phase
   const defaultColors: Record<string, string> = {

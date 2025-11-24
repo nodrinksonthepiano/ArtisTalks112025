@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import EmeraldChat from "@/components/EmeraldChat";
 import AuthPanel from "@/components/AuthPanel";
 import DataReset from "@/components/DataReset";
@@ -9,6 +9,7 @@ import ArtisTalksOrbitRenderer from "@/components/ArtisTalksOrbitRenderer";
 import LogoPanel from "@/components/LogoPanel";
 import ColorPanel from "@/components/ColorPanel";
 import FontPanel from "@/components/FontPanel";
+import OvalGlowBackdrop from "@/components/OvalGlowBackdrop";
 import { createClient } from "@/utils/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
 import { useCurriculumProgress } from "@/hooks/useCurriculumProgress";
@@ -19,7 +20,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   
   // Lifted State: Profile Data
-  const { profile, updateProfile } = useProfile()
+  const { profile, updateProfile, loading: profileLoading } = useProfile()
   
   // Curriculum Progress (single source of truth)
   const progress = useCurriculumProgress(user?.id ?? null)
@@ -30,7 +31,15 @@ export default function Home() {
   // Panel state (like Zeyoda's appMode)
   const [activePanel, setActivePanel] = useState<'logo' | 'colors' | 'font' | 'asset' | null>(null)
   
-  // Temporary preview state for live background updates
+  // Temporary preview state for live background updates (unified for logo + colors)
+  const [previewOverrides, setPreviewOverrides] = useState<{
+    primary_color?: string
+    accent_color?: string
+    logo_url?: string
+    logo_use_background?: boolean
+  } | null>(null)
+  
+  // Legacy logo preview state (keep for backward compatibility with LogoPanel)
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null)
   const [logoPreviewUseBackground, setLogoPreviewUseBackground] = useState(false)
   
@@ -60,15 +69,35 @@ export default function Home() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Compute merged profile from profile + preview overrides (Zeyoda pattern)
+  const mergedProfile = useMemo(() => {
+    if (!previewOverrides) return profile
+    return { ...profile, ...previewOverrides } as Profile | null
+  }, [profile, previewOverrides])
+
+  // Get current primary color for halo (Zeyoda pattern: livePrimaryColor || config || default)
+  // In Zeyoda: currentPrimaryColor = livePrimaryColor || artistConfig?.theme?.primaryColor || '#0a1a3b'
+  const currentPrimaryColor = mergedProfile?.primary_color || mergedProfile?.brand_color || profile?.primary_color || profile?.brand_color || '#0a0a0a'
+
   // Apply logo background when profile or preview changes (Zeyoda pattern)
+  // Zeyoda calls applyArtistBackground(artistConfig) directly - no loading guards
   useEffect(() => {
-    // If preview values exist, use them (live updates)
-    // If preview is null/undefined, use profile values (persisted state)
-    // Pass undefined (not null) to use profile values when preview is cleared
-    const previewUrl = logoPreviewUrl !== null ? logoPreviewUrl : undefined
-    const previewUseBg = logoPreviewUrl !== null ? logoPreviewUseBackground : undefined
-    applyLogoBackground(profile, previewUrl, previewUseBg)
-  }, [profile, logoPreviewUrl, logoPreviewUseBackground])
+    // TEMPORARY DIAGNOSTIC LOG - Step 1A
+    console.log('[BG EFFECT] Firing', {
+      primary_color: mergedProfile?.primary_color,
+      accent_color: mergedProfile?.accent_color,
+      logo_use_background: mergedProfile?.logo_use_background,
+      logo_url: mergedProfile?.logo_url,
+      brand_color: mergedProfile?.brand_color,
+      previewOverrides: previewOverrides,
+      mergedProfileExists: !!mergedProfile
+    });
+    
+    // Use mergedProfile which includes preview overrides
+    const previewUrl = previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
+    const previewUseBg = previewOverrides?.logo_use_background !== undefined ? previewOverrides.logo_use_background : undefined
+    applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
+  }, [mergedProfile, previewOverrides])
 
   if (loading) {
     // Simple loading spinner while checking auth
@@ -82,7 +111,6 @@ export default function Home() {
   return (
     <div 
       className="flex min-h-screen flex-col items-center justify-between pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
-      style={{ backgroundColor: 'transparent' }}
     >
       {user && <DataReset />}
       <main className={`app-main ${!user ? 'login-view' : ''}`}>
@@ -92,8 +120,8 @@ export default function Home() {
               <h1 
                 className="text-4xl md:text-5xl font-bold tracking-wider mt-1 md:mt-2 mb-3 md:mb-3 cursor-pointer hover:opacity-80 transition-opacity" 
                 style={{ 
-                  fontFamily: profile?.font_family || 'Geist Sans, sans-serif', 
-                  color: profile?.accent_color || profile?.brand_color || '#10b981',
+                  fontFamily: mergedProfile?.font_family || 'Geist Sans, sans-serif', 
+                  color: mergedProfile?.accent_color || mergedProfile?.brand_color || '#10b981',
                   position: 'relative',
                   zIndex: 100,
                   pointerEvents: 'none',
@@ -105,8 +133,44 @@ export default function Home() {
                 {profile?.artist_name || "ArtisTalks"}
               </h1>
               
+              {/* Edit Branding Buttons - Manual Panel Triggers (Zeyoda pattern: buttons that set appMode/activePanel) */}
+              {user && profile && (
+                <div className="flex items-center justify-center gap-2 mb-4">
+                  <button
+                    onClick={() => setActivePanel('logo')}
+                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
+                    title="Edit logo"
+                  >
+                    🎨 Logo
+                  </button>
+                  <button
+                    onClick={() => setActivePanel('colors')}
+                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
+                    title="Edit colors"
+                  >
+                    🎨 Colors
+                  </button>
+                  <button
+                    onClick={() => setActivePanel('font')}
+                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
+                    title="Edit font"
+                  >
+                    ✏️ Font
+                  </button>
+                </div>
+              )}
+              
               {/* Band A: Stage (FeaturedContent + Orbiting Tokens) */}
               <div className="relative w-full max-w-5xl mx-auto mt-6 md:mt-14 mb-12 md:mb-16">
+              {/* Halo effect around FeaturedContent - uses primary color, updates live */}
+              {/* Halo effect - Zeyoda pattern: zIndex={1} for normal mode, before carousel */}
+              <OvalGlowBackdrop
+                containerRef={featuredContentRef}
+                primaryColor={currentPrimaryColor}
+                intensity={0.95}
+                zIndex={1}
+              />
+              
               {/* FeaturedContent card - THIS is the orbit center */}
               <FeaturedContent 
                 ref={featuredContentRef}
@@ -128,7 +192,7 @@ export default function Home() {
                 ]}
                 brandColor={profile?.brand_color}
               />
-            </div>
+              </div>
             </>
           ) : null}
         </div>
@@ -142,7 +206,7 @@ export default function Home() {
           )}
         </div>
         
-        {/* Panels - OUTSIDE text-center, AFTER action-section, matches Zeyoda pattern */}
+        {/* Panels - Appear above chat, matches Zeyoda pattern (OnboardingPanel positioning) */}
         {activePanel === 'logo' && (
           <div className="onboarding-panel bg-gray-800 bg-opacity-90 rounded-lg p-6 mt-8 max-w-2xl mx-auto backdrop-blur-sm border border-gray-600" style={{
             background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(51, 65, 85, 0.95) 100%)',
@@ -156,6 +220,12 @@ export default function Home() {
                 // Clear preview state so useEffect will use profile values
                 setLogoPreviewUrl(null)
                 setLogoPreviewUseBackground(false)
+                setPreviewOverrides(prev => {
+                  const updated = { ...prev }
+                  delete updated.logo_url
+                  delete updated.logo_use_background
+                  return Object.keys(updated).length > 0 ? updated : null
+                })
                 // Apply background immediately using the updated profile values
                 // This ensures persistence even if profile refresh is delayed
                 const updatedProfile = { ...profile, ...updates }
@@ -164,10 +234,22 @@ export default function Home() {
               onPreviewChange={(previewUrl, useBackground) => {
                 setLogoPreviewUrl(previewUrl)
                 setLogoPreviewUseBackground(useBackground)
+                // Also update unified previewOverrides
+                setPreviewOverrides(prev => ({
+                  ...prev,
+                  logo_url: previewUrl || undefined,
+                  logo_use_background: useBackground
+                }))
               }}
               onClose={() => {
                 setLogoPreviewUrl(null)
                 setLogoPreviewUseBackground(false)
+                setPreviewOverrides(prev => {
+                  const updated = { ...prev }
+                  delete updated.logo_url
+                  delete updated.logo_use_background
+                  return Object.keys(updated).length > 0 ? updated : null
+                })
                 setActivePanel(null)
               }}
             />
@@ -183,12 +265,31 @@ export default function Home() {
               profile={profile}
               onSave={(updates) => {
                 updateProfile(updates)
+                // Clear preview overrides on save
+                setPreviewOverrides(prev => {
+                  const updated = { ...prev }
+                  delete updated.primary_color
+                  delete updated.accent_color
+                  return Object.keys(updated).length > 0 ? updated : null
+                })
                 window.dispatchEvent(new CustomEvent('panelComplete', { 
                   detail: { stepId: 'COLORS_PANEL' } 
                 }))
                 setActivePanel(null)
               }}
-              onClose={() => setActivePanel(null)}
+              onPreviewChange={(preview) => {
+                setPreviewOverrides(prev => ({ ...prev, ...preview }))
+              }}
+              onClose={() => {
+                // Clear color preview overrides on close
+                setPreviewOverrides(prev => {
+                  const updated = { ...prev }
+                  delete updated.primary_color
+                  delete updated.accent_color
+                  return Object.keys(updated).length > 0 ? updated : null
+                })
+                setActivePanel(null)
+              }}
             />
           </div>
         )}
@@ -212,18 +313,20 @@ export default function Home() {
           </div>
         )}
         
-        {/* Chat input container - matches Zeyoda's unified-input-container pattern */}
-        {user && (
-          <div className={`unified-input-container mock-ui-section p-4 border-t-2 border-gray-700 mt-8`}>
-            <h3 className="text-xl font-semibold mb-3 text-center">Chat / Command</h3>
-            <div ref={chatRef} className="w-full">
-              <EmeraldChat 
-                onProfileUpdate={updateProfile}
-                onTriggerPanel={setActivePanel}
-              />
-            </div>
-          </div>
-        )}
+        {/* Chat input container - ALWAYS at bottom, matches Zeyoda pattern (line 2458) */}
+        <div className={`unified-input-container mock-ui-section p-4 border-t-2 border-gray-700 mt-8`} style={{ marginTop: 'auto' }}>
+          {user && (
+            <>
+              <h3 className="text-xl font-semibold mb-3 text-center">Chat / Command</h3>
+              <div ref={chatRef} className="w-full">
+                <EmeraldChat 
+                  onProfileUpdate={updateProfile}
+                  onTriggerPanel={setActivePanel}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </main>
     </div>
   );

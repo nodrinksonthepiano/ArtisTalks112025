@@ -14,23 +14,18 @@ export function applyLogoBackground(
   previewUrl?: string | null,
   previewUseBackground?: boolean
 ) {
+  // Zeyoda pattern: Early return if no config, don't reset background
+  // Zeyoda's applyArtistBackground just returns silently if !config
+  if (!profile && previewUrl === undefined) {
+    return; // Silent return, no warning, no reset - matches Zeyoda exactly
+  }
+
   // Use preview values if provided, otherwise use saved profile values
   // null = explicitly cleared, undefined = use profile
   const logoUrl = previewUrl !== undefined ? previewUrl : (profile?.logo_url || null);
   const useBackground = previewUseBackground !== undefined 
     ? previewUseBackground 
     : (profile?.logo_use_background || false);
-
-  if (!profile && !logoUrl) {
-    console.warn('[applyLogoBackground] No profile provided');
-    // Reset to default
-    const defaultBg = '#0a0a0a'; // zinc-950
-    if (typeof document !== 'undefined') {
-      document.body.style.setProperty("background-image", "none", "important");
-      document.body.style.setProperty("background", defaultBg, "important");
-    }
-    return;
-  }
 
   // Build theme object from profile (mirror Zeyoda's theme structure)
   // Zeyoda lines 18-28: Use fallback theme if missing
@@ -94,12 +89,6 @@ export function applyLogoBackground(
     document.body.style.setProperty("background-color", primary, "important");
     document.body.style.setProperty("background", primary, "important");
     
-    // Also apply to html element to ensure full coverage
-    if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty("background-color", primary, "important");
-      document.documentElement.style.setProperty("background", primary, "important");
-    }
-    
     // Zeyoda lines 98-115: Preload image and apply once loaded
     const img = new Image();
     img.onload = () => {
@@ -111,16 +100,6 @@ export function applyLogoBackground(
       document.body.style.setProperty("background-repeat", "no-repeat", "important");
       document.body.style.setProperty("background-color", primary, "important");
       document.body.style.setProperty("background", bgStyle, "important");
-      
-      // Also apply to html element
-      if (typeof document !== 'undefined') {
-        document.documentElement.style.setProperty("background-image", `url(${cacheBustedLogoUrl})`, "important");
-        document.documentElement.style.setProperty("background-size", "cover", "important");
-        document.documentElement.style.setProperty("background-position", "center", "important");
-        document.documentElement.style.setProperty("background-repeat", "no-repeat", "important");
-        document.documentElement.style.setProperty("background-color", primary, "important");
-        document.documentElement.style.setProperty("background", bgStyle, "important");
-      }
       
       console.log('[applyLogoBackground] ✅ Logo image loaded and applied', { url: cacheBustedLogoUrl });
     };
@@ -151,13 +130,6 @@ export function applyLogoBackground(
   document.body.style.setProperty("background-image", "none", "important");
   document.body.style.setProperty("background", primary, "important");
   document.body.style.removeProperty("background-color");
-  
-  // Also apply to html element
-  if (typeof document !== 'undefined') {
-    document.documentElement.style.setProperty("background-image", "none", "important");
-    document.documentElement.style.setProperty("background", primary, "important");
-    document.documentElement.style.removeProperty("background-color");
-  }
   
   document.documentElement.style.setProperty("--background", primary);
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUp, Undo2, Pencil } from 'lucide-react'
+import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
@@ -19,6 +19,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
   const [input, setInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([])
+  
+  // Redo stack: track undone states so user can redo
+  const [redoStack, setRedoStack] = useState<Array<{
+    stepId: StepId
+    previousStepId: StepId | null
+    history: Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>
+  }>>([])
   
   const currentStep = getStep(currentStepId)
   const supabase = createClient()
@@ -111,13 +118,62 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
 
   const handleUndo = () => {
     if (previousStepId) {
+      // Save current state to redo stack
+      setRedoStack(prev => [...prev, {
+        stepId: currentStepId,
+        previousStepId: previousStepId,
+        history: [...history]
+      }])
+      
+      // Go back to previous step
       setCurrentStepId(previousStepId)
       setHistory(prev => prev.slice(0, -2))
-      setPreviousStepId(null)
+      
+      // Find the step before the previous one
+      const allSteps = Object.values(CURRICULUM)
+      const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
+      setPreviousStepId(prevPrevStep?.id || null)
+    }
+  }
+
+  const handleRedo = () => {
+    if (redoStack.length > 0) {
+      const lastUndone = redoStack[redoStack.length - 1]
+      
+      // Restore the undone state
+      setCurrentStepId(lastUndone.stepId)
+      setPreviousStepId(lastUndone.previousStepId)
+      setHistory(lastUndone.history)
+      
+      // Remove from redo stack
+      setRedoStack(prev => prev.slice(0, -1))
+    }
+  }
+
+  const handleBack = () => {
+    // Go back to edit the last answer (same as clicking edit pencil on last user message)
+    if (history.length > 1) {
+      // Find last user message by iterating backwards
+      let lastUserMessageIndex = -1
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].role === 'user') {
+          lastUserMessageIndex = i
+          break
+        }
+      }
+      if (lastUserMessageIndex !== -1) {
+        const lastUserMessage = history[lastUserMessageIndex]
+        if (lastUserMessage.stepId) {
+          handleEditStep(lastUserMessage.stepId)
+        }
+      }
     }
   }
 
   const handleEditStep = (stepId: StepId) => {
+    // Clear redo stack when editing (editing is a new action)
+    setRedoStack([])
+    
     // Find the user's answer for this step
     const userAnswerIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'user')
     const assistantQuestionIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'assistant')
@@ -193,6 +249,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
       } else {
         console.log("No user logged in - skipping DB save.")
       }
+
+      // Clear redo stack when user makes a new action (can't redo after new action)
+      setRedoStack([])
 
       // 3. Move to Next Step
       const nextStepId = currentStep.nextStep
@@ -296,17 +355,44 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
       {/* Input Area */}
       <div className="p-4 border-t border-emerald-500/20 bg-black/20">
         <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
-          {/* Undo Button */}
-          {history.length > 1 && !isSubmitting && currentStepId !== 'INIT' && (
-            <button
-              type="button"
-              onClick={handleUndo}
-              className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
-              title="Go Back"
-            >
-              <Undo2 size={20} />
-            </button>
-          )}
+          {/* Navigation Buttons - Always visible when applicable */}
+          <div className="flex items-center gap-1">
+            {/* Back Button - Edit last answer */}
+            {history.length > 1 && !isSubmitting && (
+              <button
+                type="button"
+                onClick={handleBack}
+                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+                title="Edit last answer"
+              >
+                <ChevronLeft size={20} />
+              </button>
+            )}
+            
+            {/* Undo Button - Undo last step */}
+            {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+              <button
+                type="button"
+                onClick={handleUndo}
+                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+                title="Undo last step"
+              >
+                <Undo2 size={20} />
+              </button>
+            )}
+            
+            {/* Redo Button - Redo undone step */}
+            {redoStack.length > 0 && !isSubmitting && (
+              <button
+                type="button"
+                onClick={handleRedo}
+                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+                title="Redo"
+              >
+                <Redo2 size={20} />
+              </button>
+            )}
+          </div>
 
           <input
             ref={inputRef}

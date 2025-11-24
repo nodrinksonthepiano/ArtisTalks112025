@@ -44,10 +44,12 @@ const FeaturedContent = forwardRef<HTMLDivElement, FeaturedContentProps>(({
   return (
     <div 
       ref={ref}
-      className="w-full max-w-4xl mx-auto bg-black/40 backdrop-blur-md border rounded-2xl p-8 shadow-2xl transition-all duration-500"
+      className="w-full max-w-4xl mx-auto bg-black/40 backdrop-blur-md border rounded-2xl p-8 shadow-2xl transition-all duration-500 relative"
       style={{
         borderColor: hexToRgba(accentColor, 0.3),
-        boxShadow: `0 25px 50px -12px ${hexToRgba(accentColor, 0.2)}`
+        boxShadow: `0 25px 50px -12px ${hexToRgba(accentColor, 0.2)}`,
+        zIndex: 10,
+        position: 'relative'
       }}
     >
       {/* Current Module Tile */}

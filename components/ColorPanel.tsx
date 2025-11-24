@@ -7,6 +7,7 @@ interface ColorPanelProps {
   profile: Profile | null
   onSave: (updates: Partial<Profile>) => void
   onClose: () => void
+  onPreviewChange?: (preview: { primary_color?: string; accent_color?: string }) => void
 }
 
 // COPIED FROM ZEYODA ProfileEditPanel.tsx lines 12-21
@@ -21,7 +22,7 @@ const COLOR_PRESETS = {
   white: { name: "White", primary: "#F8F8FF", accent: "#4A4A4A" }
 };
 
-export default function ColorPanel({ profile, onSave, onClose }: ColorPanelProps) {
+export default function ColorPanel({ profile, onSave, onClose, onPreviewChange }: ColorPanelProps) {
   const [primaryColor, setPrimaryColor] = useState(profile?.primary_color || '#10b981')
   const [accentColor, setAccentColor] = useState(profile?.accent_color || '#fbbf24')
 
@@ -29,6 +30,7 @@ export default function ColorPanel({ profile, onSave, onClose }: ColorPanelProps
     const preset = COLOR_PRESETS[presetKey as keyof typeof COLOR_PRESETS]
     if (preset) {
       setPrimaryColor(preset.primary)
+      onPreviewChange?.({ primary_color: preset.primary, accent_color: accentColor })
     }
   }
 
@@ -36,6 +38,7 @@ export default function ColorPanel({ profile, onSave, onClose }: ColorPanelProps
     const preset = COLOR_PRESETS[presetKey as keyof typeof COLOR_PRESETS]
     if (preset) {
       setAccentColor(preset.accent)
+      onPreviewChange?.({ primary_color: primaryColor, accent_color: preset.accent })
     }
   }
 
@@ -95,13 +98,21 @@ export default function ColorPanel({ profile, onSave, onClose }: ColorPanelProps
           <input
             type="color"
             value={primaryColor}
-            onChange={(e) => setPrimaryColor(e.target.value)}
+            onChange={(e) => {
+              const newColor = e.target.value
+              setPrimaryColor(newColor)
+              onPreviewChange?.({ primary_color: newColor, accent_color: accentColor })
+            }}
             className="w-10 h-10 rounded border border-gray-600"
           />
           <input
             type="text"
             value={primaryColor}
-            onChange={(e) => setPrimaryColor(e.target.value)}
+            onChange={(e) => {
+              const newColor = e.target.value
+              setPrimaryColor(newColor)
+              onPreviewChange?.({ primary_color: newColor, accent_color: accentColor })
+            }}
             className="flex-1 p-2 bg-gray-700 text-white rounded border border-gray-600 text-sm"
             placeholder="#RRGGBB"
           />
@@ -137,13 +148,21 @@ export default function ColorPanel({ profile, onSave, onClose }: ColorPanelProps
           <input
             type="color"
             value={accentColor}
-            onChange={(e) => setAccentColor(e.target.value)}
+            onChange={(e) => {
+              const newColor = e.target.value
+              setAccentColor(newColor)
+              onPreviewChange?.({ primary_color: primaryColor, accent_color: newColor })
+            }}
             className="w-10 h-10 rounded border border-gray-600"
           />
           <input
             type="text"
             value={accentColor}
-            onChange={(e) => setAccentColor(e.target.value)}
+            onChange={(e) => {
+              const newColor = e.target.value
+              setAccentColor(newColor)
+              onPreviewChange?.({ primary_color: primaryColor, accent_color: newColor })
+            }}
             className="flex-1 p-2 bg-gray-700 text-white rounded border border-gray-600 text-sm"
             placeholder="#RRGGBB"
           />

@@ -136,7 +136,7 @@ export default function AuthPanel() {
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+      animate={{ opacity: 1, y: 0 }} 
       className="w-full max-w-md mx-auto"
     >
       <h3 className="access-headline">Welcome, Artist...</h3>
