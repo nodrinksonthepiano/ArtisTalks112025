@@ -123,32 +123,41 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }, [supabase])
   
-  // Initialize chat on mount - start from INIT if no answers exist
+  // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
     // Only run once on initial mount (when history is empty)
     if (history.length > 0) return
     
-    // Wait for answeredKeys to be loaded (size will be 0 initially, then update)
-    // If no answers exist after loading, start from INIT
-    if (answeredKeys.size === 0) {
-      const initStep = getStep('INIT')
-      setCurrentStepId('INIT')
-      const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
-      setHistory([initMessage])
-      setFullHistory([initMessage]) // Add to full history too
-      return
-    }
+    // CRITICAL: Set INIT immediately to ensure card appears right away
+    // Don't wait for answeredKeys - it loads asynchronously and causes race conditions
+    const initStep = getStep('INIT')
+    setCurrentStepId('INIT')
+    const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
+    setHistory([initMessage])
+    setFullHistory([initMessage]) // Add to full history too
+  }, []) // Only run once on mount - don't wait for answeredKeys
+  
+  // Update to first unanswered step once answeredKeys loads (if answers exist)
+  useEffect(() => {
+    // Skip if history is empty (initialization effect hasn't run yet)
+    if (history.length === 0) return
     
-    // If answers exist, find first unanswered step
-    const firstUnanswered = findFirstUnansweredStep('INIT')
-    const step = getStep(firstUnanswered)
-    setCurrentStepId(firstUnanswered)
-    if (step.id !== 'COMPLETE') {
-      const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
-      setHistory([stepMessage])
-      setFullHistory([stepMessage]) // Add to full history too
+    // Skip if already on INIT and no answers exist
+    if (currentStepId === 'INIT' && answeredKeys.size === 0) return
+    
+    // Only update if we have answers and need to find first unanswered
+    if (answeredKeys.size > 0) {
+      const firstUnanswered = findFirstUnansweredStep('INIT')
+      // Only update if different from current step
+      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE') {
+        const step = getStep(firstUnanswered)
+        setCurrentStepId(firstUnanswered)
+        const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
+        setHistory([stepMessage])
+        setFullHistory([stepMessage]) // Add to full history too
+      }
     }
-  }, [answeredKeys.size, findFirstUnansweredStep]) // Depend on size and the function
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length]) // Update when answeredKeys loads
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -376,10 +385,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
     // 1. Update UI immediately (Optimistic)
     const userMessage = { role: 'user' as const, content: answer, stepId: currentStepId }
-    const assistantMessage = history[history.length - 1] // Current question
     
-    // Add to full history (for history button)
-    setFullHistory(prev => [...prev, assistantMessage, userMessage])
+    // Add only user's answer to full history - question is already there from when it was shown
+    setFullHistory(prev => [...prev, userMessage])
     
     // Clear chat history - only keep current question (will be replaced with next question)
     setHistory([])
@@ -496,29 +504,89 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </h1>
         )}
         
+        {/* History Window - Inline scrollable container */}
+        {showHistory && fullHistory.length > 0 && (
+          <div className="relative mb-4 rounded-lg border border-emerald-500/30 bg-black/40 backdrop-blur-sm" style={{ maxHeight: '400px' }}>
+            {/* Floating Close Button - Fixed at top right */}
+            <button
+              onClick={() => setShowHistory(false)}
+              className="absolute top-2 right-2 z-20 p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors bg-black/70 backdrop-blur-sm"
+              style={{
+                width: '32px',
+                height: '32px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Close history"
+              aria-label="Close history"
+            >
+              <span className="text-xl font-bold leading-none">×</span>
+            </button>
+            
+            {/* Scrollable History Container */}
+            <div 
+              className="overflow-y-auto p-4"
+              style={{
+                maxHeight: '400px'
+              }}
+            >
+              <div className="space-y-3">
+                {fullHistory.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm font-light leading-relaxed ${
+                      msg.role === 'user' 
+                        ? 'bg-emerald-600 text-white rounded-tr-none' 
+                        : 'bg-zinc-800/80 text-zinc-100 border border-zinc-700 rounded-tl-none'
+                    }`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Input Area */}
       <form onSubmit={handleSubmit} id="artistForm">
-        {/* Navigation Buttons - Next/Last/Undo/History - Hidden for clean look */}
-        <div className="flex items-center justify-center gap-2 mb-2" style={{ display: 'none' }}>
+        {/* Navigation Buttons - Back/Next/Undo/Redo */}
+        <div className="flex items-center justify-center gap-2 mb-2">
           {/* History Button - View full conversation */}
           {fullHistory.length > 0 && (
             <button
               type="button"
               onClick={() => setShowHistory(!showHistory)}
-              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+              style={{
+                color: '#fffacd',
+                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'bold'
+              }}
               title="View history"
             >
               <span className="text-xs font-medium">H</span>
             </button>
           )}
           
-          {/* Last Button - Go back to previous question */}
+          {/* Back Button - Go back to previous question */}
           {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
             <button
               type="button"
               onClick={handleLast}
-              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+              style={{
+                color: '#fffacd',
+                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'bold'
+              }}
               title="Previous question"
+              aria-label="Go back to previous question"
             >
               <ChevronLeft size={20} />
             </button>
@@ -529,8 +597,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             <button
               type="button"
               onClick={handleNext}
-              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+              style={{
+                color: '#fffacd',
+                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'bold'
+              }}
               title="Skip to next question"
+              aria-label="Skip to next question"
             >
               <ChevronLeft size={20} className="rotate-180" />
             </button>
@@ -541,10 +616,36 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             <button
               type="button"
               onClick={handleUndo}
-              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+              style={{
+                color: '#fffacd',
+                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'bold'
+              }}
               title="Undo last step"
+              aria-label="Undo last action"
             >
               <Undo2 size={20} />
+            </button>
+          )}
+          
+          {/* Redo Button - Redo last undone step */}
+          {redoStack.length > 0 && !isSubmitting && (
+            <button
+              type="button"
+              onClick={handleRedo}
+              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+              style={{
+                color: '#fffacd',
+                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                fontFamily: 'Arial, sans-serif',
+                fontWeight: 'bold'
+              }}
+              title="Redo last undone step"
+              aria-label="Redo last undone action"
+            >
+              <Redo2 size={20} />
             </button>
           )}
         </div>
@@ -578,39 +679,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         </button>
       </form>
       </div>
-      
-      {/* History Modal */}
-      {showHistory && fullHistory.length > 0 && (
-        <div className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-6">
-          <div className="max-w-2xl mx-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold text-emerald-400">Conversation History</h3>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-4">
-              {fullHistory.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`max-w-[80%] rounded-2xl px-5 py-3 text-lg font-light leading-relaxed ${
-                    msg.role === 'user' 
-                      ? 'bg-emerald-600 text-white rounded-tr-none' 
-                      : 'bg-zinc-800/80 text-zinc-100 border border-zinc-700 rounded-tl-none'
-                  }`}>
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </motion.div>
   )
 }

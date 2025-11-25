@@ -69,6 +69,14 @@ export default function Home() {
   // Carousel items from curriculum answers + current question card
   const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, currentTypingStepId, currentQuestionStepId)
   
+  // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
+  const phaseTokens = useMemo(() => [
+    { id: 'pre' as const, label: 'PRE', progress: progress.preProgress },
+    { id: 'prod' as const, label: 'PROD', progress: progress.proProgress },
+    { id: 'post' as const, label: 'POST', progress: progress.postProgress },
+    { id: 'legacy' as const, label: 'LEGACY', progress: progress.loopProgress },
+  ], [progress.preProgress, progress.proProgress, progress.postProgress, progress.loopProgress])
+  
   // Reset carousel index when user changes
   useEffect(() => {
     setCarouselIndex(0)
@@ -252,33 +260,6 @@ export default function Home() {
                 {profile?.mission_statement || "The Champion is ready for you."}
               </p>
               
-              {/* Edit Branding Buttons - Manual Panel Triggers (Zeyoda pattern: buttons that set appMode/activePanel) */}
-              {user && profile && (
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <button
-                    onClick={() => setActivePanel('logo')}
-                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
-                    title="Edit logo"
-                  >
-                    🎨 Logo
-                  </button>
-                  <button
-                    onClick={() => setActivePanel('colors')}
-                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
-                    title="Edit colors"
-                  >
-                    🎨 Colors
-                  </button>
-                  <button
-                    onClick={() => setActivePanel('font')}
-                    className="border border-emerald-500/60 bg-black/40 hover:bg-emerald-500/10 px-3 py-1.5 rounded text-emerald-100 text-xs font-medium transition-colors flex items-center gap-1"
-                    title="Edit font"
-                  >
-                    ✏️ Font
-                  </button>
-                </div>
-              )}
-              
               {/* Halo Container with Carousel ON it (Zeyoda pattern) */}
               {/* overflow: visible allows peek cards to show above/below halo */}
               {/* Container matches Zeyoda: relative, max-w-5xl constraint (Zeyoda pattern) */}
@@ -316,12 +297,7 @@ export default function Home() {
                     featuredContentRef={featuredContentRef}
                     chatRef={chatRef}
                     isOrbitAnimationPaused={isOrbitAnimationPaused}
-                    phaseTokens={[
-                      { id: 'pre', label: 'PRE', progress: progress.preProgress },
-                      { id: 'prod', label: 'PROD', progress: progress.proProgress },
-                      { id: 'post', label: 'POST', progress: progress.postProgress },
-                      { id: 'legacy', label: 'LEGACY', progress: progress.loopProgress },
-                    ]}
+                    phaseTokens={phaseTokens}
                     brandColor={profile?.brand_color || undefined}
                   />
                 </div>

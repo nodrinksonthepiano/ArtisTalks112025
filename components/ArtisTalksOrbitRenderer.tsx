@@ -15,7 +15,7 @@ interface ArtisTalksOrbitRendererProps {
   brandColor?: string;
 }
 
-const ORBIT_SPEED = 0.15; // natural radians/sec (slower orbit - half speed)
+const ORBIT_SPEED = 0.3; // natural radians/sec
 // Interaction tuning (radians and seconds)
 const WHEEL_SENS = 0.0016;      // rad per wheel deltaY unit
 const DRAG_SENS = 0.008;        // rad per px (approx)
@@ -40,6 +40,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   const orbitContainerRef = useRef<HTMLDivElement | null>(null);
   const lastEventTsRef = useRef<number>(0);
   const centerRef = useRef<{cx:number; cy:number}>({ cx: 0, cy: 0 });
+  const heroDimensionsRef = useRef<{w: number, h: number} | null>(null);
   const lastAngleRef = useRef<number | null>(null);
   const suppressClickRef = useRef<boolean>(false);
   const isHoveringRef = useRef<boolean>(false);
@@ -68,32 +69,51 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
     }));
 
     // one-off position write to avoid starting at center before RAF begins
-    // EXACT COPY FROM ZEYODA ThemeOrbitRenderer.tsx lines 119-140
+    // Updated to match Zeyoda pattern: use stable hero:pinned dimensions first
     const positionOnce = () => {
       let contentWidth, contentHeight, rect;
       
-      // Priority 1: Measure FeaturedContent directly (like Zeyoda's videoElement)
-      if (featuredElement) {
-        contentWidth = featuredElement.offsetWidth;  // ← offsetWidth FIRST (Zeyoda line 120)
-        contentHeight = featuredElement.offsetHeight;  // ← offsetHeight FIRST (Zeyoda line 121)
-        rect = featuredElement.getBoundingClientRect();  // ← getBoundingClientRect AFTER (Zeyoda line 122)
+      // Priority 1: Use stable hero dimensions from hero:pinned event (matches Zeyoda pattern)
+      if (heroDimensionsRef.current && featuredElement) {
+        contentWidth = heroDimensionsRef.current.w;
+        contentHeight = heroDimensionsRef.current.h;
+        rect = featuredElement.getBoundingClientRect();
+        centerRef.current = { 
+          cx: rect.left + rect.width / 2,   // VIEWPORT coordinates (Zeyoda)
+          cy: rect.top + rect.height / 2    // VIEWPORT coordinates (Zeyoda)
+        };
+      } 
+      // Priority 2: Measure FeaturedContent directly (fallback if hero:pinned not received yet)
+      else if (featuredElement) {
+        contentWidth = featuredElement.offsetWidth;
+        contentHeight = featuredElement.offsetHeight;
+        rect = featuredElement.getBoundingClientRect();
         
-        const isContentReady = contentWidth > 50 && contentHeight > 50 && rect && rect.width > 50;  // ← > 50 check (Zeyoda line 124)
+        const isContentReady = contentWidth > 50 && contentHeight > 50 && rect && rect.width > 50;
         
         if (!isContentReady) {
-          // Fallback to viewport-based dimensions (Zeyoda lines 127-130)
+          // Fallback to viewport-based dimensions only if measurements invalid
           contentWidth = Math.min(window.innerWidth * 0.7, 700);
           contentHeight = contentWidth * (9 / 16);
-          centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };  // ← VIEWPORT center (Zeyoda line 130)
+          centerRef.current = { 
+            cx: window.innerWidth / 2,   // VIEWPORT coordinates
+            cy: window.innerHeight / 2   // VIEWPORT coordinates
+          };
         } else {
-          centerRef.current = { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2 };  // ← FeaturedContent center (Zeyoda line 132)
+          centerRef.current = { 
+            cx: rect.left + rect.width / 2,   // VIEWPORT coordinates (Zeyoda)
+            cy: rect.top + rect.height / 2    // VIEWPORT coordinates (Zeyoda)
+          };
         }
       }
-      // Priority 2: Viewport fallback when nothing else available (Zeyoda lines 136-140)
+      // Priority 3: Viewport fallback when nothing else available
       else {
         contentWidth = Math.min(window.innerWidth * 0.7, 700);
         contentHeight = contentWidth * (9 / 16);
-        centerRef.current = { cx: window.innerWidth / 2, cy: window.innerHeight / 2 };  // ← VIEWPORT center (Zeyoda line 139)
+        centerRef.current = { 
+          cx: window.innerWidth / 2,   // VIEWPORT coordinates
+          cy: window.innerHeight / 2   // VIEWPORT coordinates
+        };
       }
 
       const radiusX = (contentWidth / 2) + 60;
@@ -108,8 +128,16 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         const x = radiusX * Math.cos(angle);
         const y = radiusY * Math.sin(angle);
         const z = -20;
-        const orbitPos = `translate(-50%, -50%) translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, ${z.toFixed(1)}px)`;
-        tokenElement.style.setProperty('--orbit-pos', orbitPos);
+        
+        // Calculate viewport position: center (viewport) + offset (matches Zeyoda)
+        const viewportX = centerRef.current.cx + x;
+        const viewportY = centerRef.current.cy + y;
+        
+        // Set position directly using viewport coordinates
+        tokenElement.style.position = 'fixed';
+        tokenElement.style.left = `${viewportX}px`;
+        tokenElement.style.top = `${viewportY}px`;
+        tokenElement.style.transform = `translate(-50%, -50%) translateZ(${z}px)`;
         tokenElement.style.opacity = '1';
         tokenElement.style.filter = 'blur(0px)';
       });
@@ -157,16 +185,30 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
     // Seed initial positions immediately, then start RAF
     positionOnce();
     
-    // TEMPORARY DIAGNOSTIC LOG
-    console.log('[ORBIT] Tokens rendering:', {
-      tokenCount: phaseTokens.length,
-      featuredElementExists: !!featuredElement,
-      featuredElementWidth: featuredElement?.offsetWidth,
-      featuredElementHeight: featuredElement?.offsetHeight,
-      center: centerRef.current
-    });
-    
     animationFrameIdRef.current = requestAnimationFrame(animate);
+
+    // Listen to hero:pinned for stable carousel dimensions (Priority 1 - matches OvalGlowBackdrop pattern)
+    const onHeroPinned = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const { w, h } = customEvent.detail || {};
+      if (w && h) {
+        heroDimensionsRef.current = { w, h };
+        // Update positions immediately with new stable dimensions
+        positionOnce();
+      }
+    };
+    window.addEventListener('hero:pinned', onHeroPinned);
+
+    // Auto-resume when carousel reports stability (pin complete or snap complete)
+    const onStable = () => {
+      // Ensure not paused and positions valid
+      isOrbitAnimationPaused.current = false;
+      positionOnce();
+      if (animationFrameIdRef.current === null) {
+        animationFrameIdRef.current = requestAnimationFrame(animate);
+      }
+    };
+    window.addEventListener('carousel:stable', onStable);
 
     // Interaction handlers - COPIED FROM ZEYODA ThemeOrbitRenderer.tsx lines 226-343
     const container = orbitContainerRef.current;
@@ -185,7 +227,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         if (targetEl) {
           try {
             const tr = targetEl.getBoundingClientRect();
-            const tcx = tr.left + tr.width / 2;
+            const tcx = tr.left + tr.width / 2; // VIEWPORT coordinates (Zeyoda)
             sideSign = (tcx >= centerRef.current.cx) ? 1 : -1;
           } catch {}
         }
@@ -207,7 +249,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         draggingTokenRef.current = false;
         downXYRef.current = { x: e.clientX, y: e.clientY };
         downTsRef.current = timestampNow();
-        // seed last angle for polar delta tracking
+        // seed last angle for polar delta tracking - use viewport coordinates (Zeyoda)
         const { cx, cy } = centerRef.current;
         lastAngleRef.current = Math.atan2(e.clientY - cy, e.clientX - cx);
         suppressClickRef.current = true;
@@ -223,6 +265,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         }
         const now = timestampNow();
         const dt = Math.max(8, Math.min(80, now - (lastEventTsRef.current || now))) * 0.001;
+        // Use viewport coordinates directly (Zeyoda)
         const { cx, cy } = centerRef.current;
         const ang = Math.atan2(e.clientY - cy, e.clientX - cx);
         let d = ang - (lastAngleRef.current || ang);
@@ -275,6 +318,8 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
     }
 
     return () => {
+      window.removeEventListener('hero:pinned', onHeroPinned);
+      window.removeEventListener('carousel:stable', onStable);
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = null;
@@ -294,17 +339,37 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   };
 
   return (
-    <div className="orbit-tokens-wrapper">
+    <div 
+      className="orbit-tokens-wrapper"
+      style={{
+        position: 'absolute',
+        inset: 0, // Cover carousel exactly
+        pointerEvents: 'none', // Allow clicks through to carousel
+        zIndex: 20 // Above carousel but below modals
+      }}
+    >
       <div 
         className="orbital-tokens"
         ref={orbitContainerRef}
         onMouseEnter={() => { /* pause handled on token hover */ }}
         onMouseLeave={() => { if (!isInteractingRef.current) isOrbitAnimationPaused.current = false; }}
-        style={{ touchAction: 'none', overscrollBehavior: 'contain' as any }}
+        style={{ touchAction: 'none', overscrollBehavior: 'contain' as any, pointerEvents: 'auto' }}
       >
         {phaseTokens.map((token, index) => {
           const isFilled = token.progress >= 100;
           const tokenColor = brandColor || token.color || defaultColors[token.id] || defaultColors.pre;
+          const fillPercentage = Math.min(100, Math.max(0, token.progress));
+          
+          // DEBUG: Log PRE token progress
+          if (token.id === 'pre') {
+            console.log('[PRE TOKEN FILL]', { 
+              id: token.id,
+              progress: token.progress, 
+              fillPercentage, 
+              tokenColor,
+              willRender: fillPercentage > 0 
+            });
+          }
           
           return (
             <div
@@ -316,10 +381,10 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
               style={{
                 willChange: 'transform, opacity',
                 opacity: 1,
-                transform: 'var(--orbit-pos, translate(-50%, -50%))',
-                position: 'absolute',
+                position: 'fixed', // VIEWPORT-relative (matches center coordinates - Zeyoda)
                 cursor: 'grab',
                 pointerEvents: 'auto',
+                // left/top set dynamically in positionOnce()
               }}
               onMouseEnter={(e) => { 
                 isHoveringRef.current = true; 
@@ -340,7 +405,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 draggingTokenRef.current = false; 
                 downXYRef.current = { x: e.clientX, y: e.clientY }; 
                 downTsRef.current = (typeof performance!=='undefined'?performance.now():Date.now()); 
-                const { cx, cy } = centerRef.current; 
+                const { cx, cy } = centerRef.current;
                 lastAngleRef.current = Math.atan2(e.clientY - cy, e.clientX - cx); 
                 suppressClickRef.current = false; 
                 (e.currentTarget.style as any).cursor = 'grabbing'; 
@@ -355,7 +420,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 } 
                 const now = (typeof performance!=='undefined'?performance.now():Date.now()); 
                 const dt = Math.max(8, Math.min(80, now - (lastEventTsRef.current||now))) * 0.001; 
-                const { cx, cy } = centerRef.current; 
+                const { cx, cy } = centerRef.current;
                 const ang = Math.atan2(e.clientY - cy, e.clientX - cx); 
                 let d = ang - (lastAngleRef.current||ang); 
                 if (d > Math.PI) d -= 2*Math.PI; else if (d < -Math.PI) d += 2*Math.PI; 
@@ -381,41 +446,56 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
             >
               {/* Token Circle */}
               <div
-                className="relative w-16 h-16 md:w-20 md:h-20 rounded-full transition-all duration-500 ease-out"
+                className="relative w-16 h-16 md:w-20 md:h-20 rounded-full transition-all duration-500 ease-out overflow-hidden"
                 style={{
-                  backgroundColor: isFilled ? tokenColor : 'transparent',
-                  border: `2px solid ${isFilled ? tokenColor : `rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.3)`}`,
-                  opacity: isFilled ? 1 : 0.3,
-                  boxShadow: isFilled ? `0 0 20px rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.5)` : 'none',
+                  backgroundColor: 'transparent',
+                  border: `2px solid ${tokenColor}`,
+                  opacity: 1,
                 }}
               >
-                {/* Progress ring for partial fills */}
-                {token.progress > 0 && token.progress < 100 && (
+                {/* Bottom-up fill based on progress - let parent's overflow-hidden clip to circle */}
+                {fillPercentage > 0 && (
+                  <div
+                    className="absolute transition-all duration-500 ease-out"
+                    style={{
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      height: `${fillPercentage}%`,
+                      backgroundColor: tokenColor,
+                      // No border-radius - parent's overflow-hidden + rounded-full handles clipping
+                      zIndex: 1, // Above border to ensure visibility
+                      pointerEvents: 'none', // Don't block interactions
+                    }}
+                  />
+                )}
+                {/* Progress ring overlay for visual clarity */}
+                {fillPercentage > 0 && fillPercentage < 100 && (
                   <svg
-                    className="absolute inset-0 w-full h-full transform -rotate-90"
+                    className="absolute inset-0 w-full h-full"
                     viewBox="0 0 100 100"
+                    style={{ pointerEvents: 'none' }}
                   >
                     <circle
                       cx="50"
                       cy="50"
                       r="45"
                       fill="none"
-                      stroke={`rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.3)`}
-                      strokeWidth="4"
-                    />
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="45"
-                      fill="none"
                       stroke={tokenColor}
-                      strokeWidth="4"
-                      strokeDasharray={`${2 * Math.PI * 45}`}
-                      strokeDashoffset={`${2 * Math.PI * 45 * (1 - token.progress / 100)}`}
-                      strokeLinecap="round"
-                      className="transition-all duration-500"
+                      strokeWidth="2"
+                      opacity="0.5"
                     />
                   </svg>
+                )}
+                {/* Glow effect when filled */}
+                {isFilled && (
+                  <div
+                    className="absolute inset-0 rounded-full"
+                    style={{
+                      boxShadow: `0 0 20px rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.5)`,
+                      pointerEvents: 'none',
+                    }}
+                  />
                 )}
               </div>
 
@@ -423,7 +503,8 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
               <span
                 className="absolute bottom-[-24px] left-1/2 transform -translate-x-1/2 text-xs md:text-sm font-semibold tracking-wider transition-all duration-500 whitespace-nowrap"
                 style={{
-                  color: isFilled ? tokenColor : `rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.5)`,
+                  color: tokenColor,
+                  opacity: 1,
                 }}
               >
                 {token.label}
