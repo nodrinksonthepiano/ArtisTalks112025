@@ -119,7 +119,7 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
     // Listen to hero:pinned as primary source of truth
     window.addEventListener('hero:pinned', onHeroPinned);
     
-    // Also listen to window resize for responsiveness
+    // Also listen to window resize for responsiveness (only if we have dimensions)
     window.addEventListener('resize', debouncedCalculateSize);
 
     // Run an initial calculation after a short delay to catch the first render.
@@ -183,5 +183,3 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
 };
 
 export default OvalGlowBackdrop;
-
-

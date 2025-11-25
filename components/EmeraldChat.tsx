@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
@@ -11,14 +11,20 @@ import { Profile } from '@/hooks/useProfile'
 interface EmeraldChatProps {
   onProfileUpdate?: (updates: Partial<Profile>) => void
   onTriggerPanel?: (panel: 'logo' | 'colors' | 'font' | 'asset' | null) => void
+  onTypingUpdate?: (input: string, stepId: StepId) => void // Live typing updates for carousel card
+  onSubmitCard?: (answer: string, stepId: StepId) => void // Trigger card swipe animation on submit
+  onCurrentStepChange?: (stepId: StepId) => void // Notify parent of current step for carousel
 }
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([])
+  const [fullHistory, setFullHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([]) // Full history for history button
+  const [showHistory, setShowHistory] = useState(false) // Toggle history modal
+  const [answeredKeys, setAnsweredKeys] = useState<Set<string>>(new Set())
   
   // Redo stack: track undone states so user can redo
   const [redoStack, setRedoStack] = useState<Array<{
@@ -32,6 +38,117 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
   const debounceTimer = useRef<NodeJS.Timeout | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  
+  // Notify parent of current step change (for carousel)
+  useEffect(() => {
+    if (onCurrentStepChange) {
+      onCurrentStepChange(currentStepId)
+    }
+  }, [currentStepId, onCurrentStepChange])
+  
+  // Helper: Find first unanswered question in curriculum flow
+  const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT'): StepId => {
+    let current: StepId = startFrom
+    const visited = new Set<StepId>()
+    
+    while (current !== 'COMPLETE' && !visited.has(current)) {
+      visited.add(current)
+      const step = getStep(current)
+      
+      // Skip panel steps (they don't have answers in curriculum_answers)
+      if (step.triggersPanel) {
+        current = step.nextStep
+        continue
+      }
+      
+      // If this step hasn't been answered, return it
+      if (!answeredKeys.has(step.key)) {
+        return current
+      }
+      
+      // Move to next step
+      current = step.nextStep
+    }
+    
+    return 'COMPLETE'
+  }, [answeredKeys])
+  
+  // Load answered questions on mount and when user changes
+  useEffect(() => {
+    async function loadAnsweredKeys() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          setAnsweredKeys(new Set())
+          return
+        }
+        
+        const { data: answers, error } = await supabase
+          .from('curriculum_answers')
+          .select('question_key')
+          .eq('user_id', user.id)
+        
+        if (error) {
+          console.error('Error loading answered keys:', error)
+          return
+        }
+        
+        const keys = new Set(answers?.map(a => a.question_key) || [])
+        setAnsweredKeys(keys)
+      } catch (err) {
+        console.error('Error in loadAnsweredKeys:', err)
+      }
+    }
+    
+    loadAnsweredKeys()
+    
+    // Subscribe to changes
+    const channel = supabase
+      .channel('answered-keys')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'curriculum_answers',
+        },
+        () => {
+          loadAnsweredKeys()
+        }
+      )
+      .subscribe()
+    
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [supabase])
+  
+  // Initialize chat on mount - start from INIT if no answers exist
+  useEffect(() => {
+    // Only run once on initial mount (when history is empty)
+    if (history.length > 0) return
+    
+    // Wait for answeredKeys to be loaded (size will be 0 initially, then update)
+    // If no answers exist after loading, start from INIT
+    if (answeredKeys.size === 0) {
+      const initStep = getStep('INIT')
+      setCurrentStepId('INIT')
+      const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
+      setHistory([initMessage])
+      setFullHistory([initMessage]) // Add to full history too
+      return
+    }
+    
+    // If answers exist, find first unanswered step
+    const firstUnanswered = findFirstUnansweredStep('INIT')
+    const step = getStep(firstUnanswered)
+    setCurrentStepId(firstUnanswered)
+    if (step.id !== 'COMPLETE') {
+      const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
+      setHistory([stepMessage])
+      setFullHistory([stepMessage]) // Add to full history too
+    }
+  }, [answeredKeys.size, findFirstUnansweredStep]) // Depend on size and the function
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -56,8 +173,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
             onTriggerPanel(nextStep.triggersPanel)
             setCurrentStepId(nextStepId)
           } else {
-            // Next step is a chat question
-            setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question, stepId: nextStepId }])
+            // Next step is a chat question - only show current question
+            const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+            setHistory([nextMessage])
+            setFullHistory(prev => [...prev, nextMessage]) // Add to full history
             setPreviousStepId(currentStepId)
             setCurrentStepId(nextStepId)
           }
@@ -76,12 +195,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
     scrollToBottom()
   }, [history, isSubmitting])
 
-  // Initial Greeting
-  useEffect(() => {
-    if (history.length === 0) {
-      setHistory([{ role: 'assistant', content: currentStep.question, stepId: currentStepId }])
-    }
-  }, [])
+  // Initial greeting is now handled in the answeredKeys effect above
 
   // Live Typing Effect
   useEffect(() => {
@@ -108,6 +222,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
         onProfileUpdate({ artist_name: input })
       } else if (currentStep.key === 'gift_to_world') {
         onProfileUpdate({ mission_statement: input })
+      }
+      
+      // Live typing update for carousel card
+      if (onTypingUpdate) {
+        onTypingUpdate(input, currentStepId)
       }
     }, 300)
 
@@ -150,19 +269,55 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
     }
   }
 
+  const handleLast = () => {
+    // Go back to previous question (Last button)
+    if (previousStepId && !isSubmitting) {
+      const prevStep = getStep(previousStepId)
+      setCurrentStepId(previousStepId)
+      // Find the step before previous for new previousStepId
+      const allSteps = Object.values(CURRICULUM)
+      const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
+      setPreviousStepId(prevPrevStep?.id || null)
+      // Only show current question
+      const prevMessage = { role: 'assistant' as const, content: prevStep.question, stepId: previousStepId }
+      setHistory([prevMessage])
+      // Don't add to fullHistory - it's navigation, not new content
+      setInput('')
+    }
+  }
+  
+  const handleNext = () => {
+    // Skip current question (Next button) - don't create empty card, just move forward
+    if (isSubmitting || currentStepId === 'COMPLETE') return
+    
+    const nextStepId = currentStep.nextStep
+    const firstUnanswered = findFirstUnansweredStep(nextStepId)
+    const nextStep = getStep(firstUnanswered)
+    
+    // Move to next unanswered question without saving
+    setCurrentStepId(firstUnanswered)
+    setPreviousStepId(currentStepId)
+    // Only show current question (no history)
+    const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: firstUnanswered }
+    setHistory([nextMessage])
+    // Don't add to fullHistory - skipping doesn't create history entry
+    setInput('')
+  }
+
   const handleBack = () => {
     // Go back to edit the last answer (same as clicking edit pencil on last user message)
-    if (history.length > 1) {
+    // Find last answered question from fullHistory
+    if (fullHistory.length > 0) {
       // Find last user message by iterating backwards
       let lastUserMessageIndex = -1
-      for (let i = history.length - 1; i >= 0; i--) {
-        if (history[i].role === 'user') {
+      for (let i = fullHistory.length - 1; i >= 0; i--) {
+        if (fullHistory[i].role === 'user') {
           lastUserMessageIndex = i
           break
         }
       }
       if (lastUserMessageIndex !== -1) {
-        const lastUserMessage = history[lastUserMessageIndex]
+        const lastUserMessage = fullHistory[lastUserMessageIndex]
         if (lastUserMessage.stepId) {
           handleEditStep(lastUserMessage.stepId)
         }
@@ -214,12 +369,20 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
     const answer = input.trim()
     setIsSubmitting(true)
 
+    // Trigger card swipe animation before saving
+    if (onSubmitCard) {
+      onSubmitCard(answer, currentStepId)
+    }
+
     // 1. Update UI immediately (Optimistic)
-    const newHistory = [
-      ...history,
-      { role: 'user' as const, content: answer, stepId: currentStepId }
-    ]
-    setHistory(newHistory)
+    const userMessage = { role: 'user' as const, content: answer, stepId: currentStepId }
+    const assistantMessage = history[history.length - 1] // Current question
+    
+    // Add to full history (for history button)
+    setFullHistory(prev => [...prev, assistantMessage, userMessage])
+    
+    // Clear chat history - only keep current question (will be replaced with next question)
+    setHistory([])
     setInput('')
 
     try {
@@ -253,8 +416,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
       // Clear redo stack when user makes a new action (can't redo after new action)
       setRedoStack([])
 
-      // 3. Move to Next Step
-      const nextStepId = currentStep.nextStep
+      // 3. Move to Next Step - SKIP already answered questions
+      let nextStepId = currentStep.nextStep
+      
+      // Skip to first unanswered question (starting from next step)
+      const firstUnanswered = findFirstUnansweredStep(nextStepId)
+      nextStepId = firstUnanswered
       const nextStep = getStep(nextStepId)
       
       setTimeout(() => {
@@ -268,13 +435,18 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
           return
         }
         
-        // Normal chat flow
+        // Normal chat flow - only show current question (no history building up)
         if (nextStepId !== 'COMPLETE') {
-          setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question, stepId: nextStepId }])
+          // Only show current question in chat (clear previous)
+          const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+          setHistory([nextMessage])
+          setFullHistory(prev => [...prev, nextMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId(nextStepId)
         } else {
-          setHistory(prev => [...prev, { role: 'assistant', content: nextStep.question, stepId: nextStepId }])
+          const completeMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+          setHistory([completeMessage])
+          setFullHistory(prev => [...prev, completeMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId('COMPLETE')
         }
@@ -299,120 +471,146 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel }: Emerald
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-2xl mx-auto bg-black/40 backdrop-blur-md border border-emerald-500/30 rounded-2xl overflow-hidden shadow-2xl shadow-emerald-900/20"
+      className="mx-auto rounded-lg overflow-hidden"
+      style={{
+        backgroundImage: 'url(/IMG_723E215270D1-1.jpeg)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        padding: '20px', /* EXACT from nodrinks */
+        boxShadow: '0 0 10px rgba(255, 215, 0, 0.8)', /* Golden glimmer - EXACT from nodrinks */
+        maxWidth: '450px', /* Slightly wider than nodrinks 400px */
+        width: '90%', /* EXACT from nodrinks */
+        textAlign: 'center', /* EXACT from nodrinks */
+        color: 'white', /* EXACT from nodrinks */
+        margin: '0 auto' /* Zeyoda pattern: no extra margin, parent handles spacing */
+      }}
     >
-      {/* Chat History Area - Smaller, shows only current question */}
-      <div 
-        ref={messagesContainerRef}
-        className="h-[200px] overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-emerald-700 scrollbar-track-transparent"
-      >
-        {history.map((msg, idx) => {
-          const isPastMessage = msg.stepId !== currentStepId && msg.stepId !== undefined
-          const canEdit = msg.role === 'user' && msg.stepId && msg.stepId !== currentStepId
-          
-          return (
-            <motion.div 
-              key={idx}
-              initial={{ opacity: 0, x: msg.role === 'assistant' ? -10 : 10 }}
-              animate={{ opacity: isPastMessage ? 0.6 : 1, x: 0 }}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group relative`}
-            >
-              <div className={`max-w-[80%] rounded-2xl px-5 py-3 text-lg font-light leading-relaxed relative ${
-                msg.role === 'user' 
-                  ? 'bg-emerald-600 text-white rounded-tr-none' 
-                  : 'bg-zinc-800/80 text-zinc-100 border border-zinc-700 rounded-tl-none'
-              }`}>
-                {msg.content}
-                {canEdit && (
-                  <button
-                    onClick={() => handleEditStep(msg.stepId!)}
-                    className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg"
-                    title="Edit this answer"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          )
-        })}
-        
-        {isSubmitting && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start"
-          >
-            <div className="bg-zinc-800/50 text-zinc-400 rounded-2xl rounded-tl-none px-5 py-3 text-sm flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}/>
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}/>
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}/>
-            </div>
-          </motion.div>
+      <div>
+        {/* Current Question - Simple centered text like AuthPanel */}
+        {currentStep && currentStep.question && (
+          <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
+            {currentStepId === 'INIT' 
+              ? "Welcome, My Champion! What is your artist name?"
+              : currentStep.question
+            }
+          </h1>
         )}
-      </div>
+        
+        {/* Input Area */}
+      <form onSubmit={handleSubmit} id="artistForm">
+        {/* Navigation Buttons - Next/Last/Undo/History - Hidden for clean look */}
+        <div className="flex items-center justify-center gap-2 mb-2" style={{ display: 'none' }}>
+          {/* History Button - View full conversation */}
+          {fullHistory.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowHistory(!showHistory)}
+              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              title="View history"
+            >
+              <span className="text-xs font-medium">H</span>
+            </button>
+          )}
+          
+          {/* Last Button - Go back to previous question */}
+          {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+            <button
+              type="button"
+              onClick={handleLast}
+              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              title="Previous question"
+            >
+              <ChevronLeft size={20} />
+            </button>
+          )}
+          
+          {/* Next Button - Skip current question */}
+          {!isSubmitting && currentStepId !== 'COMPLETE' && (
+            <button
+              type="button"
+              onClick={handleNext}
+              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              title="Skip to next question"
+            >
+              <ChevronLeft size={20} className="rotate-180" />
+            </button>
+          )}
+          
+          {/* Undo Button - Undo last step */}
+          {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+              title="Undo last step"
+            >
+              <Undo2 size={20} />
+            </button>
+          )}
+        </div>
 
-      {/* Input Area */}
-      <div className="p-4 border-t border-emerald-500/20 bg-black/20">
-        <form onSubmit={handleSubmit} className="relative flex items-center gap-2">
-          {/* Navigation Buttons - Always visible when applicable */}
-          <div className="flex items-center gap-1">
-            {/* Back Button - Edit last answer */}
-            {history.length > 1 && !isSubmitting && (
+        <input
+          ref={inputRef}
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={currentStep.placeholder || "Type your answer..."}
+          disabled={currentStepId === 'COMPLETE' || isSubmitting}
+          className="email-input"
+          autoFocus
+        />
+        <button
+          type="submit"
+          disabled={!input.trim() || isSubmitting || currentStepId === 'COMPLETE'}
+          style={{
+            marginTop: '10px',
+            padding: '10px',
+            backgroundColor: '#047857', /* Deeper emerald - emerald-700 */
+            color: 'white',
+            border: 'none',
+            borderRadius: '5px',
+            cursor: 'pointer',
+            boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+            width: '100%'
+          }}
+        >
+          {isSubmitting ? 'Sending...' : 'Send'}
+        </button>
+      </form>
+      </div>
+      
+      {/* History Modal */}
+      {showHistory && fullHistory.length > 0 && (
+        <div className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 overflow-y-auto p-6">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-emerald-400">Conversation History</h3>
               <button
-                type="button"
-                onClick={handleBack}
+                onClick={() => setShowHistory(false)}
                 className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
-                title="Edit last answer"
               >
-                <ChevronLeft size={20} />
+                ✕
               </button>
-            )}
-            
-            {/* Undo Button - Undo last step */}
-            {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
-              <button
-                type="button"
-                onClick={handleUndo}
-                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
-                title="Undo last step"
-              >
-                <Undo2 size={20} />
-              </button>
-            )}
-            
-            {/* Redo Button - Redo undone step */}
-            {redoStack.length > 0 && !isSubmitting && (
-              <button
-                type="button"
-                onClick={handleRedo}
-                className="p-2 text-zinc-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
-                title="Redo"
-              >
-                <Redo2 size={20} />
-              </button>
-            )}
+            </div>
+            <div className="space-y-4">
+              {fullHistory.map((msg, idx) => (
+                <div
+                  key={idx}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className={`max-w-[80%] rounded-2xl px-5 py-3 text-lg font-light leading-relaxed ${
+                    msg.role === 'user' 
+                      ? 'bg-emerald-600 text-white rounded-tr-none' 
+                      : 'bg-zinc-800/80 text-zinc-100 border border-zinc-700 rounded-tl-none'
+                  }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={currentStep.placeholder || "Type your answer..."}
-            disabled={currentStepId === 'COMPLETE' || isSubmitting}
-            className="flex-grow p-3 border border-gray-600 bg-gray-900 bg-opacity-70 text-white focus:ring-accentColor focus:border-accentColor backdrop-blur-sm rounded-xl px-4 py-4 pr-12 transition-all disabled:opacity-50"
-            autoFocus
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isSubmitting}
-            className="absolute right-2 p-2 bg-emerald-500 hover:bg-emerald-400 text-black rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <ArrowUp size={20} strokeWidth={3} />
-          </button>
-        </form>
-      </div>
+        </div>
+      )}
     </motion.div>
   )
 }

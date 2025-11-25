@@ -71,7 +71,10 @@ const FeaturedContent = forwardRef<HTMLDivElement, FeaturedContentProps>(({
             className="text-lg leading-relaxed"
             style={{ color: hexToRgba(accentColor, 0.9) }}
           >
-            {currentModule.content}
+            {/* Use profile.mission_statement for gift-to-world module (current source of truth) */}
+            {currentModule.id === 'gift-to-world' && profile?.mission_statement
+              ? profile.mission_statement
+              : currentModule.content}
           </p>
           {currentModule.imageUrl && (
             <div className="mt-4">

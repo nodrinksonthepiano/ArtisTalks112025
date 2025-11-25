@@ -7,18 +7,37 @@ export default function DataReset() {
   const supabase = createClient()
 
   async function handleReset() {
-    // 1. Sign out from Supabase (kills session)
-    await supabase.auth.signOut()
+    try {
+      // 1. Get current user before signing out
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      // 2. Delete ALL curriculum_answers for this user (complete reset)
+      if (user) {
+        const { error: deleteError } = await supabase
+          .from('curriculum_answers')
+          .delete()
+          .eq('user_id', user.id)
+        
+        if (deleteError) {
+          console.error('Error deleting curriculum answers:', deleteError)
+        }
+      }
+      
+      // 3. Sign out from Supabase (kills session)
+      await supabase.auth.signOut()
 
-    // 2. Clear local storage
-    // TODO: Future refinement - only clear keys starting with 'artistalks_' 
-    // once we have other features sharing this origin.
-    if (typeof window !== 'undefined') {
-      localStorage.clear()
+      // 4. Clear local storage
+      if (typeof window !== 'undefined') {
+        localStorage.clear()
+      }
+
+      // 5. Hard reload to ensure fresh state
+      window.location.href = '/'
+    } catch (error) {
+      console.error('Error during data reset:', error)
+      // Still reload even if there's an error
+      window.location.href = '/'
     }
-
-    // 3. Hard reload to ensure fresh state
-    window.location.href = '/'
   }
 
   return (

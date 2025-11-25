@@ -37,11 +37,12 @@ export function useCurriculumProgress(userId: string | null): CurriculumProgress
 
     async function loadProgress() {
       try {
-        // Query curriculum_answers for this user
+        // Query curriculum_answers for this user, ordered by created_at DESC to get latest first
         const { data: answers, error } = await supabase
           .from('curriculum_answers')
-          .select('question_key, answer_data')
+          .select('question_key, answer_data, created_at')
           .eq('user_id', userId)
+          .order('created_at', { ascending: false })
 
         if (error) {
           console.error('Error loading curriculum progress:', error)
@@ -85,6 +86,7 @@ export function useCurriculumProgress(userId: string | null): CurriculumProgress
         let currentModule: CurriculumProgress['currentModule'] | undefined
         
         // If they've answered gift_to_world, create the first tile
+        // Use first match (which is now latest due to DESC ordering)
         if (answeredKeys.includes('gift_to_world')) {
           const giftAnswer = answers?.find(a => a.question_key === 'gift_to_world')
           const giftText = giftAnswer?.answer_data?.text || ''

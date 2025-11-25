@@ -95,7 +95,7 @@ export function applyLogoBackground(
       // Zeyoda lines 100-106: Image loaded - apply it atomically
       const bgStyle = `${primary} url(${cacheBustedLogoUrl}) center/cover no-repeat`;
       document.body.style.setProperty("background-image", `url(${cacheBustedLogoUrl})`, "important");
-      document.body.style.setProperty("background-size", "cover", "important");
+      document.body.style.setProperty("background-size", "cover", "important"); /* EXACT from Zeyoda - fit to screen */
       document.body.style.setProperty("background-position", "center", "important");
       document.body.style.setProperty("background-repeat", "no-repeat", "important");
       document.body.style.setProperty("background-color", primary, "important");

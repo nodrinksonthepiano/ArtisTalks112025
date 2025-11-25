@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowRight, Mail, Lock } from 'lucide-react'
+import { Mail, Lock } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 
 export default function AuthPanel() {
@@ -137,44 +137,61 @@ export default function AuthPanel() {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }} 
-      className="w-full max-w-md mx-auto"
+      className="mx-auto rounded-lg overflow-hidden"
+      style={{
+        backgroundImage: 'url(/IMG_723E215270D1-1.jpeg)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        padding: '20px', /* EXACT from nodrinks */
+        boxShadow: '0 0 10px rgba(255, 215, 0, 0.8)', /* Golden glimmer - EXACT from nodrinks */
+        maxWidth: '450px', /* Slightly wider than nodrinks 400px */
+        width: '90%', /* EXACT from nodrinks */
+        textAlign: 'center', /* EXACT from nodrinks */
+        color: 'white', /* EXACT from nodrinks */
+        margin: '20px' /* EXACT from nodrinks */
+      }}
     >
-      <h3 className="access-headline">Welcome, Artist...</h3>
-      <p className="text-zinc-400 text-sm text-center mb-6">Enter your email to access your legacy.</p>
+      <div>
+        <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>Welcome, My Champion...</h1>
 
-      <form onSubmit={handleSendCode} className="email-login-container">
-        <div className="relative">
-          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 w-5 h-5" />
+        <form onSubmit={handleSendCode} id="artistForm">
           <input
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="artist@example.com"
+            placeholder="Enter Artist Name or Email"
             className="email-input"
-            style={{ paddingLeft: '2.75rem', paddingRight: '1rem' }}
             required
           />
-        </div>
+          {error && (
+            <motion.p 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-red-400 text-sm text-center"
+              style={{ marginTop: '10px' }}
+            >
+              {error}
+            </motion.p>
+          )}
 
-        {error && (
-          <motion.p 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-red-400 text-sm text-center"
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              marginTop: '10px', /* EXACT from nodrinks */
+              padding: '10px', /* EXACT from nodrinks */
+              backgroundColor: '#047857', /* Deeper emerald - emerald-700 */
+              color: 'white', /* EXACT from nodrinks */
+              border: 'none', /* EXACT from nodrinks */
+              borderRadius: '5px', /* EXACT from nodrinks */
+              cursor: 'pointer',
+              boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)' /* Golden glimmer */
+            }}
           >
-            {error}
-          </motion.p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="login-btn email"
-        >
-          {loading ? 'Sending...' : 'Send Code'}
-          {!loading && <ArrowRight className="w-4 h-4" />}
-        </button>
+            {loading ? 'Sending...' : 'Send'}
+          </button>
       </form>
+      </div>
     </motion.div>
   )
 }
