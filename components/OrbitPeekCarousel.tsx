@@ -908,10 +908,10 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     if (!item) return null;
     const base: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', borderRadius: 14, background: 'transparent' };
     const overlayFont = theme?.fontFamily || 'inherit';
-    // Use artist's accent color for card background, fallback to emerald button color
-    const cardBg = theme?.accentColor || '#047857'; // Emerald button color from AuthPanel/EmeraldChat
-    // Use artist's accent color for text, fallback to gold etching color
-    const cardText = theme?.accentColor || '#fffacd'; // Gold etching color from .gold-etched
+    // CRITICAL: Use primary color for card background (so accent color text is visible)
+    const cardBg = theme?.primaryColor || '#047857'; // Primary color for card background
+    // Use accent color for text (visible on primary color background)
+    const cardText = theme?.accentColor || '#fffacd'; // Accent color for text
     const overlayBg = theme?.primaryColor || 'rgba(0,0,0,0.6)';
     const overlayFg = theme?.accentColor || '#ffffff';
     const isHero = typeof itemIdx === 'number' && itemIdx === effectiveIndex;

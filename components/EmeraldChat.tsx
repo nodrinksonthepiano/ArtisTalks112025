@@ -6,6 +6,8 @@ import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
+import InlineColorPicker from '@/components/InlineColorPicker'
+import InlineLogoPicker from '@/components/InlineLogoPicker'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -14,9 +16,10 @@ interface EmeraldChatProps {
   onTypingUpdate?: (input: string, stepId: StepId) => void // Live typing updates for carousel card
   onSubmitCard?: (answer: string, stepId: StepId) => void // Trigger card swipe animation on submit
   onCurrentStepChange?: (stepId: StepId) => void // Notify parent of current step for carousel
+  profile?: Profile | null // CRITICAL: Profile prop for inline pickers
 }
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -38,6 +41,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const debounceTimer = useRef<NodeJS.Timeout | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const hasInitializedRef = useRef(false)
   
   // Notify parent of current step change (for carousel)
   useEffect(() => {
@@ -55,13 +59,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       visited.add(current)
       const step = getStep(current)
       
-      // Skip panel steps (they don't have answers in curriculum_answers)
-      if (step.triggersPanel) {
-        current = step.nextStep
-        continue
-      }
-      
-      // If this step hasn't been answered, return it
+      // CRITICAL: Panel steps are now shown inline, so don't skip them
+      // Check if this step hasn't been answered (for panel steps, check if key exists in answeredKeys)
       if (!answeredKeys.has(step.key)) {
         return current
       }
@@ -138,14 +137,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }, []) // Only run once on mount - don't wait for answeredKeys
   
   // Update to first unanswered step once answeredKeys loads (if answers exist)
+  // CRITICAL: Only run on initial load, not when user manually advances steps
   useEffect(() => {
     // Skip if history is empty (initialization effect hasn't run yet)
     if (history.length === 0) return
     
+    // Skip if already initialized (user is actively progressing through curriculum)
+    if (hasInitializedRef.current) return
+    
     // Skip if already on INIT and no answers exist
     if (currentStepId === 'INIT' && answeredKeys.size === 0) return
     
-    // Only update if we have answers and need to find first unanswered
+    // Only update if we have answers and need to find first unanswered (initial load only)
+    // This should only run once when answeredKeys first loads from database
     if (answeredKeys.size > 0) {
       const firstUnanswered = findFirstUnansweredStep('INIT')
       // Only update if different from current step
@@ -156,6 +160,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setHistory([stepMessage])
         setFullHistory([stepMessage]) // Add to full history too
       }
+      // Mark as initialized so this effect doesn't run again
+      // This prevents it from overriding manual step advancement
+      hasInitializedRef.current = true
     }
   }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length]) // Update when answeredKeys loads
   
@@ -177,18 +184,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         const nextStep = getStep(nextStepId)
         
         setTimeout(() => {
-          if (nextStep.triggersPanel && onTriggerPanel) {
-            // Next step also triggers a panel
-            onTriggerPanel(nextStep.triggersPanel)
-            setCurrentStepId(nextStepId)
-          } else {
-            // Next step is a chat question - only show current question
-            const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
-            setHistory([nextMessage])
-            setFullHistory(prev => [...prev, nextMessage]) // Add to full history
-            setPreviousStepId(currentStepId)
-            setCurrentStepId(nextStepId)
-          }
+          // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
+          // Just advance to next step (inline picker will render automatically)
+          const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+          setHistory([nextMessage])
+          setFullHistory(prev => [...prev, nextMessage]) // Add to full history
+          setPreviousStepId(currentStepId)
+          setCurrentStepId(nextStepId)
         }, 300) // Small delay to let panel close animation finish
       }
     }
@@ -373,6 +375,31 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    
+    // CRITICAL: If picker is active, mark as answered and advance to next step (already autosaved)
+    if (currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo') {
+      // Colors/logo are already autosaved by InlineColorPicker/InlineLogoPicker
+      // Mark step as answered optimistically (database save is async but should be done)
+      if (currentStep.key) {
+        setAnsweredKeys(prev => new Set([...prev, currentStep.key]))
+      }
+      
+      // Advance to next step
+      const nextStepId = currentStep.nextStep
+      const nextStep = getStep(nextStepId)
+      
+      setTimeout(() => {
+        // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
+        // Just advance to next step (inline picker will render automatically)
+        const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+        setHistory([nextMessage])
+        setFullHistory(prev => [...prev, nextMessage])
+        setPreviousStepId(currentStepId)
+        setCurrentStepId(nextStepId)
+      }, 300)
+      return
+    }
+    
     if (!input.trim() || isSubmitting) return
 
     const answer = input.trim()
@@ -433,15 +460,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const nextStep = getStep(nextStepId)
       
       setTimeout(() => {
-        // Check if next step triggers a panel
-        if (nextStep.triggersPanel && onTriggerPanel) {
-          // Trigger panel instead of showing chat question
-          onTriggerPanel(nextStep.triggersPanel)
-          setPreviousStepId(currentStepId)
-          setCurrentStepId(nextStepId)
-          setIsSubmitting(false)
-          return
-        }
+        // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
+        // Just advance to next step (inline picker will render automatically)
         
         // Normal chat flow - only show current question (no history building up)
         if (nextStepId !== 'COMPLETE') {
@@ -490,18 +510,84 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         width: '90%', /* EXACT from nodrinks */
         textAlign: 'center', /* EXACT from nodrinks */
         color: 'white', /* EXACT from nodrinks */
-        margin: '0 auto' /* Zeyoda pattern: no extra margin, parent handles spacing */
+        margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
+        // CRITICAL: Expand height when picker is shown
+        minHeight: currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' ? '500px' : 'auto'
       }}
     >
       <div>
-        {/* Current Question - Simple centered text like AuthPanel */}
+        {/* Current Question OR Inline Picker */}
         {currentStep && currentStep.question && (
-          <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
-            {currentStepId === 'INIT' 
-              ? "Welcome, My Champion! What is your artist name?"
-              : currentStep.question
-            }
-          </h1>
+          <>
+            {/* Show inline picker if this step triggers a panel */}
+            {currentStep.triggersPanel === 'colors' ? (
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  {currentStep.question}
+                </h2>
+                <InlineColorPicker
+                  profile={profile || null}
+                  onColorChange={async (updates) => {
+                    // Autosave immediately to profile
+                    if (onProfileUpdate) {
+                      await onProfileUpdate(updates)
+                    }
+                    
+                    // Save to curriculum_answers
+                    const { data: { user } } = await supabase.auth.getUser()
+                    if (user) {
+                      await supabase.from('curriculum_answers').upsert({
+                        user_id: user.id,
+                        question_key: currentStep.key,
+                        answer_data: { text: 'Colors set', primary: updates.primary_color, accent: updates.accent_color },
+                        project_id: null
+                      })
+                    }
+                  }}
+                  onPreviewChange={(preview) => {
+                    // Preview updates handled internally by InlineColorPicker
+                    // No need to dispatch events - InlineColorPicker handles everything
+                  }}
+                />
+              </div>
+            ) : currentStep.triggersPanel === 'logo' ? (
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  {currentStep.question}
+                </h2>
+                <InlineLogoPicker
+                  profile={profile || null}
+                  onLogoChange={async (updates) => {
+                    // Autosave immediately to profile
+                    if (onProfileUpdate) {
+                      await onProfileUpdate(updates)
+                    }
+                    
+                    // Save to curriculum_answers
+                    const { data: { user } } = await supabase.auth.getUser()
+                    if (user) {
+                      await supabase.from('curriculum_answers').upsert({
+                        user_id: user.id,
+                        question_key: currentStep.key,
+                        answer_data: { text: 'Logo uploaded', url: updates.logo_url },
+                        project_id: null
+                      })
+                    }
+                  }}
+                  onPreviewChange={(previewUrl, useBackground) => {
+                    // Preview updates handled internally by InlineLogoPicker
+                  }}
+                />
+              </div>
+            ) : (
+              <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
+                {currentStepId === 'INIT' 
+                  ? "Welcome, My Champion! What is your artist name?"
+                  : currentStep.question
+                }
+              </h1>
+            )}
+          </>
         )}
         
         {/* History Window - Inline scrollable container */}
@@ -650,19 +736,26 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )}
         </div>
 
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={currentStep.placeholder || "Type your answer..."}
-          disabled={currentStepId === 'COMPLETE' || isSubmitting}
-          className="email-input"
-          autoFocus
-        />
+        {/* Hide input when picker is active - user clicks Send to advance */}
+        {currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && (
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={currentStep.placeholder || "Type your answer..."}
+            disabled={currentStepId === 'COMPLETE' || isSubmitting}
+            className="email-input"
+            autoFocus
+          />
+        )}
         <button
           type="submit"
-          disabled={!input.trim() || isSubmitting || currentStepId === 'COMPLETE'}
+          disabled={
+            (currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && !input.trim()) 
+            || isSubmitting 
+            || currentStepId === 'COMPLETE'
+          }
           style={{
             marginTop: '10px',
             padding: '10px',

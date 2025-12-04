@@ -29,6 +29,13 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   phaseTokens,
   brandColor,
 }) => {
+  // CRITICAL: Preview config for live token color updates during editing
+  // This is set via event from ColorPanel/InlineColorPicker and cleared when profile changes
+  const [previewConfig, setPreviewConfig] = React.useState<{
+    primary_color?: string;
+    accent_color?: string;
+    brand_color?: string;
+  } | null>(null);
   const tokenElementRefs = useRef<(HTMLElement | null)[]>([]);
   const animationFrameIdRef = useRef<number | null>(null);
   const naturalOffsetRef = useRef(0);      // natural orbit offset (radians)
@@ -49,6 +56,33 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   const draggingTokenRef = useRef<boolean>(false);
   const downTsRef = useRef<number>(0);
   const hoverPauseTimerRef = useRef<number | null>(null);
+
+  // CRITICAL: Listen for preview config events from ColorPanel/InlineColorPicker for live token updates
+  useEffect(() => {
+    const handlePreview = (e: Event) => {
+      const customEvent = e as CustomEvent<{ previewConfig: { primary_color?: string; accent_color?: string; brand_color?: string } }>;
+      if (customEvent.detail?.previewConfig) {
+        setPreviewConfig(customEvent.detail.previewConfig);
+      }
+    };
+    
+    const handleClear = () => {
+      setPreviewConfig(null);
+    };
+    
+    window.addEventListener('profilePreview', handlePreview as EventListener);
+    window.addEventListener('profilePreviewClear', handleClear);
+    return () => {
+      window.removeEventListener('profilePreview', handlePreview as EventListener);
+      window.removeEventListener('profilePreviewClear', handleClear);
+    };
+  }, []);
+
+  // CRITICAL: Clear preview config when brandColor changes significantly (after save or user switch)
+  // This matches Zeyoda lines 75-81 pattern
+  useEffect(() => {
+    setPreviewConfig(null);
+  }, [brandColor]);
 
   useEffect(() => {
     const featuredElement = featuredContentRef.current;
@@ -357,7 +391,12 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
       >
         {phaseTokens.map((token, index) => {
           const isFilled = token.progress >= 100;
-          const tokenColor = brandColor || token.color || defaultColors[token.id] || defaultColors.pre;
+          // CRITICAL: Merged lookup for live token color updates
+          // During editing: uses previewConfig (from InlineColorPicker event) for immediate updates
+          // After save: uses brandColor prop (updated state) for persistence
+          // This matches Zeyoda's getTokenTheme pattern (lines 397-420)
+          const mergedBrandColor = previewConfig?.brand_color || previewConfig?.primary_color || brandColor;
+          const tokenColor = mergedBrandColor || token.color || defaultColors[token.id] || defaultColors.pre;
           const fillPercentage = Math.min(100, Math.max(0, token.progress));
           
           // DEBUG: Log PRE token progress

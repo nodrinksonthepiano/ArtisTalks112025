@@ -39,7 +39,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   INIT: {
     id: 'INIT',
     question: "Welcome, My Champion! I am here to help you build your legacy. First things first: What is your artist name?",
-    nextStep: 'MISSION_GIFT',
+    nextStep: 'COLORS_PANEL',
     key: 'artist_name',
     placeholder: "e.g. JAI, The Beatles...",
     phase: 'pre'
@@ -47,41 +47,41 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   MISSION_NAME: {
     id: 'MISSION_NAME',
     question: "What is your artist name?",
-    nextStep: 'MISSION_GIFT',
+    nextStep: 'COLORS_PANEL',
     key: 'artist_name',
     placeholder: "Your Artist Name",
     phase: 'pre'
   },
-  MISSION_GIFT: {
-    id: 'MISSION_GIFT',
-    question: "I love that name. Now, tell me: What makes your presence a gift to the world?",
-    nextStep: 'LOGO_PANEL',
-    key: 'gift_to_world',
-    placeholder: "I bring energy/light/truth...",
-    phase: 'pre'
-  },
-  LOGO_PANEL: {
-    id: 'LOGO_PANEL',
-    question: "Perfect! Now let's set up your branding. First, upload your logo.",
-    nextStep: 'COLORS_PANEL',
-    key: 'logo_uploaded',
-    triggersPanel: 'logo',
-    phase: 'pre'
-  },
   COLORS_PANEL: {
     id: 'COLORS_PANEL',
-    question: "Great logo! Now choose your brand colors.",
-    nextStep: 'FONT_PANEL',
+    question: "Great! Now choose your brand colors.",
+    nextStep: 'MISSION_GIFT',
     key: 'colors_set',
     triggersPanel: 'colors',
     phase: 'pre'
   },
+  MISSION_GIFT: {
+    id: 'MISSION_GIFT',
+    question: "I love those colors. Now, tell me: What makes your presence a gift to the world?",
+    nextStep: 'FONT_PANEL',
+    key: 'gift_to_world',
+    placeholder: "I bring energy/light/truth...",
+    phase: 'pre'
+  },
   FONT_PANEL: {
     id: 'FONT_PANEL',
-    question: "Excellent colors! Finally, select your font.",
-    nextStep: 'PRE_COMPLETE',
+    question: "Excellent! Now select your font.",
+    nextStep: 'LOGO_PANEL',
     key: 'font_set',
     triggersPanel: 'font',
+    phase: 'pre'
+  },
+  LOGO_PANEL: {
+    id: 'LOGO_PANEL',
+    question: "Perfect! Finally, upload your logo.",
+    nextStep: 'PRE_COMPLETE',
+    key: 'logo_uploaded',
+    triggersPanel: 'logo',
     phase: 'pre'
   },
   PRE_COMPLETE: {

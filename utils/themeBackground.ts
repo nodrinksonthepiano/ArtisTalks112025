@@ -47,13 +47,19 @@ export function applyLogoBackground(
   // Zeyoda lines 30-32: Always keep core theme variables current
   document.documentElement.style.setProperty("--primary-color", primary);
 
-  // Zeyoda lines 34-40: Set accent color variables
+  // CRITICAL: Only set accent color CSS vars if accent color is provided AND different from current
+  // This prevents accent color from being overwritten when only primary color changes
+  // Accent color CSS vars should only be updated by updateAccentColor, not here
   if (accent) {
-    document.documentElement.style.setProperty("--accent-color", accent);
-    document.documentElement.style.setProperty(
-      "--accent-color-rgb",
-      accent.match(/\d+/g)?.join(", ") ?? "0,0,0"
-    );
+    const currentAccent = document.documentElement.style.getPropertyValue('--accent-color');
+    // Only update if accent color actually changed (prevents overwriting when primary changes)
+    if (currentAccent !== accent) {
+      document.documentElement.style.setProperty("--accent-color", accent);
+      document.documentElement.style.setProperty(
+        "--accent-color-rgb",
+        accent.match(/\d+/g)?.join(", ") ?? "0,0,0"
+      );
+    }
   }
 
   // Zeyoda lines 42-44: Set gradient variables (using primary as fallback)
@@ -126,10 +132,10 @@ export function applyLogoBackground(
     logo_use_background: useBackground,
     logo_use_background_type: typeof useBackground
   });
-  // Zeyoda lines 124-127: CRITICAL - Clear ALL background styles
+  // Zeyoda lines 124-127: CRITICAL - Clear ALL background styles and set primary color
   document.body.style.setProperty("background-image", "none", "important");
+  document.body.style.setProperty("background-color", primary, "important");
   document.body.style.setProperty("background", primary, "important");
-  document.body.style.removeProperty("background-color");
   
   document.documentElement.style.setProperty("--background", primary);
 }

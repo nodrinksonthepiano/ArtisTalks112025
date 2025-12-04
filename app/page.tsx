@@ -130,6 +130,30 @@ export default function Home() {
     logo_use_background?: boolean
   } | null>(null)
   
+  // CRITICAL: Listen for profile preview changes from InlineColorPicker (matches Zeyoda's artistConfigPreview)
+  // This ensures page.tsx knows about color changes and updates previewOverrides for halo
+  useEffect(() => {
+    const handleProfilePreview = (e: Event) => {
+      const customEvent = e as CustomEvent<{ previewConfig?: { primary_color?: string; accent_color?: string; brand_color?: string; logo_url?: string | null; logo_use_background?: boolean } }>
+      if (customEvent.detail?.previewConfig) {
+        setPreviewOverrides(prev => ({
+          ...prev,
+          primary_color: customEvent.detail.previewConfig?.primary_color,
+          accent_color: customEvent.detail.previewConfig?.accent_color,
+          brand_color: customEvent.detail.previewConfig?.brand_color,
+          // CRITICAL: Clear logo when primary color is set (user chose background color)
+          logo_url: customEvent.detail.previewConfig?.logo_url !== undefined ? customEvent.detail.previewConfig.logo_url : prev?.logo_url,
+          logo_use_background: customEvent.detail.previewConfig?.logo_use_background !== undefined ? customEvent.detail.previewConfig.logo_use_background : prev?.logo_use_background
+        }))
+      }
+    }
+    
+    window.addEventListener('profilePreview', handleProfilePreview as EventListener)
+    return () => {
+      window.removeEventListener('profilePreview', handleProfilePreview as EventListener)
+    }
+  }, [])
+  
   // Legacy logo preview state (keep for backward compatibility with LogoPanel)
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null)
   const [logoPreviewUseBackground, setLogoPreviewUseBackground] = useState(false)
@@ -173,6 +197,7 @@ export default function Home() {
 
   // Apply logo background when profile or preview changes (Zeyoda pattern)
   // Debounced to prevent glitching during typing
+  // CRITICAL: Only apply for logo changes, not color changes (colors handled by InlineColorPicker)
   const logoBgTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastLogoBgRef = useRef<string>('')
   useEffect(() => {
@@ -182,6 +207,7 @@ export default function Home() {
       logo_use_background: mergedProfile?.logo_use_background,
       preview_logo_url: previewOverrides?.logo_url,
       preview_logo_use_bg: previewOverrides?.logo_use_background,
+      primary_color: mergedProfile?.primary_color, // Include primary color in signature
       user: !!user
     })
     
@@ -193,8 +219,24 @@ export default function Home() {
     // Debounce rapid changes (e.g., during typing)
     if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     logoBgTimeoutRef.current = setTimeout(() => {
-      // Keep preset logo background if user hasn't uploaded one
-      if (!mergedProfile?.logo_url && user) {
+      // CRITICAL: If user has set primary color (via previewOverrides), don't apply default logo
+      // User's color choice takes precedence over default logo
+      if (previewOverrides?.primary_color && previewOverrides?.logo_url === null) {
+        // User explicitly chose background color - use it, not logo
+        const colorProfile = {
+          ...mergedProfile,
+          primary_color: previewOverrides.primary_color,
+          brand_color: previewOverrides.brand_color || previewOverrides.primary_color,
+          logo_url: null,
+          logo_use_background: false
+        } as Profile
+        applyLogoBackground(colorProfile, null, false)
+        lastLogoBgRef.current = bgSignature
+        return
+      }
+      
+      // Keep preset logo background if user hasn't uploaded one AND hasn't set a color
+      if (!mergedProfile?.logo_url && user && !previewOverrides?.primary_color) {
         applyLogoBackground(null, encodeURI('/CreationCreator_Logo_Color copy.png'), true)
         lastLogoBgRef.current = bgSignature
         return
