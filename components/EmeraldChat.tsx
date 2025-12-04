@@ -30,6 +30,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
   const [answeredKeys, setAnsweredKeys] = useState<Set<string>>(new Set())
   
+  // CRITICAL: Track current picker state to know what to save when Send is clicked
+  // This ensures we save the actual current state, not stale profile values
+  const [currentPickerState, setCurrentPickerState] = useState<{
+    colors?: { primary_color?: string | null; accent_color?: string | null }
+    logo?: { logo_url?: string | null; logo_use_background?: boolean | null }
+    font?: { font_family?: string | null }
+  }>({})
+  
   // Redo stack: track undone states so user can redo
   const [redoStack, setRedoStack] = useState<Array<{
     stepId: StepId
@@ -377,12 +385,62 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     
-    // CRITICAL: If picker is active, mark as answered and advance to next step (already autosaved)
+    // CRITICAL: If picker is active, save to curriculum_answers and advance to next step
     if (currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' || currentStep?.triggersPanel === 'font') {
-      // Colors/logo are already autosaved by InlineColorPicker/InlineLogoPicker
-      // Mark step as answered optimistically (database save is async but should be done)
-      if (currentStep.key) {
+      // Profile is already updated by picker (live preview)
+      // Now save to curriculum_answers when user clicks Send
+      // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user && currentStep.key) {
+        // Build answer data based on step type
+        let answerData: any = {}
+        if (currentStep.triggersPanel === 'colors') {
+          // Use tracked state or fallback to profile
+          const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
+          const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
+          answerData = { 
+            text: 'Colors set', 
+            primary: primaryColor, 
+            accent: accentColor 
+          }
+        } else if (currentStep.triggersPanel === 'logo') {
+          // CRITICAL: Use tracked state to detect logo removal (logo_url: null)
+          const logoUrl = currentPickerState.logo?.logo_url !== undefined 
+            ? currentPickerState.logo.logo_url 
+            : profile?.logo_url
+          
+          // Only save if logo actually exists (not removed)
+          if (logoUrl) {
+            answerData = { 
+              text: 'Logo uploaded', 
+              url: logoUrl 
+            }
+          } else {
+            // Logo was removed - don't save to curriculum_answers (step not completed)
+            // User needs to upload a logo or skip this step
+            return // Don't advance, don't save
+          }
+        } else if (currentStep.triggersPanel === 'font') {
+          // Use tracked state or fallback to profile
+          const fontFamily = currentPickerState.font?.font_family || profile?.font_family
+          answerData = { 
+            text: 'Font set', 
+            font: fontFamily 
+          }
+        }
+        
+        await supabase.from('curriculum_answers').upsert({
+          user_id: user.id,
+          question_key: currentStep.key,
+          answer_data: answerData,
+          project_id: null
+        })
+        
+        // Mark step as answered
         setAnsweredKeys(prev => new Set([...prev, currentStep.key]))
+        
+        // Clear picker state for next step
+        setCurrentPickerState({})
       }
       
       // Advance to next step
@@ -529,20 +587,18 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 <InlineColorPicker
                   profile={profile || null}
                   onColorChange={async (updates) => {
-                    // Autosave immediately to profile
+                    // CRITICAL: Track current state for saving when Send is clicked
+                    setCurrentPickerState(prev => ({
+                      ...prev,
+                      colors: {
+                        primary_color: updates.primary_color,
+                        accent_color: updates.accent_color
+                      }
+                    }))
+                    
+                    // Update profile for live preview
                     if (onProfileUpdate) {
                       await onProfileUpdate(updates)
-                    }
-                    
-                    // Save to curriculum_answers
-                    const { data: { user } } = await supabase.auth.getUser()
-                    if (user) {
-                      await supabase.from('curriculum_answers').upsert({
-                        user_id: user.id,
-                        question_key: currentStep.key,
-                        answer_data: { text: 'Colors set', primary: updates.primary_color, accent: updates.accent_color },
-                        project_id: null
-                      })
                     }
                   }}
                   onPreviewChange={(preview) => {
@@ -559,20 +615,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 <InlineLogoPicker
                   profile={profile || null}
                   onLogoChange={async (updates) => {
-                    // Autosave immediately to profile
+                    // CRITICAL: Track current state for saving when Send is clicked
+                    // This captures logo removal (logo_url: null) correctly
+                    setCurrentPickerState(prev => ({
+                      ...prev,
+                      logo: {
+                        logo_url: updates.logo_url !== undefined ? updates.logo_url : prev.logo?.logo_url,
+                        logo_use_background: updates.logo_use_background !== undefined ? updates.logo_use_background : prev.logo?.logo_use_background
+                      }
+                    }))
+                    
+                    // Update profile for live preview
                     if (onProfileUpdate) {
                       await onProfileUpdate(updates)
-                    }
-                    
-                    // Save to curriculum_answers
-                    const { data: { user } } = await supabase.auth.getUser()
-                    if (user) {
-                      await supabase.from('curriculum_answers').upsert({
-                        user_id: user.id,
-                        question_key: currentStep.key,
-                        answer_data: { text: 'Logo uploaded', url: updates.logo_url },
-                        project_id: null
-                      })
                     }
                   }}
                   onPreviewChange={(previewUrl, useBackground) => {
@@ -595,20 +650,17 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 <InlineFontPicker
                   profile={profile || null}
                   onFontChange={async (updates) => {
-                    // Autosave immediately to profile
+                    // CRITICAL: Track current state for saving when Send is clicked
+                    setCurrentPickerState(prev => ({
+                      ...prev,
+                      font: {
+                        font_family: updates.font_family
+                      }
+                    }))
+                    
+                    // Update profile for live preview
                     if (onProfileUpdate) {
                       await onProfileUpdate(updates)
-                    }
-                    
-                    // Save to curriculum_answers
-                    const { data: { user } } = await supabase.auth.getUser()
-                    if (user) {
-                      await supabase.from('curriculum_answers').upsert({
-                        user_id: user.id,
-                        question_key: currentStep.key,
-                        answer_data: { text: 'Font set', font: updates.font_family },
-                        project_id: null
-                      })
                     }
                   }}
                 />

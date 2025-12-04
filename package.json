@@ -27,10 +27,11 @@
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
     "@types/uuid": "^10.0.0",
+    "baseline-browser-mapping": "^2.9.2",
     "eslint": "^9",
     "eslint-config-next": "16.0.3",
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "5.9.3"
   }
 }

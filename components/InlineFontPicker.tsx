@@ -81,7 +81,8 @@ export default function InlineFontPicker({ profile, onFontChange }: InlineFontPi
     // Update state
     setFontFamily(newFont)
     
-    // CRITICAL: Autosave immediately
+    // CRITICAL: Update profile for live preview only (don't save to curriculum_answers here)
+    // curriculum_answers will be saved when user clicks Send
     onFontChange({ font_family: newFont })
   }, [profile, onFontChange])
   
