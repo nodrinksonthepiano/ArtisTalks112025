@@ -8,6 +8,7 @@ import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineLogoPicker from '@/components/InlineLogoPicker'
+import InlineFontPicker from '@/components/InlineFontPicker'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -377,7 +378,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     e.preventDefault()
     
     // CRITICAL: If picker is active, mark as answered and advance to next step (already autosaved)
-    if (currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo') {
+    if (currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' || currentStep?.triggersPanel === 'font') {
       // Colors/logo are already autosaved by InlineColorPicker/InlineLogoPicker
       // Mark step as answered optimistically (database save is async but should be done)
       if (currentStep.key) {
@@ -512,7 +513,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         color: 'white', /* EXACT from nodrinks */
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
         // CRITICAL: Expand height when picker is shown
-        minHeight: currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' ? '500px' : 'auto'
+        minHeight: currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' || currentStep?.triggersPanel === 'font' ? '500px' : 'auto'
       }}
     >
       <div>
@@ -575,7 +576,40 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                     }
                   }}
                   onPreviewChange={(previewUrl, useBackground) => {
-                    // Preview updates handled internally by InlineLogoPicker
+                    // CRITICAL: Update previewOverrides so page.tsx knows about logo changes
+                    // This prevents page.tsx useEffect from reapplying logo when unchecked
+                    window.dispatchEvent(new CustomEvent('logoPreviewChange', { 
+                      detail: { 
+                        logo_url: previewUrl,
+                        logo_use_background: useBackground
+                      } 
+                    }))
+                  }}
+                />
+              </div>
+            ) : currentStep.triggersPanel === 'font' ? (
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  {currentStep.question}
+                </h2>
+                <InlineFontPicker
+                  profile={profile || null}
+                  onFontChange={async (updates) => {
+                    // Autosave immediately to profile
+                    if (onProfileUpdate) {
+                      await onProfileUpdate(updates)
+                    }
+                    
+                    // Save to curriculum_answers
+                    const { data: { user } } = await supabase.auth.getUser()
+                    if (user) {
+                      await supabase.from('curriculum_answers').upsert({
+                        user_id: user.id,
+                        question_key: currentStep.key,
+                        answer_data: { text: 'Font set', font: updates.font_family },
+                        project_id: null
+                      })
+                    }
                   }}
                 />
               </div>
@@ -737,7 +771,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         </div>
 
         {/* Hide input when picker is active - user clicks Send to advance */}
-        {currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && (
+        {currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && currentStep?.triggersPanel !== 'font' && (
           <input
             ref={inputRef}
             type="text"
@@ -752,7 +786,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         <button
           type="submit"
           disabled={
-            (currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && !input.trim()) 
+            (currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && currentStep?.triggersPanel !== 'font' && !input.trim()) 
             || isSubmitting 
             || currentStepId === 'COMPLETE'
           }

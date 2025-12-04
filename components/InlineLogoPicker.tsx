@@ -164,12 +164,25 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
               // Zeyoda pattern: Apply background IMMEDIATELY (bypass React state batching)
               const currentLogoUrl = logoPreviewRef.current || logoPreview || profile?.logo_url || null;
               
+              // CRITICAL: When unchecked, pass null for logo URL to force primary color
+              // This ensures background reverts to primary color, not logo
+              const logoUrlToUse = checked ? currentLogoUrl : null;
+              
+              // Build profile with updated logo_use_background to ensure correct fallback
+              const updatedProfile = {
+                ...profile,
+                logo_use_background: checked,
+                primary_color: profile?.primary_color,
+                brand_color: profile?.brand_color || profile?.primary_color
+              } as Profile;
+              
               // Apply immediately (Zeyoda pattern - direct call, no state batching delay)
-              applyLogoBackground(profile, currentLogoUrl, checked);
+              // Pass null for logo URL when unchecked to force primary color branch
+              applyLogoBackground(updatedProfile, logoUrlToUse, checked);
               
               // Update parent state for consistency
               if (onPreviewChange) {
-                onPreviewChange(currentLogoUrl, checked);
+                onPreviewChange(logoUrlToUse, checked);
               }
               
               // CRITICAL: Autosave immediately

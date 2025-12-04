@@ -148,9 +148,22 @@ export default function Home() {
       }
     }
     
+    const handleLogoPreview = (e: Event) => {
+      const customEvent = e as CustomEvent<{ logo_url?: string | null; logo_use_background?: boolean }>
+      if (customEvent.detail) {
+        setPreviewOverrides(prev => ({
+          ...prev,
+          logo_url: customEvent.detail.logo_url !== undefined ? customEvent.detail.logo_url : prev?.logo_url,
+          logo_use_background: customEvent.detail.logo_use_background !== undefined ? customEvent.detail.logo_use_background : prev?.logo_use_background
+        }))
+      }
+    }
+    
     window.addEventListener('profilePreview', handleProfilePreview as EventListener)
+    window.addEventListener('logoPreviewChange', handleLogoPreview as EventListener)
     return () => {
       window.removeEventListener('profilePreview', handleProfilePreview as EventListener)
+      window.removeEventListener('logoPreviewChange', handleLogoPreview as EventListener)
     }
   }, [])
   
