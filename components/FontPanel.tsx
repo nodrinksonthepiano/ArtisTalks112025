@@ -72,7 +72,11 @@ export default function FontPanel({ profile, onSave, onClose }: FontPanelProps) 
         await supabase.from('curriculum_answers').upsert({
           user_id: user.id,
           question_key: 'font_set',
-          answer_data: { text: 'Font set', font: fontFamily },
+          answer_data: { 
+            text: 'Font set', 
+            font: fontFamily,
+            step_id: 'FONT_PANEL' // CRITICAL: Store stepId to fix duplicate key bug
+          },
           project_id: null
         })
       }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, getStep, StepId } from '@/lib/curriculum'
 
@@ -63,12 +63,38 @@ export function useCarouselItems(
         }
 
         // Build carousel items from answers
-        const answeredItems: CarouselItem[] = (answers || []).map((answer) => {
-          const step = Object.values(CURRICULUM).find(s => s.key === answer.question_key)
-          const stepId = step?.id || answer.question_key as StepId
-          
+        const answeredItems: CarouselItem[] = (answers || []).map((answer, answerIndex) => {
           // Extract content and media URLs from answer_data
           const answerData = answer.answer_data as any
+          
+          // CRITICAL: Find step first (needed for phase/type even if we use stored stepId)
+          const step = Object.values(CURRICULUM).find(s => s.key === answer.question_key)
+          
+          // CRITICAL: Try to get stepId from answer_data first (new answers have this)
+          const storedStepId = answerData?.step_id
+          
+          let stepId: StepId
+          if (storedStepId) {
+            // New answer format: use stored stepId
+            stepId = storedStepId as StepId
+          } else {
+            // Backward compatibility: infer stepId from question_key
+            if (step && step.key === 'artist_name') {
+              // Special case: INIT and MISSION_NAME both use 'artist_name'
+              // Check if any answer exists BEFORE this artist_name answer
+              const currentAnswerIndex = answerIndex
+              const hasAnswersBefore = answers.some((a, idx) => 
+                idx < currentAnswerIndex && a.question_key !== 'artist_name'
+              )
+              // If there are other answers before this one, it's MISSION_NAME (user skipped INIT)
+              // Otherwise, it's INIT (first question)
+              stepId = hasAnswersBefore ? 'MISSION_NAME' : 'INIT'
+            } else {
+              // Other keys are unique, use simple lookup
+              stepId = step?.id || answer.question_key as StepId
+            }
+          }
+          
           const content = answerData?.text || answerData?.content || ''
           const imageUrl = answerData?.imageUrl || answerData?.image_url || answerData?.url
           const videoUrl = answerData?.videoUrl || answerData?.video_url
@@ -87,21 +113,23 @@ export function useCarouselItems(
             imageUrl,
             videoUrl,
             audioUrl,
-            type: step?.phase || 'pre',
+            type: (step?.phase === 'prod' ? 'pro' : step?.phase === 'legacy' ? 'loop' : step?.phase) || 'pre',
             createdAt: answer.created_at
           }
         })
 
-        // Add current question card if it exists and hasn't been answered yet
+        // Add current question card if it exists and isn't already in the list
         const answeredKeys = new Set(answeredItems.map(item => item.questionKey))
+        const answeredStepIds = new Set(answeredItems.map(item => item.stepId))
         let finalItems = [...answeredItems]
         
         if (currentQuestionStepId) {
           const currentStep = getStep(currentQuestionStepId)
-          const isAnswered = answeredKeys.has(currentStep.key)
           
-          // Only add current question card if it hasn't been answered
-          if (!isAnswered) {
+          // Only add current question card if it doesn't already exist
+          const cardAlreadyExists = finalItems.some(item => item.stepId === currentQuestionStepId)
+          
+          if (!cardAlreadyExists) {
             // Use ref value (always current, even during debounce)
             const typingInput = typingInputRef.current && currentTypingStepId === currentQuestionStepId ? typingInputRef.current : ''
             const label = keyToLabel(currentStep.key)
@@ -115,7 +143,7 @@ export function useCarouselItems(
               questionKey: currentStep.key,
               title: cardTitle, // Mad lib format: "Artist Name: " or "Artist Name: JaiTea..."
               content: '', // Don't set content - answer is already in title (prevents duplication)
-              type: currentStep.phase || 'pre',
+              type: (currentStep.phase === 'prod' ? 'pro' : currentStep.phase === 'legacy' ? 'loop' : currentStep.phase) || 'pre',
               createdAt: new Date().toISOString()
             }
             // Add at the end (most recent)
@@ -133,7 +161,7 @@ export function useCarouselItems(
     // Store loadItems function for typing debounce
     loadItemsRef.current = loadItems
 
-    // Load immediately (not typing)
+    // Load immediately (not typing) - this will update items with DB data
     loadItems()
 
     // Subscribe to changes
@@ -164,13 +192,13 @@ export function useCarouselItems(
     
     const isTyping = currentTypingInput !== lastTypingInputRef.current && currentTypingStepId === currentQuestionStepId
     if (isTyping) {
-      // Typing is happening - debounce the update
+      // Typing is happening - debounce the update (reduced from 250ms to 100ms for faster card updates)
       if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
       typingDebounceRef.current = setTimeout(() => {
         if (loadItemsRef.current) {
           loadItemsRef.current()
         }
-      }, 250) // Debounce typing updates (longer to prevent glitching)
+      }, 100) // Reduced debounce for faster card updates (was 250ms)
     }
     
     return () => {

@@ -58,7 +58,12 @@ export default function ColorPanel({ profile, onSave, onClose, onPreviewChange }
         await supabase.from('curriculum_answers').upsert({
           user_id: user.id,
           question_key: 'colors_set',
-          answer_data: { text: 'Colors set', primary: primaryColor, accent: accentColor },
+          answer_data: { 
+            text: 'Colors set', 
+            primary: primaryColor, 
+            accent: accentColor,
+            step_id: 'COLORS_PANEL' // CRITICAL: Store stepId to fix duplicate key bug
+          },
           project_id: null
         })
       }

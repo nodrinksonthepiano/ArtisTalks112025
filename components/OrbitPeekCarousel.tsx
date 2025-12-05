@@ -1,7 +1,9 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
+import { Pencil } from 'lucide-react';
 import type { CarouselItem } from '@/hooks/useCarouselItems';
+import { StepId } from '@/lib/curriculum';
 
 type Props = {
   items: CarouselItem[];
@@ -1272,6 +1274,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
           overflow: 'auto',
           boxSizing: 'border-box',
           textAlign: 'center',
+          position: 'relative', // For absolute positioning of edit button
         }}>
           {(() => {
             // Parse title format "Label: Answer" to separate label and answer
@@ -1283,6 +1286,30 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
             
             return (
               <>
+                {/* Edit button - top right corner, only on answer cards */}
+                {hasAnswer && item.stepId && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      // Dispatch event to trigger edit in EmeraldChat
+                      window.dispatchEvent(new CustomEvent('cardEdit', { 
+                        detail: { stepId: item.stepId } 
+                      }));
+                    }}
+                    className="absolute top-2 right-2 p-1.5 rounded-lg transition-colors hover:bg-black/20 flex-shrink-0 z-10"
+                    style={{
+                      color: cardText,
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      backdropFilter: 'blur(4px)',
+                    }}
+                    title="Edit answer"
+                    aria-label="Edit answer"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                )}
+            
                 <h3 style={{ 
                   fontSize: 'clamp(0.875rem, 2vw, 1.5rem)', // Responsive text sizing
                   fontWeight: 600,

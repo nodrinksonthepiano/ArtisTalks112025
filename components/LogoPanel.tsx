@@ -90,7 +90,11 @@ export default function LogoPanel({ profile, onSave, onClose, onPreviewChange }:
         await supabase.from('curriculum_answers').upsert({
           user_id: user.id,
           question_key: 'logo_uploaded',
-          answer_data: { text: 'Logo uploaded', url: logoPreview },
+          answer_data: { 
+            text: 'Logo uploaded', 
+            url: logoPreview,
+            step_id: 'LOGO_PANEL' // CRITICAL: Store stepId to fix duplicate key bug
+          },
           project_id: null
         })
       }

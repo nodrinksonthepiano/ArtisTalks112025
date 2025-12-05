@@ -1,5 +1,8 @@
 "use client";
 import React, { useEffect, useRef } from 'react';
+import { Profile } from '@/hooks/useProfile';
+import { CurriculumProgress } from '@/hooks/useCurriculumProgress';
+import { findFirstUnansweredStepInPhase } from '@/lib/curriculum';
 
 interface ArtisTalksOrbitRendererProps {
   featuredContentRef: React.RefObject<HTMLDivElement | null>;
@@ -12,7 +15,9 @@ interface ArtisTalksOrbitRendererProps {
     progress: number;
     color?: string;
   }>;
-  brandColor?: string;
+  profile?: Profile | null; // ADD: Full profile for colors
+  progress: CurriculumProgress; // ADD: Progress for reveal logic
+  answeredKeys: Set<string>; // ADD: For finding unanswered steps
 }
 
 const ORBIT_SPEED = 0.3; // natural radians/sec
@@ -27,7 +32,9 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   chatRef,
   isOrbitAnimationPaused,
   phaseTokens,
-  brandColor,
+  profile,
+  progress,
+  answeredKeys,
 }) => {
   // CRITICAL: Preview config for live token color updates during editing
   // This is set via event from ColorPanel/InlineColorPicker and cleared when profile changes
@@ -78,11 +85,11 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
     };
   }, []);
 
-  // CRITICAL: Clear preview config when brandColor changes significantly (after save or user switch)
+  // CRITICAL: Clear preview config when profile colors change significantly (after save or user switch)
   // This matches Zeyoda lines 75-81 pattern
   useEffect(() => {
     setPreviewConfig(null);
-  }, [brandColor]);
+  }, [profile?.primary_color, profile?.brand_color]);
 
   useEffect(() => {
     const featuredElement = featuredContentRef.current;
@@ -359,7 +366,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         animationFrameIdRef.current = null;
       }
     };
-  }, [featuredContentRef, chatRef, isOrbitAnimationPaused, phaseTokens, brandColor]);
+  }, [featuredContentRef, chatRef, isOrbitAnimationPaused, phaseTokens]);
 
   // Early return if FeaturedContent not ready (matches Zeyoda line 379: if (!artistConfig) return null;)
   if (!featuredContentRef.current) return null;
@@ -390,25 +397,47 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         style={{ touchAction: 'none', overscrollBehavior: 'contain' as any, pointerEvents: 'auto' }}
       >
         {phaseTokens.map((token, index) => {
-          const isFilled = token.progress >= 100;
-          // CRITICAL: Merged lookup for live token color updates
-          // During editing: uses previewConfig (from InlineColorPicker event) for immediate updates
-          // After save: uses brandColor prop (updated state) for persistence
-          // This matches Zeyoda's getTokenTheme pattern (lines 397-420)
-          const mergedBrandColor = previewConfig?.brand_color || previewConfig?.primary_color || brandColor;
-          const tokenColor = mergedBrandColor || token.color || defaultColors[token.id] || defaultColors.pre;
-          const fillPercentage = Math.min(100, Math.max(0, token.progress));
+          // Check if profile is established (artist_name + primary_color)
+          const isProfileEstablished = profile?.artist_name && (profile?.primary_color || profile?.brand_color);
           
-          // DEBUG: Log PRE token progress
-          if (token.id === 'pre') {
-            console.log('[PRE TOKEN FILL]', { 
-              id: token.id,
-              progress: token.progress, 
-              fillPercentage, 
-              tokenColor,
-              willRender: fillPercentage > 0 
-            });
-          }
+          // Get branded colors (with preview fallback)
+          const primaryColor = isProfileEstablished
+            ? (previewConfig?.primary_color || profile?.primary_color || profile?.brand_color)
+            : defaultColors[token.id];
+            
+          const accentColor = isProfileEstablished
+            ? (previewConfig?.accent_color || profile?.accent_color)
+            : '#fffacd'; // Default gold etching
+          
+          const fillPercentage = Math.min(100, Math.max(0, token.progress));
+          const isFilled = fillPercentage >= 100;
+          
+          // Progressive reveal logic
+          const shouldReveal = (() => {
+            if (token.id === 'pre') return true; // Always show PRE
+            if (token.id === 'prod') return progress.preProgress > 0;
+            if (token.id === 'post') return progress.proProgress > 0;
+            if (token.id === 'legacy') return progress.postProgress > 0;
+            return false;
+          })();
+          
+          const tokenOpacity = shouldReveal ? 1 : 0;
+          const tokenScale = shouldReveal ? 1 : 0.5;
+          
+          // Click handler for navigation
+          const handleTokenClick = (e: React.MouseEvent) => {
+            // Only navigate if this wasn't a drag
+            if (!draggingTokenRef.current && !suppressClickRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+              const firstUnanswered = findFirstUnansweredStepInPhase(token.id, answeredKeys);
+              if (firstUnanswered) {
+                window.dispatchEvent(new CustomEvent('tokenNavigate', { 
+                  detail: { stepId: firstUnanswered } 
+                }));
+              }
+            }
+          };
           
           return (
             <div
@@ -419,18 +448,23 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
               }}
               style={{
                 willChange: 'transform, opacity',
-                opacity: 1,
+                opacity: tokenOpacity,
+                transform: `scale(${tokenScale})`,
+                transition: 'opacity 0.5s ease, transform 0.5s ease',
                 position: 'fixed', // VIEWPORT-relative (matches center coordinates - Zeyoda)
-                cursor: 'grab',
-                pointerEvents: 'auto',
+                cursor: shouldReveal ? 'pointer' : 'default', // Changed from 'grab' to indicate clickability
+                pointerEvents: shouldReveal ? 'auto' : 'none', // Disable interaction if not revealed
                 // left/top set dynamically in positionOnce()
               }}
+              onClick={handleTokenClick}
               onMouseEnter={(e) => { 
+                if (!shouldReveal) return;
                 isHoveringRef.current = true; 
                 if (hoverPauseTimerRef.current) window.clearTimeout(hoverPauseTimerRef.current); 
                 isOrbitAnimationPaused.current = true; 
               }}
               onMouseLeave={(e) => { 
+                if (!shouldReveal) return;
                 isHoveringRef.current = false; 
                 if (hoverPauseTimerRef.current) window.clearTimeout(hoverPauseTimerRef.current); 
                 hoverPauseTimerRef.current = window.setTimeout(()=>{ 
@@ -438,6 +472,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 }, 200) as unknown as number; 
               }}
               onPointerDown={(e)=>{ 
+                if (!shouldReveal) return;
                 try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}; 
                 activePointerIdRef.current = e.pointerId; 
                 isInteractingRef.current = true; 
@@ -450,7 +485,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 (e.currentTarget.style as any).cursor = 'grabbing'; 
               }}
               onPointerMove={(e)=>{ 
-                if (activePointerIdRef.current !== e.pointerId || lastAngleRef.current===null) return; 
+                if (!shouldReveal || activePointerIdRef.current !== e.pointerId || lastAngleRef.current===null) return; 
                 const dx = e.clientX - (downXYRef.current?.x||e.clientX); 
                 const dy = e.clientY - (downXYRef.current?.y||e.clientY); 
                 if (!draggingTokenRef.current && (dx*dx+dy*dy) > 36) { 
@@ -469,6 +504,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 lastEventTsRef.current = now; 
               }}
               onPointerUp={(e)=>{ 
+                if (!shouldReveal) return;
                 if (activePointerIdRef.current !== null) { 
                   try { (e.currentTarget as any).releasePointerCapture?.(activePointerIdRef.current); } catch {} 
                 } 
@@ -476,7 +512,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 isInteractingRef.current = false; 
                 draggingTokenRef.current = false; 
                 lastAngleRef.current = null; 
-                (e.currentTarget.style as any).cursor = 'grab'; 
+                (e.currentTarget.style as any).cursor = 'pointer'; 
                 if (hoverPauseTimerRef.current) window.clearTimeout(hoverPauseTimerRef.current); 
                 hoverPauseTimerRef.current = window.setTimeout(()=>{ isOrbitAnimationPaused.current = false; }, 120) as unknown as number; 
                 setTimeout(()=>{ suppressClickRef.current = false; }, 30); 
@@ -488,11 +524,11 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 className="relative w-16 h-16 md:w-20 md:h-20 rounded-full transition-all duration-500 ease-out overflow-hidden"
                 style={{
                   backgroundColor: 'transparent',
-                  border: `2px solid ${tokenColor}`,
+                  border: `2px solid ${primaryColor}`, // PRIMARY COLOR BORDER
                   opacity: 1,
                 }}
               >
-                {/* Bottom-up fill based on progress - let parent's overflow-hidden clip to circle */}
+                {/* Bottom-up fill based on progress - PRIMARY COLOR */}
                 {fillPercentage > 0 && (
                   <div
                     className="absolute transition-all duration-500 ease-out"
@@ -501,53 +537,37 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                       left: 0,
                       right: 0,
                       height: `${fillPercentage}%`,
-                      backgroundColor: tokenColor,
-                      // No border-radius - parent's overflow-hidden + rounded-full handles clipping
-                      zIndex: 1, // Above border to ensure visibility
-                      pointerEvents: 'none', // Don't block interactions
+                      backgroundColor: primaryColor, // PRIMARY COLOR FILL
+                      zIndex: 1,
+                      pointerEvents: 'none',
                     }}
                   />
                 )}
-                {/* Progress ring overlay for visual clarity */}
-                {fillPercentage > 0 && fillPercentage < 100 && (
-                  <svg
-                    className="absolute inset-0 w-full h-full"
-                    viewBox="0 0 100 100"
-                    style={{ pointerEvents: 'none' }}
-                  >
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="45"
-                      fill="none"
-                      stroke={tokenColor}
-                      strokeWidth="2"
-                      opacity="0.5"
-                    />
-                  </svg>
-                )}
+                
+                {/* Label INSIDE token - ACCENT COLOR TEXT */}
+                <span
+                  className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 text-xs md:text-sm font-semibold tracking-wider transition-all duration-500 whitespace-nowrap z-10"
+                  style={{
+                    color: accentColor, // ACCENT COLOR TEXT
+                    opacity: 1,
+                    textShadow: '0 1px 2px rgba(0,0,0,0.5)', // Ensure readability over fill
+                  }}
+                >
+                  {token.label}
+                </span>
+                
                 {/* Glow effect when filled */}
                 {isFilled && (
                   <div
                     className="absolute inset-0 rounded-full"
                     style={{
-                      boxShadow: `0 0 20px rgba(${parseInt(tokenColor.slice(1, 3), 16)}, ${parseInt(tokenColor.slice(3, 5), 16)}, ${parseInt(tokenColor.slice(5, 7), 16)}, 0.5)`,
+                      boxShadow: `0 0 20px rgba(${parseInt(primaryColor.slice(1, 3), 16)}, ${parseInt(primaryColor.slice(3, 5), 16)}, ${parseInt(primaryColor.slice(5, 7), 16)}, 0.5)`,
                       pointerEvents: 'none',
+                      zIndex: 2,
                     }}
                   />
                 )}
               </div>
-
-              {/* Token Label */}
-              <span
-                className="absolute bottom-[-24px] left-1/2 transform -translate-x-1/2 text-xs md:text-sm font-semibold tracking-wider transition-all duration-500 whitespace-nowrap"
-                style={{
-                  color: tokenColor,
-                  opacity: 1,
-                }}
-              >
-                {token.label}
-              </span>
             </div>
           );
         })}

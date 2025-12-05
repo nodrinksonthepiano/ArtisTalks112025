@@ -3,9 +3,7 @@ export type StepId =
   | 'INIT'
   | 'MISSION_NAME'
   | 'MISSION_GIFT'
-  | 'LOGO_PANEL'
   | 'COLORS_PANEL'
-  | 'FONT_PANEL'
   | 'PRE_COMPLETE'
   // PROD phase
   | 'PROJECT_NAME'
@@ -29,7 +27,7 @@ export interface CurriculumStep {
   nextStep: StepId;
   key: string; // The key used in the database (curriculum_answers table)
   placeholder?: string;
-  triggersPanel?: 'logo' | 'colors' | 'font' | 'asset'; // Panel to trigger after this step
+  triggersPanel?: 'colors' | 'asset'; // Panel to trigger after this step
   phase?: 'pre' | 'prod' | 'post' | 'legacy';
 }
 
@@ -54,7 +52,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   },
   COLORS_PANEL: {
     id: 'COLORS_PANEL',
-    question: "Great! Now choose your brand colors.",
+    question: "Great! Now choose your brand colors, logo, and font.",
     nextStep: 'MISSION_GIFT',
     key: 'colors_set',
     triggersPanel: 'colors',
@@ -63,32 +61,16 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   MISSION_GIFT: {
     id: 'MISSION_GIFT',
     question: "I love those colors. Now, tell me: What makes your presence a gift to the world?",
-    nextStep: 'FONT_PANEL',
+    nextStep: 'PRE_COMPLETE',
     key: 'gift_to_world',
     placeholder: "I bring energy/light/truth...",
-    phase: 'pre'
-  },
-  FONT_PANEL: {
-    id: 'FONT_PANEL',
-    question: "Excellent! Now select your font.",
-    nextStep: 'LOGO_PANEL',
-    key: 'font_set',
-    triggersPanel: 'font',
-    phase: 'pre'
-  },
-  LOGO_PANEL: {
-    id: 'LOGO_PANEL',
-    question: "Perfect! Finally, upload your logo.",
-    nextStep: 'PRE_COMPLETE',
-    key: 'logo_uploaded',
-    triggersPanel: 'logo',
     phase: 'pre'
   },
   PRE_COMPLETE: {
     id: 'PRE_COMPLETE',
     question: "Outstanding! Your foundation is set. Ready to create?",
     nextStep: 'PROJECT_NAME',
-    key: 'pre_complete',
+    key: 'pre_complete', // Match reference branch - needs key for card creation
     phase: 'pre'
   },
   
@@ -195,5 +177,66 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
 
 export function getStep(id: StepId): CurriculumStep {
   return CURRICULUM[id] || CURRICULUM.INIT;
+}
+
+/**
+ * Find the first unanswered step in a specific phase
+ * Used for token navigation - clicking a token jumps to first unanswered question of that phase
+ */
+export function findFirstUnansweredStepInPhase(
+  phase: 'pre' | 'prod' | 'post' | 'legacy',
+  answeredKeys: Set<string>
+): StepId | null {
+  // Get all steps for this phase (excluding completion steps)
+  const phaseSteps = Object.values(CURRICULUM).filter(step => {
+    if (!step.phase || step.phase !== phase) return false;
+    // Exclude completion/transition steps
+    if (step.id.includes('_COMPLETE') || step.id === 'INIT' || step.id === 'COMPLETE') return false;
+    // Only count steps that have a key (actual work steps)
+    return step.key && step.key.length > 0;
+  });
+  
+  if (phaseSteps.length === 0) return null;
+  
+  // Sort by curriculum order (follow nextStep chain starting from first step in phase)
+  // Find the entry point for this phase
+  let entryStep: StepId | null = null;
+  if (phase === 'pre') entryStep = 'INIT';
+  else if (phase === 'prod') entryStep = 'PROJECT_NAME';
+  else if (phase === 'post') entryStep = 'PROMO_STRATEGY';
+  else if (phase === 'legacy') entryStep = 'GRATITUDE';
+  
+  if (!entryStep) return null;
+  
+  // Follow the chain from entry point, collecting phase steps in order
+  const orderedSteps: CurriculumStep[] = [];
+  let current: StepId | null = entryStep;
+  const visited = new Set<StepId>();
+  
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const step: CurriculumStep | undefined = CURRICULUM[current];
+    if (!step) break;
+    
+    // Add to ordered list if it's a phase step
+    if (phaseSteps.includes(step)) {
+      orderedSteps.push(step);
+    }
+    
+    // Move to next step
+    current = step.nextStep;
+    
+    // Stop if we've left this phase
+    if (current && CURRICULUM[current]?.phase !== phase) break;
+  }
+  
+  // Find first unanswered step
+  for (const step of orderedSteps) {
+    if (!answeredKeys.has(step.key)) {
+      return step.id;
+    }
+  }
+  
+  return null; // All answered
 }
 

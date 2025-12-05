@@ -14,6 +14,7 @@ import { createClient } from "@/utils/supabase/client";
 import { useProfile, type Profile } from "@/hooks/useProfile";
 import { useCurriculumProgress } from "@/hooks/useCurriculumProgress";
 import { useCarouselItems } from "@/hooks/useCarouselItems";
+import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
 import { applyLogoBackground } from "@/utils/themeBackground";
 import { StepId, getStep } from "@/lib/curriculum";
 
@@ -23,6 +24,13 @@ export default function Home() {
   
   // Lifted State: Profile Data
   const { profile, updateProfile, loading: profileLoading } = useProfile()
+  
+  // Shared answered keys state (for token navigation and curriculum flow)
+  const [answeredKeys, setAnsweredKeys] = useAnsweredKeys(user?.id ?? null)
+  
+  // Curriculum Progress (single source of truth)
+  // CRITICAL: Pass answeredKeys for immediate progress updates (coins fill as user progresses)
+  const progress = useCurriculumProgress(user?.id ?? null, answeredKeys)
   
   // Apply background immediately on mount (before profile loads) to prevent black flash
   useEffect(() => {
@@ -49,9 +57,6 @@ export default function Home() {
       }
     }
   }, [user])
-  
-  // Curriculum Progress (single source of truth)
-  const progress = useCurriculumProgress(user?.id ?? null)
   
   // Active Module State (which phase we're working on)
   const [activeModule, setActiveModule] = useState<'pre' | 'prod' | 'post' | 'legacy'>('pre')
@@ -83,32 +88,16 @@ export default function Home() {
     prevQuestionRef.current = null
   }, [user?.id])
   
-  // Auto-advance to new question card when question changes
+  // Auto-advance to the card matching the current question (find anywhere in array)
   useEffect(() => {
-    // Only move if question actually changed and we have items
-    if (currentQuestionStepId && currentQuestionStepId !== prevQuestionRef.current && carouselItems.length > 0) {
-      // Wait for items to regenerate with new question card at the end
-      // Check that last item matches the new question
-      const lastItem = carouselItems[carouselItems.length - 1]
-      if (lastItem && lastItem.stepId === currentQuestionStepId) {
-        // New question card is ready at the end
-        const lastIndex = carouselItems.length - 1
-        setCarouselIndex(lastIndex)
+    if (currentQuestionStepId && carouselItems.length > 0) {
+      const cardIndex = carouselItems.findIndex(item => item.stepId === currentQuestionStepId)
+      if (cardIndex !== -1 && cardIndex !== carouselIndex) {
+        setCarouselIndex(cardIndex)
         prevQuestionRef.current = currentQuestionStepId
-      } else {
-        // Items haven't regenerated yet, wait a bit and retry
-        const timeoutId = setTimeout(() => {
-          const updatedLastItem = carouselItems[carouselItems.length - 1]
-          if (updatedLastItem && updatedLastItem.stepId === currentQuestionStepId) {
-            const lastIndex = carouselItems.length - 1
-            setCarouselIndex(lastIndex)
-            prevQuestionRef.current = currentQuestionStepId
-          }
-        }, 100)
-        return () => clearTimeout(timeoutId)
       }
     }
-  }, [currentQuestionStepId, carouselItems])
+  }, [currentQuestionStepId, carouselItems, carouselIndex])
 
   // CRITICAL: Set currentQuestionStepId immediately when user logs in (before EmeraldChat initializes)
   // This ensures the card is generated immediately, preventing "no card on login" issue
@@ -338,7 +327,10 @@ export default function Home() {
                   <OrbitPeekCarousel
                     items={carouselItems}
                     index={carouselIndex}
-                    onIndexChange={setCarouselIndex}
+                    onIndexChange={(idx) => {
+                      setCarouselIndex(idx)
+                      carouselIndexRef.current = idx
+                    }}
                     containerRef={featuredContentRef}
                     theme={{
                       fontFamily: mergedProfile?.font_family || undefined,
@@ -353,7 +345,9 @@ export default function Home() {
                     chatRef={chatRef}
                     isOrbitAnimationPaused={isOrbitAnimationPaused}
                     phaseTokens={phaseTokens}
-                    brandColor={profile?.brand_color || undefined}
+                    profile={profile}
+                    progress={progress}
+                    answeredKeys={answeredKeys}
                   />
                 </div>
               ) : null}
@@ -499,6 +493,9 @@ export default function Home() {
                     setCurrentTypingStepId(null)
                     // Carousel auto-advance is handled by useEffect watching currentQuestionStepId
                   }}
+                  profile={profile}
+                  answeredKeys={answeredKeys}
+                  setAnsweredKeys={setAnsweredKeys}
                 />
             </div>
           )}

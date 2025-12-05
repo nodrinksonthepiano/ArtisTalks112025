@@ -7,8 +7,6 @@ import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import InlineColorPicker from '@/components/InlineColorPicker'
-import InlineLogoPicker from '@/components/InlineLogoPicker'
-import InlineFontPicker from '@/components/InlineFontPicker'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -18,9 +16,11 @@ interface EmeraldChatProps {
   onSubmitCard?: (answer: string, stepId: StepId) => void // Trigger card swipe animation on submit
   onCurrentStepChange?: (stepId: StepId) => void // Notify parent of current step for carousel
   profile?: Profile | null // CRITICAL: Profile prop for inline pickers
+  answeredKeys: Set<string> // ADD: Shared answered keys state
+  setAnsweredKeys: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void // ADD: Setter for optimistic updates
 }
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -28,7 +28,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([])
   const [fullHistory, setFullHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([]) // Full history for history button
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
-  const [answeredKeys, setAnsweredKeys] = useState<Set<string>>(new Set())
   
   // CRITICAL: Track current picker state to know what to save when Send is clicked
   // This ensures we save the actual current state, not stale profile values
@@ -68,6 +67,18 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       visited.add(current)
       const step = getStep(current)
       
+      // CRITICAL: Completion steps (PRE_COMPLETE, PROD_COMPLETE, etc.) are celebrations
+      // They should always be shown, even though they have empty keys
+      if (step.id.includes('_COMPLETE')) {
+        return current // Return completion step immediately - it's a celebration, not a question
+      }
+      
+      // CRITICAL: Skip other steps with empty keys (shouldn't happen, but safety check)
+      if (!step.key || step.key.length === 0) {
+        current = step.nextStep
+        continue
+      }
+      
       // CRITICAL: Panel steps are now shown inline, so don't skip them
       // Check if this step hasn't been answered (for panel steps, check if key exists in answeredKeys)
       if (!answeredKeys.has(step.key)) {
@@ -81,55 +92,49 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return 'COMPLETE'
   }, [answeredKeys])
   
-  // Load answered questions on mount and when user changes
+  // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
-    async function loadAnsweredKeys() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setAnsweredKeys(new Set())
-          return
+    const handleTokenNavigate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ stepId: StepId }>
+      const stepId = customEvent.detail?.stepId
+      if (stepId) {
+        const step = getStep(stepId)
+        setCurrentStepId(stepId)
+        const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+        setHistory([stepMessage])
+        setFullHistory(prev => [...prev, stepMessage])
+        // Notify parent of step change
+        if (onCurrentStepChange) {
+          onCurrentStepChange(stepId)
         }
-        
-        const { data: answers, error } = await supabase
-          .from('curriculum_answers')
-          .select('question_key')
-          .eq('user_id', user.id)
-        
-        if (error) {
-          console.error('Error loading answered keys:', error)
-          return
-        }
-        
-        const keys = new Set(answers?.map(a => a.question_key) || [])
-        setAnsweredKeys(keys)
-      } catch (err) {
-        console.error('Error in loadAnsweredKeys:', err)
       }
     }
     
-    loadAnsweredKeys()
-    
-    // Subscribe to changes
-    const channel = supabase
-      .channel('answered-keys')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'curriculum_answers',
-        },
-        () => {
-          loadAnsweredKeys()
-        }
-      )
-      .subscribe()
-    
+    window.addEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     return () => {
-      supabase.removeChannel(channel)
+      window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [supabase])
+  }, [onCurrentStepChange])
+  
+  // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
+  useEffect(() => {
+    const handleCardEdit = async (e: Event) => {
+      const customEvent = e as CustomEvent<{ stepId: StepId }>
+      const stepId = customEvent.detail?.stepId
+      if (stepId) {
+        await handleEditStep(stepId)
+        // Notify parent of step change
+        if (onCurrentStepChange) {
+          onCurrentStepChange(stepId)
+        }
+      }
+    }
+    
+    window.addEventListener('cardEdit', handleCardEdit as EventListener)
+    return () => {
+      window.removeEventListener('cardEdit', handleCardEdit as EventListener)
+    }
+  }, [onCurrentStepChange])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -154,15 +159,21 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Skip if already initialized (user is actively progressing through curriculum)
     if (hasInitializedRef.current) return
     
+    // CRITICAL: Skip if on PRE_COMPLETE or any completion step (celebration step - don't interfere)
+    if (currentStepId === 'PRE_COMPLETE' || currentStepId.includes('_COMPLETE')) return
+    
     // Skip if already on INIT and no answers exist
     if (currentStepId === 'INIT' && answeredKeys.size === 0) return
+    
+    // CRITICAL: Skip if we're past INIT (user has progressed manually)
+    if (currentStepId !== 'INIT') return
     
     // Only update if we have answers and need to find first unanswered (initial load only)
     // This should only run once when answeredKeys first loads from database
     if (answeredKeys.size > 0) {
       const firstUnanswered = findFirstUnansweredStep('INIT')
-      // Only update if different from current step
-      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE') {
+      // Only update if different from current step and not a completion step
+      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE' && !firstUnanswered.includes('_COMPLETE')) {
         const step = getStep(firstUnanswered)
         setCurrentStepId(firstUnanswered)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
@@ -248,7 +259,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       if (onTypingUpdate) {
         onTypingUpdate(input, currentStepId)
       }
-    }, 300)
+    }, 50) // Reduced from 300ms to 50ms for faster card updates
 
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
@@ -324,7 +335,46 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setInput('')
   }
 
-  const handleBack = () => {
+  // Helper: Load answer from fullHistory or database
+  const loadAnswerForStep = async (stepId: StepId): Promise<string> => {
+    const step = getStep(stepId)
+    
+    // Try 1: Check fullHistory first (fast, no DB query)
+    const fullHistoryAnswer = fullHistory.find(
+      msg => msg.stepId === stepId && msg.role === 'user'
+    )
+    if (fullHistoryAnswer) {
+      return fullHistoryAnswer.content
+    }
+    
+    // Try 2: Load from database (only if not found in fullHistory)
+    if (!step.key) return ''
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return ''
+      
+      const { data: answer } = await supabase
+        .from('curriculum_answers')
+        .select('answer_data')
+        .eq('user_id', user.id)
+        .eq('question_key', step.key)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      
+      if (answer?.answer_data) {
+        const answerData = answer.answer_data as any
+        return answerData?.text || answerData?.content || ''
+      }
+    } catch (err) {
+      console.error('Error loading answer:', err)
+    }
+    
+    return ''
+  }
+
+  const handleBack = async () => {
     // Go back to edit the last answer (same as clicking edit pencil on last user message)
     // Find last answered question from fullHistory
     if (fullHistory.length > 0) {
@@ -339,100 +389,97 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       if (lastUserMessageIndex !== -1) {
         const lastUserMessage = fullHistory[lastUserMessageIndex]
         if (lastUserMessage.stepId) {
-          handleEditStep(lastUserMessage.stepId)
+          await handleEditStep(lastUserMessage.stepId)
         }
       }
     }
   }
 
-  const handleEditStep = (stepId: StepId) => {
+  const handleEditStep = async (stepId: StepId) => {
     // Clear redo stack when editing (editing is a new action)
     setRedoStack([])
     
-    // Find the user's answer for this step
-    const userAnswerIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'user')
+    // CRITICAL FIX: Load answer from fullHistory or database (not just history)
+    const userAnswer = await loadAnswerForStep(stepId)
+    
+    // Find assistant question in history
     const assistantQuestionIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'assistant')
     
-    if (assistantQuestionIndex !== -1) {
-      // Get the user's answer if it exists
-      const userAnswer = userAnswerIndex !== -1 ? history[userAnswerIndex].content : ''
-      
-      // Remove all messages after the assistant question for this step
+    // If question not in history, add it
+    if (assistantQuestionIndex === -1) {
+      const step = getStep(stepId)
+      const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+      setHistory([stepMessage])
+      setFullHistory(prev => {
+        // Only add if not already there
+        const exists = prev.some(msg => msg.stepId === stepId && msg.role === 'assistant')
+        if (!exists) {
+          return [...prev, stepMessage]
+        }
+        return prev
+      })
+    } else {
+      // Remove all messages after the assistant question
       setHistory(prev => prev.slice(0, assistantQuestionIndex + 1))
-      
-      // Set current step back to this step
-      setCurrentStepId(stepId)
-      
-      // Restore the answer in the input field
-      if (userAnswer) {
-        setInput(userAnswer)
-      } else {
-        setInput('')
-      }
-      
-      // Find the step before this one for previousStepId
-      const allSteps = Object.values(CURRICULUM)
-      const prevStep = allSteps.find(s => s.nextStep === stepId)
-      setPreviousStepId(prevStep?.id || null)
-      
-      // Focus input after edit
-      setTimeout(() => {
-        inputRef.current?.focus()
-      }, 100)
     }
+    
+    // Set current step back to this step
+    setCurrentStepId(stepId)
+    
+    // Restore the answer in the input field
+    setInput(userAnswer)
+    
+    // Find the step before this one for previousStepId
+    const allSteps = Object.values(CURRICULUM)
+    const prevStep = allSteps.find(s => s.nextStep === stepId)
+    setPreviousStepId(prevStep?.id || null)
+    
+    // Notify parent of step change
+    if (onCurrentStepChange) {
+      onCurrentStepChange(stepId)
+    }
+    
+    // Focus input after edit
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 100)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     
     // CRITICAL: If picker is active, save to curriculum_answers and advance to next step
-    if (currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' || currentStep?.triggersPanel === 'font') {
+    if (currentStep?.triggersPanel === 'colors') {
       // Profile is already updated by picker (live preview)
       // Now save to curriculum_answers when user clicks Send
       // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
       const { data: { user } } = await supabase.auth.getUser()
       if (user && currentStep.key) {
-        // Build answer data based on step type
-        let answerData: any = {}
-        if (currentStep.triggersPanel === 'colors') {
-          // Use tracked state or fallback to profile
-          const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
-          const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
-          answerData = { 
-            text: 'Colors set', 
-            primary: primaryColor, 
-            accent: accentColor 
-          }
-        } else if (currentStep.triggersPanel === 'logo') {
-          // CRITICAL: Use tracked state to detect logo removal (logo_url: null)
-          const logoUrl = currentPickerState.logo?.logo_url !== undefined 
-            ? currentPickerState.logo.logo_url 
-            : profile?.logo_url
-          
-          // Only save if logo actually exists (not removed)
-          if (logoUrl) {
-            answerData = { 
-              text: 'Logo uploaded', 
-              url: logoUrl 
-            }
-          } else {
-            // Logo was removed - don't save to curriculum_answers (step not completed)
-            // User needs to upload a logo or skip this step
-            return // Don't advance, don't save
-          }
-        } else if (currentStep.triggersPanel === 'font') {
-          // Use tracked state or fallback to profile
-          const fontFamily = currentPickerState.font?.font_family || profile?.font_family
-          answerData = { 
-            text: 'Font set', 
-            font: fontFamily 
-          }
-        }
+        // Save colors, logo, and font together
+        const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
+        const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
+        const brandColor = (currentPickerState.colors as any)?.brand_color || profile?.brand_color || primaryColor
+        const logoUrl = currentPickerState.logo?.logo_url !== undefined 
+          ? currentPickerState.logo.logo_url 
+          : profile?.logo_url
+        const logoUseBackground = currentPickerState.logo?.logo_use_background !== undefined
+          ? currentPickerState.logo.logo_use_background
+          : profile?.logo_use_background || false
+        const fontFamily = currentPickerState.font?.font_family || profile?.font_family
         
         await supabase.from('curriculum_answers').upsert({
           user_id: user.id,
           question_key: currentStep.key,
-          answer_data: answerData,
+          answer_data: {
+            text: 'Colors, logo, and font set',
+            primary: primaryColor,
+            accent: accentColor,
+            brand_color: brandColor,
+            logo_url: logoUrl,
+            logo_use_background: logoUseBackground,
+            font_family: fontFamily,
+            step_id: currentStepId // CRITICAL: Store stepId to fix duplicate key bug
+          },
           project_id: null
         })
         
@@ -443,8 +490,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setCurrentPickerState({})
       }
       
-      // Advance to next step
-      const nextStepId = currentStep.nextStep
+      // Advance to next step - SKIP already answered questions
+      let nextStepId = currentStep.nextStep
+      
+      // Skip to first unanswered question (starting from next step)
+      const firstUnanswered = findFirstUnansweredStep(nextStepId)
+      nextStepId = firstUnanswered
       const nextStep = getStep(nextStepId)
       
       setTimeout(() => {
@@ -455,6 +506,26 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
         setCurrentStepId(nextStepId)
+      }, 300)
+      return
+    }
+    
+    // CRITICAL: PRE_COMPLETE is a celebration - no input required, just show buttons
+    if (currentStepId === 'PRE_COMPLETE') {
+      // Skip saving - just advance to next step
+      const nextStepId = currentStep.nextStep
+      const nextStep = getStep(nextStepId)
+      
+      setTimeout(() => {
+        const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+        setHistory([nextMessage])
+        setFullHistory(prev => [...prev, nextMessage])
+        setPreviousStepId(currentStepId)
+        setCurrentStepId(nextStepId)
+        setIsSubmitting(false)
+        setTimeout(() => {
+          inputRef.current?.focus()
+        }, 100)
       }, 300)
       return
     }
@@ -488,12 +559,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         const { error: insertError } = await supabase.from('curriculum_answers').insert({
           user_id: user.id,
           question_key: currentStep.key,
-          answer_data: { text: answer },
+          answer_data: { 
+            text: answer,
+            step_id: currentStepId // CRITICAL: Store stepId to fix duplicate key bug
+          },
           project_id: null 
         })
         
         if (insertError) {
           console.error('Error saving answer:', insertError.message)
+        } else {
+          // CRITICAL: Update answeredKeys optimistically (same as colors panel)
+          // This ensures progress updates immediately, coins fill as user progresses
+          setAnsweredKeys(prev => new Set([...prev, currentStep.key]))
         }
         
         // Force a final "Hard Save" of the profile to ensure consistency
@@ -571,7 +649,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         color: 'white', /* EXACT from nodrinks */
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
         // CRITICAL: Expand height when picker is shown
-        minHeight: currentStep?.triggersPanel === 'colors' || currentStep?.triggersPanel === 'logo' || currentStep?.triggersPanel === 'font' ? '500px' : 'auto'
+        minHeight: currentStep?.triggersPanel === 'colors' ? '500px' : 'auto'
       }}
     >
       <div>
@@ -588,11 +666,20 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                   profile={profile || null}
                   onColorChange={async (updates) => {
                     // CRITICAL: Track current state for saving when Send is clicked
+                    // Now handles colors, logo, and font together
                     setCurrentPickerState(prev => ({
                       ...prev,
                       colors: {
                         primary_color: updates.primary_color,
-                        accent_color: updates.accent_color
+                        accent_color: updates.accent_color,
+                        brand_color: updates.brand_color
+                      },
+                      logo: {
+                        logo_url: updates.logo_url !== undefined ? updates.logo_url : prev.logo?.logo_url,
+                        logo_use_background: updates.logo_use_background !== undefined ? updates.logo_use_background : prev.logo?.logo_use_background
+                      },
+                      font: {
+                        font_family: updates.font_family
                       }
                     }))
                     
@@ -604,64 +691,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                   onPreviewChange={(preview) => {
                     // Preview updates handled internally by InlineColorPicker
                     // No need to dispatch events - InlineColorPicker handles everything
-                  }}
-                />
-              </div>
-            ) : currentStep.triggersPanel === 'logo' ? (
-              <div className="mb-4">
-                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
-                  {currentStep.question}
-                </h2>
-                <InlineLogoPicker
-                  profile={profile || null}
-                  onLogoChange={async (updates) => {
-                    // CRITICAL: Track current state for saving when Send is clicked
-                    // This captures logo removal (logo_url: null) correctly
-                    setCurrentPickerState(prev => ({
-                      ...prev,
-                      logo: {
-                        logo_url: updates.logo_url !== undefined ? updates.logo_url : prev.logo?.logo_url,
-                        logo_use_background: updates.logo_use_background !== undefined ? updates.logo_use_background : prev.logo?.logo_use_background
-                      }
-                    }))
-                    
-                    // Update profile for live preview
-                    if (onProfileUpdate) {
-                      await onProfileUpdate(updates)
-                    }
-                  }}
-                  onPreviewChange={(previewUrl, useBackground) => {
-                    // CRITICAL: Update previewOverrides so page.tsx knows about logo changes
-                    // This prevents page.tsx useEffect from reapplying logo when unchecked
-                    window.dispatchEvent(new CustomEvent('logoPreviewChange', { 
-                      detail: { 
-                        logo_url: previewUrl,
-                        logo_use_background: useBackground
-                      } 
-                    }))
-                  }}
-                />
-              </div>
-            ) : currentStep.triggersPanel === 'font' ? (
-              <div className="mb-4">
-                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
-                  {currentStep.question}
-                </h2>
-                <InlineFontPicker
-                  profile={profile || null}
-                  onFontChange={async (updates) => {
-                    // CRITICAL: Track current state for saving when Send is clicked
-                    setCurrentPickerState(prev => ({
-                      ...prev,
-                      font: {
-                        font_family: updates.font_family
-                      }
-                    }))
-                    
-                    // Update profile for live preview
-                    if (onProfileUpdate) {
-                      await onProfileUpdate(updates)
-                    }
                   }}
                 />
               </div>
@@ -707,8 +736,24 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 {fullHistory.map((msg, idx) => (
                   <div
                     key={idx}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    className={`flex items-center gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
+                    {/* Edit button for user messages */}
+                    {msg.role === 'user' && msg.stepId && (
+                      <button
+                        onClick={async () => await handleEditStep(msg.stepId!)}
+                        className="p-1.5 rounded-lg transition-colors hover:bg-emerald-500/20 flex-shrink-0"
+                        style={{
+                          color: '#fffacd',
+                          textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                        }}
+                        title="Edit answer"
+                        aria-label="Edit answer"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
+                    
                     <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm font-light leading-relaxed ${
                       msg.role === 'user' 
                         ? 'bg-emerald-600 text-white rounded-tr-none' 
@@ -822,29 +867,57 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )}
         </div>
 
-        {/* Hide input when picker is active - user clicks Send to advance */}
-        {currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && currentStep?.triggersPanel !== 'font' && (
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={currentStep.placeholder || "Type your answer..."}
-            disabled={currentStepId === 'COMPLETE' || isSubmitting}
-            className="email-input"
-            autoFocus
-          />
-        )}
-        <button
-          type="submit"
-          disabled={
-            (currentStep?.triggersPanel !== 'colors' && currentStep?.triggersPanel !== 'logo' && currentStep?.triggersPanel !== 'font' && !input.trim()) 
-            || isSubmitting 
-            || currentStepId === 'COMPLETE'
-          }
-          style={{
-            marginTop: '10px',
-            padding: '10px',
+        {/* PRE_COMPLETE: Show celebration with Continue button instead of input */}
+        {currentStepId === 'PRE_COMPLETE' ? (
+          <div className="flex justify-center mt-4">
+            <button
+              type="button"
+              onClick={() => {
+                // CRITICAL: Mark as initialized BEFORE advancing to prevent initialization effect from interfering
+                hasInitializedRef.current = true
+                // CRITICAL: Go directly to PROJECT_NAME (first PROD question) - don't use findFirstUnansweredStep
+                // because it might loop back if there's any issue with answeredKeys
+                const targetStepId: StepId = 'PROJECT_NAME'
+                const targetStep = getStep(targetStepId)
+                const nextMessage = { role: 'assistant' as const, content: targetStep.question, stepId: targetStepId }
+                setHistory([nextMessage])
+                setFullHistory(prev => [...prev, nextMessage])
+                setPreviousStepId(currentStepId)
+                setCurrentStepId(targetStepId)
+                setTimeout(() => {
+                  inputRef.current?.focus()
+                }, 100)
+              }}
+              className="px-8 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-semibold transition-colors"
+            >
+              Continue
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Hide input when picker is active - user clicks Send to advance */}
+            {currentStep?.triggersPanel !== 'colors' && (
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={currentStep.placeholder || "Type your answer..."}
+                disabled={currentStepId === 'COMPLETE' || isSubmitting}
+                className="email-input"
+                autoFocus
+              />
+            )}
+            <button
+              type="submit"
+              disabled={
+                (currentStep?.triggersPanel !== 'colors' && !input.trim()) 
+                || isSubmitting 
+                || currentStepId === 'COMPLETE'
+              }
+              style={{
+                marginTop: '10px',
+                padding: '10px',
             backgroundColor: '#047857', /* Deeper emerald - emerald-700 */
             color: 'white',
             border: 'none',
@@ -856,6 +929,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         >
           {isSubmitting ? 'Sending...' : 'Send'}
         </button>
+          </>
+        )}
       </form>
       </div>
     </motion.div>
