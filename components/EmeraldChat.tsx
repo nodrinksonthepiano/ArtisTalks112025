@@ -120,6 +120,93 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return 'COMPLETE'
   }, [answeredKeys])
   
+  // Helper: Load answer from fullHistory or database
+  const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
+    const step = getStep(stepId)
+    
+    // Try 1: Check fullHistory first (fast, no DB query)
+    const fullHistoryAnswer = fullHistory.find(
+      msg => msg.stepId === stepId && msg.role === 'user'
+    )
+    if (fullHistoryAnswer) {
+      return fullHistoryAnswer.content
+    }
+    
+    // Try 2: Load from database (only if not found in fullHistory)
+    if (!step.key) return ''
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return ''
+      
+      const { data: answer } = await supabase
+        .from('curriculum_answers')
+        .select('answer_data')
+        .eq('user_id', user.id)
+        .eq('question_key', step.key)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      
+      if (answer?.answer_data) {
+        const answerData = answer.answer_data as any
+        return answerData?.text || answerData?.content || ''
+      }
+    } catch (err) {
+      console.error('Error loading answer:', err)
+    }
+    
+    return ''
+  }, [fullHistory, supabase])
+  
+  // CRITICAL: Update question IMMEDIATELY (synchronous) - no async delay
+  // This prevents flash of wrong question (like INIT) during carousel navigation
+  const handleEditStep = useCallback(async (stepId: StepId, focusInput: boolean = false) => {
+    // Clear redo stack when editing (editing is a new action)
+    setRedoStack([])
+    const step = getStep(stepId)
+    const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+    
+    // Find assistant question in history
+    const assistantQuestionIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'assistant')
+    
+    // Update history immediately
+    if (assistantQuestionIndex === -1) {
+      setHistory([stepMessage])
+      setFullHistory(prev => {
+        // Only add if not already there
+        const exists = prev.some(msg => msg.stepId === stepId && msg.role === 'assistant')
+        if (!exists) {
+          return [...prev, stepMessage]
+        }
+        return prev
+      })
+    } else {
+      // Remove all messages after the assistant question
+      setHistory(prev => prev.slice(0, assistantQuestionIndex + 1))
+    }
+    
+    // Update currentStepId immediately (effect at line 55-59 will notify parent automatically)
+    setCurrentStepId(stepId)
+    
+    // Find previous step immediately
+    const allSteps = Object.values(CURRICULUM)
+    const prevStep = allSteps.find(s => s.nextStep === stepId)
+    setPreviousStepId(prevStep?.id || null)
+    
+    // CRITICAL: Load answer asynchronously AFTER question is shown
+    // This ensures question appears instantly, answer loads in background
+    const userAnswer = await loadAnswerForStep(stepId)
+    setInput(userAnswer) // Restore answer when loaded
+    
+    // Focus input if requested (e.g., when edit pencil is clicked)
+    if (focusInput) {
+      setTimeout(() => {
+        inputRef.current?.focus()
+      }, 50)
+    }
+  }, [history, loadAnswerForStep])
+  
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
     const handleTokenNavigate = (e: Event) => {
@@ -127,14 +214,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const stepId = customEvent.detail?.stepId
       if (stepId) {
         const step = getStep(stepId)
-        setCurrentStepId(stepId)
+        setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
         setFullHistory(prev => [...prev, stepMessage])
-        // Notify parent of step change
-        if (onCurrentStepChange) {
-          onCurrentStepChange(stepId)
-        }
       }
     }
     
@@ -152,10 +235,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const focusInput = customEvent.detail?.focusInput ?? false
       if (stepId) {
         await handleEditStep(stepId, focusInput)
-        // Notify parent of step change
-        if (onCurrentStepChange) {
-          onCurrentStepChange(stepId)
-        }
+        // Effect at line 55-59 handles notification automatically when currentStepId changes
       }
     }
     
@@ -163,7 +243,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardEdit', handleCardEdit as EventListener)
     }
-  }, [onCurrentStepChange])
+  }, [handleEditStep]) // Include handleEditStep in dependencies for correct closure
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -173,14 +253,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // CRITICAL: Set INIT immediately to ensure card appears right away
     // Don't wait for answeredKeys - it loads asynchronously and causes race conditions
     const initStep = getStep('INIT')
-    setCurrentStepId('INIT')
+    setCurrentStepId('INIT') // Effect at line 55-59 handles notification automatically
     const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
     setHistory([initMessage])
     setFullHistory([initMessage]) // Add to full history too
-    // CRITICAL: Notify parent immediately (for carousel sync)
-    if (onCurrentStepChange) {
-      onCurrentStepChange('INIT')
-    }
   }, [onCurrentStepChange]) // Added onCurrentStepChange to deps
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
@@ -235,14 +311,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Update if different from current step (including completion steps - they're valid)
       if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE') {
         const step = getStep(firstUnanswered)
-        setCurrentStepId(firstUnanswered)
+        setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
         setHistory([stepMessage])
         setFullHistory([stepMessage]) // Add to full history too
-        // CRITICAL: Notify parent immediately (for carousel sync)
-        if (onCurrentStepChange) {
-          onCurrentStepChange(firstUnanswered)
-        }
       }
       // Mark as initialized so this effect doesn't run again
       // This prevents it from overriding manual step advancement
@@ -274,11 +346,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           setHistory([nextMessage])
           setFullHistory(prev => [...prev, nextMessage]) // Add to full history
           setPreviousStepId(currentStepId)
-          setCurrentStepId(nextStepId)
-          // CRITICAL: Notify parent immediately after state update (for carousel sync)
-          if (onCurrentStepChange) {
-            onCurrentStepChange(nextStepId)
-          }
+          setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
         }, 300) // Small delay to let panel close animation finish
       }
     }
@@ -344,17 +412,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       }])
       
       // Go back to previous step
-      setCurrentStepId(previousStepId)
+      setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       setHistory(prev => prev.slice(0, -2))
       
       // Find the step before the previous one
       const allSteps = Object.values(CURRICULUM)
       const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
       setPreviousStepId(prevPrevStep?.id || null)
-      // CRITICAL: Notify parent immediately (for carousel sync)
-      if (onCurrentStepChange) {
-        onCurrentStepChange(previousStepId)
-      }
     }
   }
 
@@ -363,16 +427,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const lastUndone = redoStack[redoStack.length - 1]
       
       // Restore the undone state
-      setCurrentStepId(lastUndone.stepId)
+      setCurrentStepId(lastUndone.stepId) // Effect at line 55-59 handles notification automatically
       setPreviousStepId(lastUndone.previousStepId)
       setHistory(lastUndone.history)
       
       // Remove from redo stack
       setRedoStack(prev => prev.slice(0, -1))
-      // CRITICAL: Notify parent immediately (for carousel sync)
-      if (onCurrentStepChange) {
-        onCurrentStepChange(lastUndone.stepId)
-      }
     }
   }
 
@@ -380,7 +440,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Go back to previous question (Last button)
     if (previousStepId && !isSubmitting) {
       const prevStep = getStep(previousStepId)
-      setCurrentStepId(previousStepId)
+      setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       // Find the step before previous for new previousStepId
       const allSteps = Object.values(CURRICULUM)
       const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
@@ -390,10 +450,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       setHistory([prevMessage])
       // Don't add to fullHistory - it's navigation, not new content
       setInput('')
-      // CRITICAL: Notify parent immediately (for carousel sync)
-      if (onCurrentStepChange) {
-        onCurrentStepChange(previousStepId)
-      }
     }
   }
   
@@ -406,56 +462,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const nextStep = getStep(firstUnanswered)
     
     // Move to next unanswered question without saving
-    setCurrentStepId(firstUnanswered)
+    setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
     setPreviousStepId(currentStepId)
     // Only show current question (no history)
     const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: firstUnanswered }
     setHistory([nextMessage])
-    // CRITICAL: Notify parent immediately (for carousel sync)
-    if (onCurrentStepChange) {
-      onCurrentStepChange(firstUnanswered)
-    }
     // Don't add to fullHistory - skipping doesn't create history entry
     setInput('')
-  }
-
-  // Helper: Load answer from fullHistory or database
-  const loadAnswerForStep = async (stepId: StepId): Promise<string> => {
-    const step = getStep(stepId)
-    
-    // Try 1: Check fullHistory first (fast, no DB query)
-    const fullHistoryAnswer = fullHistory.find(
-      msg => msg.stepId === stepId && msg.role === 'user'
-    )
-    if (fullHistoryAnswer) {
-      return fullHistoryAnswer.content
-    }
-    
-    // Try 2: Load from database (only if not found in fullHistory)
-    if (!step.key) return ''
-    
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return ''
-      
-      const { data: answer } = await supabase
-        .from('curriculum_answers')
-        .select('answer_data')
-        .eq('user_id', user.id)
-        .eq('question_key', step.key)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single()
-      
-      if (answer?.answer_data) {
-        const answerData = answer.answer_data as any
-        return answerData?.text || answerData?.content || ''
-      }
-    } catch (err) {
-      console.error('Error loading answer:', err)
-    }
-    
-    return ''
   }
 
   const handleBack = async () => {
@@ -477,64 +490,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         }
       }
     }
-  }
-
-  const handleEditStep = async (stepId: StepId, focusInput: boolean = false) => {
-    // Clear redo stack when editing (editing is a new action)
-    setRedoStack([])
-    
-    // CRITICAL FIX: Load answer from fullHistory or database (not just history)
-    const userAnswer = await loadAnswerForStep(stepId)
-    
-    // Find assistant question in history
-    const assistantQuestionIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'assistant')
-    
-    // If question not in history, add it
-    if (assistantQuestionIndex === -1) {
-      const step = getStep(stepId)
-      const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
-      setHistory([stepMessage])
-      setFullHistory(prev => {
-        // Only add if not already there
-        const exists = prev.some(msg => msg.stepId === stepId && msg.role === 'assistant')
-        if (!exists) {
-          return [...prev, stepMessage]
-        }
-        return prev
-      })
-    } else {
-      // Remove all messages after the assistant question
-      setHistory(prev => prev.slice(0, assistantQuestionIndex + 1))
-    }
-    
-    // Set current step back to this step
-    setCurrentStepId(stepId)
-    
-    // Restore the answer in the input field
-    setInput(userAnswer)
-    
-    // Focus input if requested (e.g., when edit pencil is clicked)
-    if (focusInput) {
-      // Small delay to ensure input is rendered
-      setTimeout(() => {
-        inputRef.current?.focus()
-      }, 50)
-    }
-    
-    // Find the step before this one for previousStepId
-    const allSteps = Object.values(CURRICULUM)
-    const prevStep = allSteps.find(s => s.nextStep === stepId)
-    setPreviousStepId(prevStep?.id || null)
-    
-    // Notify parent of step change
-    if (onCurrentStepChange) {
-      onCurrentStepChange(stepId)
-    }
-    
-    // Focus input after edit
-    setTimeout(() => {
-      inputRef.current?.focus()
-    }, 100)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -666,36 +621,33 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setHistory([nextMessage])
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
-        setCurrentStepId(nextStepId)
-        // CRITICAL: Notify parent immediately after state update (for carousel sync)
-        if (onCurrentStepChange) {
-          onCurrentStepChange(nextStepId)
-        }
+        setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
       }, 300)
       return
     }
     
-    // CRITICAL: PRE_COMPLETE is a celebration - no input required, just show buttons
-    if (currentStepId === 'PRE_COMPLETE') {
-      // Skip saving - just advance to next step
+    // CRITICAL: All celebration steps (PRE_COMPLETE, PROD_COMPLETE, POST_COMPLETE) are temporary
+    // No input required, just show Continue button
+    // Celebration cards disappear immediately when Continue is clicked, next card appears instantly
+    if (currentStepId.includes('_COMPLETE') && currentStepId !== 'COMPLETE') {
+      // CRITICAL: Always jump to next unanswered question, even if user edited/swiped back
+      // This ensures flow always moves forward, never backward
+      // CRITICAL: Instant transition - celebration card disappears immediately, next card appears instantly
       const nextStepId = currentStep.nextStep
-      const nextStep = getStep(nextStepId)
+      const firstUnanswered = findFirstUnansweredStep(nextStepId, answeredKeys)
+      const finalStep = getStep(firstUnanswered)
       
+      // CRITICAL: No delay - instant transition for smooth UX
+      // Celebration card disappears immediately, next question card appears instantly
+      const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: firstUnanswered }
+      setHistory([nextMessage])
+      setFullHistory(prev => [...prev, nextMessage])
+      setPreviousStepId(currentStepId)
+      setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
+      setIsSubmitting(false)
       setTimeout(() => {
-        const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
-        setHistory([nextMessage])
-        setFullHistory(prev => [...prev, nextMessage])
-        setPreviousStepId(currentStepId)
-        setCurrentStepId(nextStepId)
-        // CRITICAL: Notify parent immediately after state update (for carousel sync)
-        if (onCurrentStepChange) {
-          onCurrentStepChange(nextStepId)
-        }
-        setIsSubmitting(false)
-        setTimeout(() => {
-          inputRef.current?.focus()
-        }, 100)
-      }, 300)
+        inputRef.current?.focus()
+      }, 100)
       return
     }
     
@@ -825,39 +777,28 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       
       const finalStep = getStep(nextStepId)
       
+      // CRITICAL: Instant transition - no delay for seamless UX
+      // Card and question appear together immediately, no flash of wrong card
+      // Normal chat flow - only show current question (no history building up)
+      if (nextStepId !== 'COMPLETE') {
+        // Only show current question in chat (clear previous)
+        const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
+        setHistory([nextMessage])
+        setFullHistory(prev => [...prev, nextMessage]) // Add to full history
+        setPreviousStepId(currentStepId)
+        setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
+      } else {
+        const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
+        setHistory([completeMessage])
+        setFullHistory(prev => [...prev, completeMessage]) // Add to full history
+        setPreviousStepId(currentStepId)
+        setCurrentStepId('COMPLETE') // Effect at line 55-59 handles notification automatically
+      }
+      setIsSubmitting(false)
+      // Refocus input after submit (Zeyoda pattern)
       setTimeout(() => {
-        // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
-        // Just advance to next step (inline picker will render automatically)
-        
-        // Normal chat flow - only show current question (no history building up)
-        if (nextStepId !== 'COMPLETE') {
-          // Only show current question in chat (clear previous)
-          const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
-          setHistory([nextMessage])
-          setFullHistory(prev => [...prev, nextMessage]) // Add to full history
-          setPreviousStepId(currentStepId)
-          setCurrentStepId(nextStepId)
-          // CRITICAL: Notify parent immediately after state update (for carousel sync)
-          if (onCurrentStepChange) {
-            onCurrentStepChange(nextStepId)
-          }
-        } else {
-          const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
-          setHistory([completeMessage])
-          setFullHistory(prev => [...prev, completeMessage]) // Add to full history
-          setPreviousStepId(currentStepId)
-          setCurrentStepId('COMPLETE')
-          // CRITICAL: Notify parent immediately after state update (for carousel sync)
-          if (onCurrentStepChange) {
-            onCurrentStepChange('COMPLETE')
-          }
-        }
-        setIsSubmitting(false)
-        // Refocus input after submit (Zeyoda pattern)
-        setTimeout(() => {
-          inputRef.current?.focus()
-        }, 100)
-      }, 300)
+        inputRef.current?.focus()
+      }, 100)
 
     } catch (error) {
       console.error("Error in submit flow:", error)
@@ -1104,27 +1045,26 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )}
         </div>
 
-        {/* PRE_COMPLETE: Show celebration with Continue button instead of input */}
-        {currentStepId === 'PRE_COMPLETE' ? (
+        {/* CRITICAL: All celebration steps show Continue button instead of input */}
+        {/* Celebration cards are temporary - disappear immediately when Continue is clicked */}
+        {currentStepId.includes('_COMPLETE') && currentStepId !== 'COMPLETE' ? (
           <div className="flex justify-center mt-4">
             <button
               type="button"
               onClick={() => {
                 // CRITICAL: Mark as initialized BEFORE advancing to prevent initialization effect from interfering
                 hasInitializedRef.current = true
-                // CRITICAL: Go directly to PROJECT_NAME (first PROD question) - don't use findFirstUnansweredStep
-                // because it might loop back if there's any issue with answeredKeys
-                const targetStepId: StepId = 'PROJECT_NAME'
-                const targetStep = getStep(targetStepId)
-                const nextMessage = { role: 'assistant' as const, content: targetStep.question, stepId: targetStepId }
+                // CRITICAL: Always jump to next unanswered question, even if user edited/swiped back
+                // This ensures flow always moves forward, never backward
+                // CRITICAL: Instant transition - celebration card disappears immediately, next card appears instantly
+                const nextStepId = currentStep.nextStep
+                const firstUnanswered = findFirstUnansweredStep(nextStepId, answeredKeys)
+                const finalStep = getStep(firstUnanswered)
+                const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: firstUnanswered }
                 setHistory([nextMessage])
                 setFullHistory(prev => [...prev, nextMessage])
                 setPreviousStepId(currentStepId)
-                setCurrentStepId(targetStepId)
-                // CRITICAL: Notify parent immediately (for carousel sync)
-                if (onCurrentStepChange) {
-                  onCurrentStepChange(targetStepId)
-                }
+                setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
                 setTimeout(() => {
                   inputRef.current?.focus()
                 }, 100)

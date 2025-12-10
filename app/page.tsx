@@ -74,7 +74,8 @@ export default function Home() {
   const isUserSwipeRef = useRef<boolean>(false)
   
   // Carousel items from curriculum answers + current question card
-  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, currentTypingStepId, currentQuestionStepId)
+  // CRITICAL: Pass answeredKeys so card creation can check answered state synchronously
+  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, currentTypingStepId, currentQuestionStepId, answeredKeys)
   
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
@@ -90,9 +91,8 @@ export default function Home() {
     prevQuestionRef.current = null
   }, [user?.id])
   
-  // Auto-advance to the card matching the current question (find anywhere in array)
-  // CRITICAL: This must run whenever currentQuestionStepId or carouselItems changes
-  // BUT: Don't override if user just swiped manually
+  // Auto-advance to current question card (always at index 0)
+  // SIMPLE: Current question card is always at index 0 - just use it
   useEffect(() => {
     if (!currentQuestionStepId) return
     
@@ -101,36 +101,25 @@ export default function Home() {
     
     // If user just swiped, skip auto-advance to prevent fighting
     if (isUserSwipeRef.current) {
-      // Reset flag after a short delay
       setTimeout(() => {
         isUserSwipeRef.current = false
       }, 100)
       return
     }
     
-    const cardIndex = carouselItems.findIndex(item => item.stepId === currentQuestionStepId)
+    // SIMPLE: Check if current question card exists at index 0 (featured spot)
+    const currentCardAtZero = carouselItems[0]?.isCurrentQuestion && carouselItems[0]?.stepId === currentQuestionStepId
     
-    if (cardIndex !== -1) {
-      // Card exists - update carousel index if needed
-      // CRITICAL: Only update if the question actually changed (not just carouselIndex changed)
-      if (prevQuestionRef.current !== currentQuestionStepId) {
-        setCarouselIndex(cardIndex)
-        carouselIndexRef.current = cardIndex
+    // If current question card exists at index 0, ensure carousel is at index 0
+    // Check if index is wrong OR question changed (handles timing issues)
+    if (currentCardAtZero) {
+      if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== currentQuestionStepId) {
+        setCarouselIndex(0)
+        carouselIndexRef.current = 0
         prevQuestionRef.current = currentQuestionStepId
       }
-    } else {
-      // Card doesn't exist yet - this can happen when:
-      // 1. currentQuestionStepId changes before useCarouselItems creates the card
-      // 2. The card is being generated but hasn't been added to the array yet
-      // CRITICAL: Don't reset to 0 or INIT - wait for the card to be created
-      // The effect will run again when carouselItems updates with the new card
-      // Only clear prevQuestionRef if we're sure the card should exist (not a timing issue)
-      if (prevQuestionRef.current === currentQuestionStepId) {
-        // We already set this question before, but card disappeared - might be a real issue
-        // But don't do anything - let it resolve when carouselItems updates
-      }
     }
-  }, [currentQuestionStepId, carouselItems]) // Removed carouselIndex and carouselItems.length from deps to prevent loops
+  }, [currentQuestionStepId, carouselItems])
 
   // CRITICAL: Set currentQuestionStepId immediately when user logs in (before EmeraldChat initializes)
   // This ensures the card is generated immediately, preventing "no card on login" issue

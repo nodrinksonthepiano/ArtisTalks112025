@@ -1388,7 +1388,13 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
         if (count === 0) return null;
         const visible: number[] = [];
         const seen = new Set<number>();
+        // SIMPLE: Don't render below featured card unless swiping
+        // Featured spot is now always index 0 (current question card)
+        const isAtFeaturedSpot = effectiveIndex === 0;
+        const isSwiping = Math.abs(progressRef.current) > 0.001;
         for (let j = -VISIBLE_RADIUS; j <= VISIBLE_RADIUS; j++) {
+          // Skip rendering below featured spot unless user is swiping
+          if (isAtFeaturedSpot && !isSwiping && j > 0) continue;
           const itemIdx = (effectiveIndex + j + count) % count;
           if (seen.has(itemIdx)) continue;
           seen.add(itemIdx);
