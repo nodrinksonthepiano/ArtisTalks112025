@@ -1292,9 +1292,10 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                     onClick={(e) => {
                       e.stopPropagation();
                       e.preventDefault();
-                      // Dispatch event to trigger edit in EmeraldChat
+                      // Dispatch event to trigger edit in EmeraldChat with focusInput=true
+                      // This focuses the input field and brings up the keyboard
                       window.dispatchEvent(new CustomEvent('cardEdit', { 
-                        detail: { stepId: item.stepId } 
+                        detail: { stepId: item.stepId, focusInput: true } 
                       }));
                     }}
                     className="absolute top-2 right-2 p-1.5 rounded-lg transition-colors hover:bg-black/20 flex-shrink-0 z-10"

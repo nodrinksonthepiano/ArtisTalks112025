@@ -71,6 +71,7 @@ export default function Home() {
   const [carouselIndex, setCarouselIndex] = useState(0)
   const carouselIndexRef = useRef<number>(0)
   const prevQuestionRef = useRef<StepId | null>(null)
+  const isUserSwipeRef = useRef<boolean>(false)
   
   // Carousel items from curriculum answers + current question card
   const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, currentTypingStepId, currentQuestionStepId)
@@ -91,38 +92,58 @@ export default function Home() {
   
   // Auto-advance to the card matching the current question (find anywhere in array)
   // CRITICAL: This must run whenever currentQuestionStepId or carouselItems changes
+  // BUT: Don't override if user just swiped manually
   useEffect(() => {
     if (!currentQuestionStepId) return
     
     // Wait for carousel items to be loaded
     if (carouselItems.length === 0) return
     
+    // If user just swiped, skip auto-advance to prevent fighting
+    if (isUserSwipeRef.current) {
+      // Reset flag after a short delay
+      setTimeout(() => {
+        isUserSwipeRef.current = false
+      }, 100)
+      return
+    }
+    
     const cardIndex = carouselItems.findIndex(item => item.stepId === currentQuestionStepId)
     
     if (cardIndex !== -1) {
       // Card exists - update carousel index if needed
-      if (cardIndex !== carouselIndex || prevQuestionRef.current !== currentQuestionStepId) {
+      // CRITICAL: Only update if the question actually changed (not just carouselIndex changed)
+      if (prevQuestionRef.current !== currentQuestionStepId) {
         setCarouselIndex(cardIndex)
         carouselIndexRef.current = cardIndex
         prevQuestionRef.current = currentQuestionStepId
       }
+    } else {
+      // Card doesn't exist yet - this can happen when:
+      // 1. currentQuestionStepId changes before useCarouselItems creates the card
+      // 2. The card is being generated but hasn't been added to the array yet
+      // CRITICAL: Don't reset to 0 or INIT - wait for the card to be created
+      // The effect will run again when carouselItems updates with the new card
+      // Only clear prevQuestionRef if we're sure the card should exist (not a timing issue)
+      if (prevQuestionRef.current === currentQuestionStepId) {
+        // We already set this question before, but card disappeared - might be a real issue
+        // But don't do anything - let it resolve when carouselItems updates
+      }
     }
-    // If cardIndex === -1, the card hasn't been created yet
-    // This can happen briefly when currentQuestionStepId changes before useCarouselItems updates
-    // The effect will run again when carouselItems updates
-  }, [currentQuestionStepId, carouselItems.length, carouselItems, carouselIndex])
+  }, [currentQuestionStepId, carouselItems]) // Removed carouselIndex and carouselItems.length from deps to prevent loops
 
   // CRITICAL: Set currentQuestionStepId immediately when user logs in (before EmeraldChat initializes)
   // This ensures the card is generated immediately, preventing "no card on login" issue
   useEffect(() => {
     if (user && !currentQuestionStepId) {
-      // Set to INIT immediately - EmeraldChat will update it if needed
+      // Set to INIT immediately - EmeraldChat will update it if needed via onCurrentStepChange callback
       setCurrentQuestionStepId('INIT')
     } else if (!user) {
       // Clear when user logs out
       setCurrentQuestionStepId(null)
+      prevQuestionRef.current = null
     }
-  }, [user, currentQuestionStepId])
+  }, [user]) // Removed currentQuestionStepId from deps to prevent re-triggering
   
   // Temporary preview state for live background updates (unified for logo + colors)
   const [previewOverrides, setPreviewOverrides] = useState<{
@@ -341,8 +362,21 @@ export default function Home() {
                     items={carouselItems}
                     index={carouselIndex}
                     onIndexChange={(idx) => {
+                      // Mark as user-initiated swipe
+                      isUserSwipeRef.current = true
+                      
+                      // Update carousel index
                       setCarouselIndex(idx)
                       carouselIndexRef.current = idx
+                      
+                      // Extract stepId from the swiped card and dispatch cardEdit event
+                      // This updates the chat to show that question (same as edit pencil)
+                      const swipedItem = carouselItems[idx]
+                      if (swipedItem?.stepId) {
+                        window.dispatchEvent(new CustomEvent('cardEdit', {
+                          detail: { stepId: swipedItem.stepId, focusInput: false }
+                        }))
+                      }
                     }}
                     containerRef={featuredContentRef}
                     theme={{

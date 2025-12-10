@@ -59,7 +59,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }, [currentStepId, onCurrentStepChange])
   
   // Helper: Find first unanswered question in curriculum flow
-  const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT'): StepId => {
+  // CRITICAL: Accept optional answeredKeysOverride to use updated keys immediately after state update
+  const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT', answeredKeysOverride?: Set<string>): StepId => {
+    // Use override if provided (for immediate updates), otherwise use closure value
+    const keysToCheck = answeredKeysOverride || answeredKeys
     let current: StepId = startFrom
     const visited = new Set<StepId>()
     
@@ -82,7 +85,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )
           
           // Check if all phase questions are answered
-          const allPhaseAnswered = phaseSteps.every(s => answeredKeys.has(s.key))
+          const allPhaseAnswered = phaseSteps.every(s => keysToCheck.has(s.key))
           
           if (allPhaseAnswered) {
             // All questions answered - show completion step
@@ -106,7 +109,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       
       // CRITICAL: Panel steps are now shown inline, so don't skip them
       // Check if this step hasn't been answered (for panel steps, check if key exists in answeredKeys)
-      if (!answeredKeys.has(step.key)) {
+      if (!keysToCheck.has(step.key)) {
         return current
       }
       
@@ -144,10 +147,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
     const handleCardEdit = async (e: Event) => {
-      const customEvent = e as CustomEvent<{ stepId: StepId }>
+      const customEvent = e as CustomEvent<{ stepId: StepId; focusInput?: boolean }>
       const stepId = customEvent.detail?.stepId
+      const focusInput = customEvent.detail?.focusInput ?? false
       if (stepId) {
-        await handleEditStep(stepId)
+        await handleEditStep(stepId, focusInput)
         // Notify parent of step change
         if (onCurrentStepChange) {
           onCurrentStepChange(stepId)
@@ -173,7 +177,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
     setHistory([initMessage])
     setFullHistory([initMessage]) // Add to full history too
-  }, []) // Only run once on mount - don't wait for answeredKeys
+    // CRITICAL: Notify parent immediately (for carousel sync)
+    if (onCurrentStepChange) {
+      onCurrentStepChange('INIT')
+    }
+  }, [onCurrentStepChange]) // Added onCurrentStepChange to deps
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -214,7 +222,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (currentStepId === 'INIT' && currentSize === 0) return
     
     // CRITICAL: Skip if we're past INIT (user has progressed manually)
-    if (currentStepId !== 'INIT') return
+    // This prevents resetting to INIT when user is actively answering questions
+    if (currentStepId !== 'INIT') {
+      // User has already progressed - mark as initialized to prevent any interference
+      hasInitializedRef.current = true
+      return
+    }
     
     // Only update if we have answers and need to find first unanswered (initial load only)
     if (currentSize > 0) {
@@ -226,6 +239,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
         setHistory([stepMessage])
         setFullHistory([stepMessage]) // Add to full history too
+        // CRITICAL: Notify parent immediately (for carousel sync)
+        if (onCurrentStepChange) {
+          onCurrentStepChange(firstUnanswered)
+        }
       }
       // Mark as initialized so this effect doesn't run again
       // This prevents it from overriding manual step advancement
@@ -258,6 +275,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           setFullHistory(prev => [...prev, nextMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId(nextStepId)
+          // CRITICAL: Notify parent immediately after state update (for carousel sync)
+          if (onCurrentStepChange) {
+            onCurrentStepChange(nextStepId)
+          }
         }, 300) // Small delay to let panel close animation finish
       }
     }
@@ -330,6 +351,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const allSteps = Object.values(CURRICULUM)
       const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
       setPreviousStepId(prevPrevStep?.id || null)
+      // CRITICAL: Notify parent immediately (for carousel sync)
+      if (onCurrentStepChange) {
+        onCurrentStepChange(previousStepId)
+      }
     }
   }
 
@@ -344,6 +369,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       
       // Remove from redo stack
       setRedoStack(prev => prev.slice(0, -1))
+      // CRITICAL: Notify parent immediately (for carousel sync)
+      if (onCurrentStepChange) {
+        onCurrentStepChange(lastUndone.stepId)
+      }
     }
   }
 
@@ -361,6 +390,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       setHistory([prevMessage])
       // Don't add to fullHistory - it's navigation, not new content
       setInput('')
+      // CRITICAL: Notify parent immediately (for carousel sync)
+      if (onCurrentStepChange) {
+        onCurrentStepChange(previousStepId)
+      }
     }
   }
   
@@ -378,6 +411,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Only show current question (no history)
     const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: firstUnanswered }
     setHistory([nextMessage])
+    // CRITICAL: Notify parent immediately (for carousel sync)
+    if (onCurrentStepChange) {
+      onCurrentStepChange(firstUnanswered)
+    }
     // Don't add to fullHistory - skipping doesn't create history entry
     setInput('')
   }
@@ -442,7 +479,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }
 
-  const handleEditStep = async (stepId: StepId) => {
+  const handleEditStep = async (stepId: StepId, focusInput: boolean = false) => {
     // Clear redo stack when editing (editing is a new action)
     setRedoStack([])
     
@@ -475,6 +512,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     
     // Restore the answer in the input field
     setInput(userAnswer)
+    
+    // Focus input if requested (e.g., when edit pencil is clicked)
+    if (focusInput) {
+      // Small delay to ensure input is rendered
+      setTimeout(() => {
+        inputRef.current?.focus()
+      }, 50)
+    }
     
     // Find the step before this one for previousStepId
     const allSteps = Object.values(CURRICULUM)
@@ -598,7 +643,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             
             if (!allPhaseAnswered) {
               // Not all answered - skip to first unanswered question
-              const firstUnanswered = findFirstUnansweredStep(nextStepId)
+              // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
+              const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
               nextStepId = firstUnanswered
               finalStep = getStep(nextStepId)
             }
@@ -606,7 +652,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           }
         } else {
           // Not a completion step - skip to first unanswered question
-          const firstUnanswered = findFirstUnansweredStep(nextStepId)
+          // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
+          const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
           nextStepId = firstUnanswered
           finalStep = getStep(nextStepId)
         }
@@ -620,6 +667,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
         setCurrentStepId(nextStepId)
+        // CRITICAL: Notify parent immediately after state update (for carousel sync)
+        if (onCurrentStepChange) {
+          onCurrentStepChange(nextStepId)
+        }
       }, 300)
       return
     }
@@ -636,6 +687,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
         setCurrentStepId(nextStepId)
+        // CRITICAL: Notify parent immediately after state update (for carousel sync)
+        if (onCurrentStepChange) {
+          onCurrentStepChange(nextStepId)
+        }
         setIsSubmitting(false)
         setTimeout(() => {
           inputRef.current?.focus()
@@ -669,19 +724,46 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const { data: { user } } = await supabase.auth.getUser()
       
       if (user) {
-        // Save the answer to the log
-        const { error: insertError } = await supabase.from('curriculum_answers').insert({
-          user_id: user.id,
-          question_key: currentStep.key,
-          answer_data: { 
-            text: answer,
-            step_id: currentStepId // CRITICAL: Store stepId to fix duplicate key bug
-          },
-          project_id: null 
-        })
+        // Save the answer to the log (use upsert to update existing answer or insert new)
+        // This prevents duplicate cards when editing a question
+        // CRITICAL: Check if answer already exists, then update or insert accordingly
+        const { data: existingAnswer, error: checkError } = await supabase
+          .from('curriculum_answers')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('question_key', currentStep.key)
+          .maybeSingle() // Use maybeSingle() instead of single() to avoid error when no row exists
         
-        if (insertError) {
-          console.error('Error saving answer:', insertError.message)
+        if (existingAnswer && !checkError) {
+          // Update existing answer
+          const { error: updateError } = await supabase
+            .from('curriculum_answers')
+            .update({
+              answer_data: { 
+                text: answer,
+                step_id: currentStepId
+              }
+            })
+            .eq('id', existingAnswer.id)
+          
+          if (updateError) {
+            console.error('Error updating answer:', updateError.message)
+          }
+        } else {
+          // Insert new answer
+          const { error: insertError } = await supabase.from('curriculum_answers').insert({
+            user_id: user.id,
+            question_key: currentStep.key,
+            answer_data: { 
+              text: answer,
+              step_id: currentStepId
+            },
+            project_id: null 
+          })
+          
+          if (insertError) {
+            console.error('Error inserting answer:', insertError.message)
+          }
         }
         // Note: answeredKeys is updated below BEFORE checking completion steps
         
@@ -729,13 +811,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             // Don't call findFirstUnansweredStep - just use the completion step
           } else {
             // Not all answered - skip to first unanswered question
-            const firstUnanswered = findFirstUnansweredStep(nextStepId)
+            // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
+            const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
             nextStepId = firstUnanswered
           }
         }
       } else {
         // Not a completion step - skip to first unanswered question
-        const firstUnanswered = findFirstUnansweredStep(nextStepId)
+        // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
+        const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
         nextStepId = firstUnanswered
       }
       
@@ -753,19 +837,27 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           setFullHistory(prev => [...prev, nextMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId(nextStepId)
+          // CRITICAL: Notify parent immediately after state update (for carousel sync)
+          if (onCurrentStepChange) {
+            onCurrentStepChange(nextStepId)
+          }
         } else {
           const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
           setHistory([completeMessage])
           setFullHistory(prev => [...prev, completeMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId('COMPLETE')
+          // CRITICAL: Notify parent immediately after state update (for carousel sync)
+          if (onCurrentStepChange) {
+            onCurrentStepChange('COMPLETE')
+          }
         }
         setIsSubmitting(false)
         // Refocus input after submit (Zeyoda pattern)
         setTimeout(() => {
           inputRef.current?.focus()
         }, 100)
-      }, 800)
+      }, 300)
 
     } catch (error) {
       console.error("Error in submit flow:", error)
@@ -886,7 +978,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                     {/* Edit button for user messages */}
                     {msg.role === 'user' && msg.stepId && (
                       <button
-                        onClick={async () => await handleEditStep(msg.stepId!)}
+                        onClick={async () => await handleEditStep(msg.stepId!, true)}
                         className="p-1.5 rounded-lg transition-colors hover:bg-emerald-500/20 flex-shrink-0"
                         style={{
                           color: '#fffacd',
@@ -1029,6 +1121,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 setFullHistory(prev => [...prev, nextMessage])
                 setPreviousStepId(currentStepId)
                 setCurrentStepId(targetStepId)
+                // CRITICAL: Notify parent immediately (for carousel sync)
+                if (onCurrentStepChange) {
+                  onCurrentStepChange(targetStepId)
+                }
                 setTimeout(() => {
                   inputRef.current?.focus()
                 }, 100)
