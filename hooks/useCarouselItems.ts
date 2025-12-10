@@ -19,9 +19,9 @@ export interface CarouselItem {
 export function useCarouselItems(
   userId: string | null,
   currentTypingInput: string,
-  currentTypingStepId: StepId | null,
-  currentQuestionStepId: StepId | null, // Current question being asked (even if not answered)
-  answeredKeys: Set<string> // CRITICAL: Pass answeredKeys for synchronous answered state check
+  activeStepId: StepId | null, // Single source of truth - same for typing and question
+  activeStepIdForQuestion: StepId | null, // Same as activeStepId, kept for clarity
+  isEditMode: boolean // Whether we're editing an answered card
 ) {
   const [items, setItems] = useState<CarouselItem[]>([])
   const supabase = createClient()
@@ -35,22 +35,26 @@ export function useCarouselItems(
   // CRITICAL: Create current question card synchronously (before async database query)
   // This ensures card exists immediately when currentQuestionStepId changes, preventing flash
   const currentQuestionCard = useMemo(() => {
-    if (!currentQuestionStepId) return null
-    
-    const currentStep = getStep(currentQuestionStepId)
-    
-    // CRITICAL: INIT card is special - only create when user starts typing (surprise moment)
-    const isInitStep = currentQuestionStepId === 'INIT'
-    const hasTypingStarted = currentTypingStepId === 'INIT' && currentTypingInput.length > 0
-    
-    // For INIT: Only create card if user has started typing
-    // For all others: Create card immediately when question is asked
-    if (isInitStep && !hasTypingStarted) {
-      return null // Don't create INIT card until typing starts
+    // CRITICAL: In edit mode, don't create a new current question card
+    // The edited card is already in the answered items list
+    if (isEditMode) {
+      return null
     }
     
-    // Use current typing input (always current, synchronous)
-    const typingInput = currentTypingStepId === currentQuestionStepId ? currentTypingInput : ''
+    if (!activeStepId) return null
+    
+    const currentStep = getStep(activeStepId)
+    
+    // CRITICAL: INIT card is special - only create when user has started typing
+    const isInitStep = activeStepId === 'INIT'
+    const hasTypingStarted = activeStepId === 'INIT' && currentTypingInput.length > 0
+    
+    if (isInitStep && !hasTypingStarted) {
+      return null
+    }
+    
+    // CRITICAL: Since activeStepId is single source of truth, typing always matches
+    const typingInput = currentTypingInput
     const label = currentStep.key
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
@@ -59,8 +63,8 @@ export function useCarouselItems(
     const cardTitle = typingInput ? `${label}: ${typingInput}` : `${label}: `
     
     return {
-      id: `current-question-${currentQuestionStepId}`,
-      stepId: currentQuestionStepId,
+      id: `current-question-${activeStepId}`,
+      stepId: activeStepId,
       questionKey: currentStep.key,
       isCurrentQuestion: true,
       title: cardTitle,
@@ -68,7 +72,7 @@ export function useCarouselItems(
       type: (currentStep.phase === 'prod' ? 'pro' : currentStep.phase === 'legacy' ? 'loop' : currentStep.phase) || 'pre',
       createdAt: new Date().toISOString()
     } as CarouselItem
-  }, [currentQuestionStepId, currentTypingStepId, currentTypingInput])
+  }, [activeStepId, currentTypingInput, isEditMode])
 
   // Shared loadItems function
   const loadItemsRef = useRef<(() => Promise<void>) | null>(null)
@@ -163,17 +167,34 @@ export function useCarouselItems(
         // This ensures only ONE current question card exists at a time
         finalItems = finalItems.filter(item => !item.isCurrentQuestion)
         
+        // CRITICAL: In edit mode, update answered cards in-place with typing input
+        if (isEditMode && activeStepId) {
+          // Find the answered card being edited and update its title with typing input
+          const editedCardIndex = finalItems.findIndex(item => item.stepId === activeStepId)
+          if (editedCardIndex !== -1) {
+            const editedCard = finalItems[editedCardIndex]
+            const step = getStep(activeStepId)
+            const label = step.key
+              .split('_')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ')
+            const cardTitle = currentTypingInput ? `${label}: ${currentTypingInput}` : `${label}: `
+            finalItems[editedCardIndex] = {
+              ...editedCard,
+              title: cardTitle
+            }
+          }
+        }
+        
         // CRITICAL: Use synchronously created current question card (from useMemo above)
-        // This ensures card exists immediately when currentQuestionStepId changes, preventing flash
-        // Card is created synchronously before async database query completes
-        if (currentQuestionCard) {
+        // Only add if not in edit mode (edit mode uses answered cards only)
+        if (!isEditMode && currentQuestionCard) {
           // CRITICAL: Always include current question card - it represents the question being asked
           // Filter out any answered items with the same stepId to prevent duplicates
           finalItems = finalItems.filter(item => item.stepId !== currentQuestionCard.stepId)
           
           // CRITICAL: Always add at the front (index 0) - featured spot
           // This ensures current question card is always visible immediately, preventing flash
-          // Even if items state is stale, current card is at index 0
           finalItems = [currentQuestionCard, ...finalItems]
         }
 
@@ -210,49 +231,61 @@ export function useCarouselItems(
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, supabase, currentQuestionStepId, currentTypingStepId, currentQuestionCard]) // Added currentQuestionCard to deps
+  }, [userId, supabase, activeStepId, currentQuestionCard, isEditMode]) // Use activeStepId and isEditMode
 
   // Separate effect: Debounce typing updates to prevent glitching
   useEffect(() => {
     if (!userId || !loadItemsRef.current) return
     
-    const isTyping = currentTypingInput !== lastTypingInputRef.current && currentTypingStepId === currentQuestionStepId
+    // CRITICAL: Since activeStepId is single source of truth, typing always matches when activeStepId is set
+    const isTyping = currentTypingInput !== lastTypingInputRef.current && activeStepId !== null
     if (isTyping) {
-      // Typing is happening - debounce the update (reduced from 250ms to 100ms for faster card updates)
+      // Typing is happening - debounce the update
       if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
       typingDebounceRef.current = setTimeout(() => {
         if (loadItemsRef.current) {
           loadItemsRef.current()
         }
-      }, 100) // Reduced debounce for faster card updates (was 250ms)
+      }, 100)
     }
     
     return () => {
       if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
     }
-  }, [currentTypingInput, currentTypingStepId, currentQuestionStepId, userId]) // Watch typing input separately
+  }, [currentTypingInput, activeStepId, userId]) // Watch typing input separately
 
   // CRITICAL: Merge synchronous current question card with async items from database
-  // This ensures card exists immediately when currentQuestionStepId changes, preventing flash
+  // This ensures card exists immediately when activeStepId changes, preventing flash
   const finalItems = useMemo(() => {
     // Remove any old current question cards from items (cleanup)
     const itemsWithoutCurrent = items.filter(item => !item.isCurrentQuestion)
     
-    // CRITICAL: Always include current question card if it exists
-    // It represents the question being asked, regardless of answered state
-    if (currentQuestionCard) {
+    // CRITICAL: In edit mode, don't add a current question card - edited card is already in items
+    if (isEditMode) {
+      return itemsWithoutCurrent
+    }
+    
+    // CRITICAL: If activeStepId exists, guarantee current card at index 0
+    // Never fall back to answered items when question is active
+    if (activeStepId) {
+      // INIT special case: currentQuestionCard is null until typing starts
+      // Return empty array instead of falling back to answered items
+      if (!currentQuestionCard) {
+        return [] // Empty until INIT typing starts - prevents Artist Name flash
+      }
+      
+      // Always include current card at index 0
       // Filter out any answered items with the same stepId to prevent duplicates
-      // The current question card takes precedence over answered cards
       const dedupedItems = itemsWithoutCurrent.filter(item => item.stepId !== currentQuestionCard.stepId)
       
       // CRITICAL: Always add at the front (index 0) - featured spot
       // This ensures current question card is always visible immediately, preventing flash
-      // Even if items state is stale, current card is at index 0
       return [currentQuestionCard, ...dedupedItems]
     }
     
+    // No active step - return answered items only
     return itemsWithoutCurrent
-  }, [items, currentQuestionCard])
+  }, [items, currentQuestionCard, activeStepId, isEditMode])
 
   return finalItems
 }

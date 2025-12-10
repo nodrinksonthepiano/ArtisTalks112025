@@ -52,11 +52,21 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const hasInitializedRef = useRef(false)
   
   // Notify parent of current step change (for carousel)
+  // CRITICAL: Always notify parent when currentStepId changes
+  // Parent's onCurrentStepChange handler will check isEditMode and only update if not editing
+  // For INIT: Only notify when typing has started (input.length > 0)
   useEffect(() => {
-    if (onCurrentStepChange) {
+    if (!onCurrentStepChange) return
+    
+    const isInitStep = currentStepId === 'INIT'
+    
+    // CRITICAL: Always notify parent when currentStepId changes
+    // Parent's onCurrentStepChange handler will check isEditMode and only update if not editing
+    // For INIT: Only notify when typing has started (input.length > 0)
+    if (!isInitStep || input.length > 0) {
       onCurrentStepChange(currentStepId)
     }
-  }, [currentStepId, onCurrentStepChange])
+  }, [currentStepId, onCurrentStepChange, input])
   
   // Helper: Find first unanswered question in curriculum flow
   // CRITICAL: Accept optional answeredKeysOverride to use updated keys immediately after state update

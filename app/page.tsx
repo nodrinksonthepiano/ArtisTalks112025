@@ -66,16 +66,15 @@ export default function Home() {
   
   // Carousel state: current typing input for live card updates
   const [currentTypingInput, setCurrentTypingInput] = useState<string>('')
-  const [currentTypingStepId, setCurrentTypingStepId] = useState<StepId | null>(null)
-  const [currentQuestionStepId, setCurrentQuestionStepId] = useState<StepId | null>(null) // Current question being asked
+  const [activeStepId, setActiveStepId] = useState<StepId | null>(null) // Single source of truth for both chat and carousel
+  const [isEditMode, setIsEditMode] = useState(false) // Track if we're editing an answered card
   const [carouselIndex, setCarouselIndex] = useState(0)
   const carouselIndexRef = useRef<number>(0)
   const prevQuestionRef = useRef<StepId | null>(null)
   const isUserSwipeRef = useRef<boolean>(false)
   
   // Carousel items from curriculum answers + current question card
-  // CRITICAL: Pass answeredKeys so card creation can check answered state synchronously
-  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, currentTypingStepId, currentQuestionStepId, answeredKeys)
+  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode)
   
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
@@ -92,14 +91,23 @@ export default function Home() {
   }, [user?.id])
   
   // Auto-advance to current question card (always at index 0)
-  // SIMPLE: Current question card is always at index 0 - just use it
+  // SIMPLE: When question changes, immediately set index to 0
+  // Don't wait for carouselItems - trust that card will be at index 0
   useEffect(() => {
-    if (!currentQuestionStepId) return
+    if (!activeStepId) return
     
-    // Wait for carousel items to be loaded
-    if (carouselItems.length === 0) return
+    // CRITICAL: In edit mode, don't auto-center - stay on the edited card
+    if (isEditMode) {
+      return
+    }
     
-    // If user just swiped, skip auto-advance to prevent fighting
+    // CRITICAL: When activeStepId changes in progress mode, it's ALWAYS an app-initiated transition
+    // Clear isUserSwipeRef immediately to allow auto-center after edit submit
+    if (prevQuestionRef.current !== activeStepId) {
+      isUserSwipeRef.current = false
+    }
+    
+    // If user just swiped (and step hasn't changed), skip auto-advance to prevent fighting
     if (isUserSwipeRef.current) {
       setTimeout(() => {
         isUserSwipeRef.current = false
@@ -107,32 +115,63 @@ export default function Home() {
       return
     }
     
-    // SIMPLE: Check if current question card exists at index 0 (featured spot)
-    const currentCardAtZero = carouselItems[0]?.isCurrentQuestion && carouselItems[0]?.stepId === currentQuestionStepId
-    
-    // If current question card exists at index 0, ensure carousel is at index 0
-    // Check if index is wrong OR question changed (handles timing issues)
-    if (currentCardAtZero) {
-      if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== currentQuestionStepId) {
-        setCarouselIndex(0)
-        carouselIndexRef.current = 0
-        prevQuestionRef.current = currentQuestionStepId
-      }
+    // ALWAYS set to 0 when step changes in progress mode (unless user swiping)
+    if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== activeStepId) {
+      setCarouselIndex(0)
+      carouselIndexRef.current = 0
+      prevQuestionRef.current = activeStepId
     }
-  }, [currentQuestionStepId, carouselItems])
+  }, [activeStepId, isEditMode])
 
-  // CRITICAL: Set currentQuestionStepId immediately when user logs in (before EmeraldChat initializes)
-  // This ensures the card is generated immediately, preventing "no card on login" issue
+  // CRITICAL: Handle edit button clicks - navigate to edited card and prevent auto-center
+  // When user clicks edit, mark as user-initiated navigation and move carousel to that card
   useEffect(() => {
-    if (user && !currentQuestionStepId) {
-      // Set to INIT immediately - EmeraldChat will update it if needed via onCurrentStepChange callback
-      setCurrentQuestionStepId('INIT')
-    } else if (!user) {
+    const handleCardEdit = (e: Event) => {
+      const customEvent = e as CustomEvent<{ stepId: StepId; focusInput?: boolean; cardIndex?: number }>
+      const stepId = customEvent.detail?.stepId
+      if (!stepId) return
+      
+      // CRITICAL: Enter edit mode - set activeStepId to the card being edited
+      setActiveStepId(stepId)
+      setIsEditMode(true)
+      
+      // Mark as user-initiated navigation to prevent auto-center
+      isUserSwipeRef.current = true
+      
+      // Navigate carousel to the card being edited
+      const cardIndex = customEvent.detail?.cardIndex !== undefined 
+        ? customEvent.detail.cardIndex 
+        : carouselItems.findIndex(item => item.stepId === stepId)
+      
+      if (cardIndex !== -1) {
+        setCarouselIndex(cardIndex)
+        carouselIndexRef.current = cardIndex
+      }
+      
+      // Clear swipe flag after delay (but stay in edit mode until submit)
+      setTimeout(() => {
+        isUserSwipeRef.current = false
+      }, 100)
+    }
+    
+    window.addEventListener('cardEdit', handleCardEdit as EventListener)
+    return () => {
+      window.removeEventListener('cardEdit', handleCardEdit as EventListener)
+    }
+  }, [carouselItems])
+
+  // CRITICAL: Clear activeStepId when user logs out
+  // Don't set INIT on login - let EmeraldChat set it via onCurrentStepChange when typing starts
+  // This matches the "surprise" behavior - no card/halo until user starts typing
+  useEffect(() => {
+    if (!user) {
       // Clear when user logs out
-      setCurrentQuestionStepId(null)
+      setActiveStepId(null)
+      setIsEditMode(false)
       prevQuestionRef.current = null
     }
-  }, [user]) // Removed currentQuestionStepId from deps to prevent re-triggering
+    // Don't set INIT on login - EmeraldChat will set it when user starts typing
+  }, [user])
   
   // Temporary preview state for live background updates (unified for logo + colors)
   const [previewOverrides, setPreviewOverrides] = useState<{
@@ -330,8 +369,17 @@ export default function Home() {
               {/* Halo Container with Carousel ON it (Zeyoda pattern) */}
               {/* overflow: visible allows peek cards to show above/below halo */}
               {/* Container matches Zeyoda: relative, max-w-5xl constraint (Zeyoda pattern) */}
-              {/* Only render when we have items (Zeyoda pattern - prevents halo from measuring empty carousel) */}
-              {(carouselItems && carouselItems.length >= 1) ? (
+              {/* Render stage when question is active OR when we have answered items */}
+              {/* CRITICAL: INIT is special - only render when typing has started (surprise moment) */}
+              {/* Gate by activeStepId (single source of truth) not carouselItems.length */}
+              {(() => {
+                // CRITICAL: INIT is special - only render when typing has started
+                if (activeStepId === 'INIT') {
+                  return activeStepId === 'INIT' && currentTypingInput.length > 0
+                }
+                // For all other cases: Render if activeStepId is set OR answered items exist
+                return activeStepId || (carouselItems && carouselItems.length >= 1)
+              })() ? (
                 <div 
                   ref={haloContainerRef}
                   className="relative w-full max-w-5xl mx-auto"
@@ -360,10 +408,11 @@ export default function Home() {
                       
                       // Extract stepId from the swiped card and dispatch cardEdit event
                       // This updates the chat to show that question (same as edit pencil)
+                      // CRITICAL: Pass cardIndex so handler uses the actual swiped index, not findIndex by stepId
                       const swipedItem = carouselItems[idx]
                       if (swipedItem?.stepId) {
                         window.dispatchEvent(new CustomEvent('cardEdit', {
-                          detail: { stepId: swipedItem.stepId, focusInput: false }
+                          detail: { stepId: swipedItem.stepId, focusInput: false, cardIndex: idx }
                         }))
                       }
                     }}
@@ -518,16 +567,29 @@ export default function Home() {
                   onTriggerPanel={setActivePanel}
                   onTypingUpdate={(input, stepId) => {
                     setCurrentTypingInput(input)
-                    setCurrentTypingStepId(stepId)
+                    // CRITICAL: activeStepId is already set (by cardEdit or onCurrentStepChange)
+                    // Just ensure it matches - if not, something is wrong
+                    if (activeStepId !== stepId) {
+                      console.warn('Typing stepId mismatch:', { activeStepId, stepId })
+                    }
                   }}
                   onCurrentStepChange={(stepId) => {
-                    setCurrentQuestionStepId(stepId)
+                    // CRITICAL: Only update activeStepId if NOT in edit mode
+                    // In edit mode, activeStepId is controlled by cardEdit event
+                    if (!isEditMode) {
+                      setActiveStepId(stepId)
+                    }
                   }}
                   onSubmitCard={(answer, stepId) => {
-                    // Clear typing state immediately
+                    // Clear typing state
                     setCurrentTypingInput('')
-                    setCurrentTypingStepId(null)
-                    // Carousel auto-advance is handled by useEffect watching currentQuestionStepId
+                    
+                    // CRITICAL: If in edit mode, exit edit mode and transition to progress mode
+                    if (isEditMode) {
+                      setIsEditMode(false)
+                      // activeStepId will be updated by handleSubmit in EmeraldChat
+                      // which calls onCurrentStepChange with next unanswered step
+                    }
                   }}
                   profile={profile}
                   answeredKeys={answeredKeys}
