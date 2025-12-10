@@ -69,6 +69,7 @@ export default function Home() {
   const [currentTypingStepId, setCurrentTypingStepId] = useState<StepId | null>(null)
   const [currentQuestionStepId, setCurrentQuestionStepId] = useState<StepId | null>(null) // Current question being asked
   const [carouselIndex, setCarouselIndex] = useState(0)
+  const carouselIndexRef = useRef<number>(0)
   const prevQuestionRef = useRef<StepId | null>(null)
   
   // Carousel items from curriculum answers + current question card
@@ -89,15 +90,27 @@ export default function Home() {
   }, [user?.id])
   
   // Auto-advance to the card matching the current question (find anywhere in array)
+  // CRITICAL: This must run whenever currentQuestionStepId or carouselItems changes
   useEffect(() => {
-    if (currentQuestionStepId && carouselItems.length > 0) {
-      const cardIndex = carouselItems.findIndex(item => item.stepId === currentQuestionStepId)
-      if (cardIndex !== -1 && cardIndex !== carouselIndex) {
+    if (!currentQuestionStepId) return
+    
+    // Wait for carousel items to be loaded
+    if (carouselItems.length === 0) return
+    
+    const cardIndex = carouselItems.findIndex(item => item.stepId === currentQuestionStepId)
+    
+    if (cardIndex !== -1) {
+      // Card exists - update carousel index if needed
+      if (cardIndex !== carouselIndex || prevQuestionRef.current !== currentQuestionStepId) {
         setCarouselIndex(cardIndex)
+        carouselIndexRef.current = cardIndex
         prevQuestionRef.current = currentQuestionStepId
       }
     }
-  }, [currentQuestionStepId, carouselItems, carouselIndex])
+    // If cardIndex === -1, the card hasn't been created yet
+    // This can happen briefly when currentQuestionStepId changes before useCarouselItems updates
+    // The effect will run again when carouselItems updates
+  }, [currentQuestionStepId, carouselItems.length, carouselItems, carouselIndex])
 
   // CRITICAL: Set currentQuestionStepId immediately when user logs in (before EmeraldChat initializes)
   // This ensures the card is generated immediately, preventing "no card on login" issue

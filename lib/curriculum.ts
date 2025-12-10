@@ -1,7 +1,6 @@
 export type StepId = 
   // PRE phase
   | 'INIT'
-  | 'MISSION_NAME'
   | 'MISSION_GIFT'
   | 'COLORS_PANEL'
   | 'PRE_COMPLETE'
@@ -40,14 +39,6 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
     nextStep: 'COLORS_PANEL',
     key: 'artist_name',
     placeholder: "e.g. JAI, The Beatles...",
-    phase: 'pre'
-  },
-  MISSION_NAME: {
-    id: 'MISSION_NAME',
-    question: "What is your artist name?",
-    nextStep: 'COLORS_PANEL',
-    key: 'artist_name',
-    placeholder: "Your Artist Name",
     phase: 'pre'
   },
   COLORS_PANEL: {

@@ -79,20 +79,8 @@ export function useCarouselItems(
             stepId = storedStepId as StepId
           } else {
             // Backward compatibility: infer stepId from question_key
-            if (step && step.key === 'artist_name') {
-              // Special case: INIT and MISSION_NAME both use 'artist_name'
-              // Check if any answer exists BEFORE this artist_name answer
-              const currentAnswerIndex = answerIndex
-              const hasAnswersBefore = answers.some((a, idx) => 
-                idx < currentAnswerIndex && a.question_key !== 'artist_name'
-              )
-              // If there are other answers before this one, it's MISSION_NAME (user skipped INIT)
-              // Otherwise, it's INIT (first question)
-              stepId = hasAnswersBefore ? 'MISSION_NAME' : 'INIT'
-            } else {
-              // Other keys are unique, use simple lookup
-              stepId = step?.id || answer.question_key as StepId
-            }
+            // All artist_name answers are INIT (MISSION_NAME removed)
+            stepId = step?.id || answer.question_key as StepId
           }
           
           const content = answerData?.text || answerData?.content || ''

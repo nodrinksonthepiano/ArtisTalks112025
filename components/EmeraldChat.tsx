@@ -68,9 +68,34 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const step = getStep(current)
       
       // CRITICAL: Completion steps (PRE_COMPLETE, PROD_COMPLETE, etc.) are celebrations
-      // They should always be shown, even though they have empty keys
+      // They should be shown when all questions in their phase are answered
       if (step.id.includes('_COMPLETE')) {
-        return current // Return completion step immediately - it's a celebration, not a question
+        // Check if all questions in this phase are answered before showing completion step
+        const phase = step.phase
+        if (phase) {
+          // Get all steps in this phase (excluding completion steps)
+          const phaseSteps = Object.values(CURRICULUM).filter(s => 
+            s.phase === phase && 
+            !s.id.includes('_COMPLETE') && 
+            s.key && 
+            s.key.length > 0
+          )
+          
+          // Check if all phase questions are answered
+          const allPhaseAnswered = phaseSteps.every(s => answeredKeys.has(s.key))
+          
+          if (allPhaseAnswered) {
+            // All questions answered - show completion step
+            return current
+          } else {
+            // Not all answered - continue to next step (skip completion)
+            current = step.nextStep
+            continue
+          }
+        } else {
+          // No phase - return completion step (safety)
+          return current
+        }
       }
       
       // CRITICAL: Skip other steps with empty keys (shouldn't happen, but safety check)
@@ -150,8 +175,20 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setFullHistory([initMessage]) // Add to full history too
   }, []) // Only run once on mount - don't wait for answeredKeys
   
+  // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
+  const prevAnsweredKeysSizeRef = useRef<number>(0)
+  
+  // CRITICAL: Reset refs when answeredKeys is cleared (data reset)
+  useEffect(() => {
+    if (answeredKeys.size === 0 && prevAnsweredKeysSizeRef.current > 0) {
+      // Data was reset - reset initialization state
+      hasInitializedRef.current = false
+      prevAnsweredKeysSizeRef.current = 0
+    }
+  }, [answeredKeys.size])
+  
   // Update to first unanswered step once answeredKeys loads (if answers exist)
-  // CRITICAL: Only run on initial load, not when user manually advances steps
+  // CRITICAL: Only run ONCE when answeredKeys first loads from database (0 -> N), not when new answers are saved (N -> N+1)
   useEffect(() => {
     // Skip if history is empty (initialization effect hasn't run yet)
     if (history.length === 0) return
@@ -159,21 +196,31 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Skip if already initialized (user is actively progressing through curriculum)
     if (hasInitializedRef.current) return
     
+    // CRITICAL: Only sync on initial load (0 -> N), not when new answers are saved (N -> N+1)
+    const currentSize = answeredKeys.size
+    const prevSize = prevAnsweredKeysSizeRef.current
+    const isInitialLoad = prevSize === 0 && currentSize > 0
+    
+    // Update ref for next check
+    prevAnsweredKeysSizeRef.current = currentSize
+    
+    // Skip if not initial load (prevents reset when new answers are saved)
+    if (!isInitialLoad) return
+    
     // CRITICAL: Skip if on PRE_COMPLETE or any completion step (celebration step - don't interfere)
     if (currentStepId === 'PRE_COMPLETE' || currentStepId.includes('_COMPLETE')) return
     
-    // Skip if already on INIT and no answers exist
-    if (currentStepId === 'INIT' && answeredKeys.size === 0) return
+    // Skip if already on INIT and no answers exist (shouldn't happen with isInitialLoad check, but safety)
+    if (currentStepId === 'INIT' && currentSize === 0) return
     
     // CRITICAL: Skip if we're past INIT (user has progressed manually)
     if (currentStepId !== 'INIT') return
     
     // Only update if we have answers and need to find first unanswered (initial load only)
-    // This should only run once when answeredKeys first loads from database
-    if (answeredKeys.size > 0) {
+    if (currentSize > 0) {
       const firstUnanswered = findFirstUnansweredStep('INIT')
-      // Only update if different from current step and not a completion step
-      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE' && !firstUnanswered.includes('_COMPLETE')) {
+      // Update if different from current step (including completion steps - they're valid)
+      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE') {
         const step = getStep(firstUnanswered)
         setCurrentStepId(firstUnanswered)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
@@ -184,7 +231,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // This prevents it from overriding manual step advancement
       hasInitializedRef.current = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length]) // Update when answeredKeys loads
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length]) // answeredKeys.size triggers, but guard prevents re-runs
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -454,6 +501,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Now save to curriculum_answers when user clicks Send
       // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
       const { data: { user } } = await supabase.auth.getUser()
+      
+      // Declare variables outside if block so they're available for setTimeout
+      let nextStepId = currentStep.nextStep
+      let finalStep = getStep(nextStepId)
+      
       if (user && currentStep.key) {
         // Save colors, logo, and font together
         const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
@@ -467,41 +519,103 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           : profile?.logo_use_background || false
         const fontFamily = currentPickerState.font?.font_family || profile?.font_family
         
+        // CRITICAL: Save all three keys for backward compatibility and progress tracking
+        // This ensures progress calculation, carousel, and sync all work correctly
+        
+        // 1. Save colors_set (main key)
         await supabase.from('curriculum_answers').upsert({
           user_id: user.id,
-          question_key: currentStep.key,
+          question_key: 'colors_set',
           answer_data: {
-            text: 'Colors, logo, and font set',
+            text: 'Colors set',
             primary: primaryColor,
             accent: accentColor,
             brand_color: brandColor,
-            logo_url: logoUrl,
-            logo_use_background: logoUseBackground,
-            font_family: fontFamily,
-            step_id: currentStepId // CRITICAL: Store stepId to fix duplicate key bug
+            step_id: currentStepId
           },
           project_id: null
         })
         
-        // Mark step as answered
-        setAnsweredKeys(prev => new Set([...prev, currentStep.key]))
+        // 2. Save logo_uploaded (if logo exists)
+        if (logoUrl) {
+          await supabase.from('curriculum_answers').upsert({
+            user_id: user.id,
+            question_key: 'logo_uploaded',
+            answer_data: {
+              text: 'Logo uploaded',
+              url: logoUrl,
+              logo_use_background: logoUseBackground,
+              step_id: currentStepId
+            },
+            project_id: null
+          })
+        }
+        
+        // 3. Save font_set (if font selected)
+        if (fontFamily) {
+          await supabase.from('curriculum_answers').upsert({
+            user_id: user.id,
+            question_key: 'font_set',
+            answer_data: {
+              text: 'Font set',
+              font: fontFamily,
+              step_id: currentStepId
+            },
+            project_id: null
+          })
+        }
+        
+        // CRITICAL: Update answeredKeys BEFORE checking completion steps
+        // Create updated Set that includes all keys from this panel (reuse existing logoUrl/fontFamily vars)
+        const updatedAnsweredKeys = new Set(answeredKeys)
+        updatedAnsweredKeys.add('colors_set')
+        if (logoUrl) updatedAnsweredKeys.add('logo_uploaded')
+        if (fontFamily) updatedAnsweredKeys.add('font_set')
+        setAnsweredKeys(updatedAnsweredKeys)
         
         // Clear picker state for next step
         setCurrentPickerState({})
+        
+        // Advance to next step (update variables declared above)
+        nextStepId = currentStep.nextStep
+        finalStep = getStep(nextStepId)
+        
+        // CRITICAL: If next step is a completion step, check if we should show it
+        // Completion steps should be shown when all questions in their phase are answered
+        if (finalStep.id.includes('_COMPLETE')) {
+          const phase = finalStep.phase
+          if (phase) {
+            // Get all steps in this phase (excluding completion steps)
+            const phaseSteps = Object.values(CURRICULUM).filter(s => 
+              s.phase === phase && 
+              !s.id.includes('_COMPLETE') && 
+              s.key && 
+              s.key.length > 0
+            )
+            
+            // CRITICAL: Use updatedAnsweredKeys (includes current panel keys) not stale answeredKeys
+            const allPhaseAnswered = phaseSteps.every(s => updatedAnsweredKeys.has(s.key))
+            
+            if (!allPhaseAnswered) {
+              // Not all answered - skip to first unanswered question
+              const firstUnanswered = findFirstUnansweredStep(nextStepId)
+              nextStepId = firstUnanswered
+              finalStep = getStep(nextStepId)
+            }
+            // If all answered, keep nextStepId as the completion step
+          }
+        } else {
+          // Not a completion step - skip to first unanswered question
+          const firstUnanswered = findFirstUnansweredStep(nextStepId)
+          nextStepId = firstUnanswered
+          finalStep = getStep(nextStepId)
+        }
       }
-      
-      // Advance to next step - SKIP already answered questions
-      let nextStepId = currentStep.nextStep
-      
-      // Skip to first unanswered question (starting from next step)
-      const firstUnanswered = findFirstUnansweredStep(nextStepId)
-      nextStepId = firstUnanswered
-      const nextStep = getStep(nextStepId)
       
       setTimeout(() => {
         // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
         // Just advance to next step (inline picker will render automatically)
-        const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+        const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
         setHistory([nextMessage])
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
@@ -568,11 +682,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         
         if (insertError) {
           console.error('Error saving answer:', insertError.message)
-        } else {
-          // CRITICAL: Update answeredKeys optimistically (same as colors panel)
-          // This ensures progress updates immediately, coins fill as user progresses
-          setAnsweredKeys(prev => new Set([...prev, currentStep.key]))
         }
+        // Note: answeredKeys is updated below BEFORE checking completion steps
         
         // Force a final "Hard Save" of the profile to ensure consistency
         // This calls useProfile's updateProfile which handles the DB save for profile
@@ -588,13 +699,47 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Clear redo stack when user makes a new action (can't redo after new action)
       setRedoStack([])
 
-      // 3. Move to Next Step - SKIP already answered questions
+      // CRITICAL: Update answeredKeys optimistically BEFORE checking completion steps
+      // This ensures PRE_COMPLETE check uses the updated Set including the current answer
+      const updatedAnsweredKeys = new Set([...answeredKeys, currentStep.key])
+      setAnsweredKeys(updatedAnsweredKeys)
+
+      // 3. Move to Next Step
       let nextStepId = currentStep.nextStep
-      
-      // Skip to first unanswered question (starting from next step)
-      const firstUnanswered = findFirstUnansweredStep(nextStepId)
-      nextStepId = firstUnanswered
       const nextStep = getStep(nextStepId)
+      
+      // CRITICAL: If next step is a completion step, check if we should show it
+      // Completion steps should be shown when all questions in their phase are answered
+      if (nextStep.id.includes('_COMPLETE')) {
+        const phase = nextStep.phase
+        if (phase) {
+          // Get all steps in this phase (excluding completion steps)
+          const phaseSteps = Object.values(CURRICULUM).filter(s => 
+            s.phase === phase && 
+            !s.id.includes('_COMPLETE') && 
+            s.key && 
+            s.key.length > 0
+          )
+          
+          // CRITICAL: Use updatedAnsweredKeys (includes current answer) not stale answeredKeys
+          const allPhaseAnswered = phaseSteps.every(s => updatedAnsweredKeys.has(s.key))
+          
+          if (allPhaseAnswered) {
+            // All questions answered - show completion step
+            // Don't call findFirstUnansweredStep - just use the completion step
+          } else {
+            // Not all answered - skip to first unanswered question
+            const firstUnanswered = findFirstUnansweredStep(nextStepId)
+            nextStepId = firstUnanswered
+          }
+        }
+      } else {
+        // Not a completion step - skip to first unanswered question
+        const firstUnanswered = findFirstUnansweredStep(nextStepId)
+        nextStepId = firstUnanswered
+      }
+      
+      const finalStep = getStep(nextStepId)
       
       setTimeout(() => {
         // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
@@ -603,13 +748,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         // Normal chat flow - only show current question (no history building up)
         if (nextStepId !== 'COMPLETE') {
           // Only show current question in chat (clear previous)
-          const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+          const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
           setHistory([nextMessage])
           setFullHistory(prev => [...prev, nextMessage]) // Add to full history
           setPreviousStepId(currentStepId)
           setCurrentStepId(nextStepId)
         } else {
-          const completeMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
+          const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
           setHistory([completeMessage])
           setFullHistory(prev => [...prev, completeMessage]) // Add to full history
           setPreviousStepId(currentStepId)

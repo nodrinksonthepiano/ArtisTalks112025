@@ -84,7 +84,7 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
 
           if (phaseSteps.length === 0) return 0
 
-          // Get unique keys (some steps may share the same key, e.g., INIT and MISSION_NAME both use 'artist_name')
+          // Get unique keys (some steps may share the same key)
           const uniqueKeys = Array.from(new Set(phaseSteps.map(step => step.key)))
 
           // Count how many unique keys are completed
