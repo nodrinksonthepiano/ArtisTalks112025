@@ -255,6 +255,33 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }, [handleEditStep]) // Include handleEditStep in dependencies for correct closure
   
+  // CRITICAL: Listen for card navigation events (swiping, NOT editing)
+  // Navigation should update chat without entering edit mode
+  useEffect(() => {
+    const handleCardNavigate = async (e: Event) => {
+      const customEvent = e as CustomEvent<{ stepId: StepId }>
+      const stepId = customEvent.detail?.stepId
+      if (stepId) {
+        // CRITICAL: Navigation is NOT editing - don't call handleEditStep
+        // Just update currentStepId to sync chat with carousel
+        const step = getStep(stepId)
+        setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
+        const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+        setHistory([stepMessage])
+        // Don't add to fullHistory - navigation isn't new content
+        
+        // Load answer if it exists (for answered cards being viewed)
+        const userAnswer = await loadAnswerForStep(stepId)
+        setInput(userAnswer) // Show answer if editing, empty if new question
+      }
+    }
+    
+    window.addEventListener('cardNavigate', handleCardNavigate as EventListener)
+    return () => {
+      window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
+    }
+  }, [loadAnswerForStep])
+  
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
     // Only run once on initial mount (when history is empty)

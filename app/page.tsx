@@ -91,14 +91,15 @@ export default function Home() {
   }, [user?.id])
   
   // Auto-advance to current question card (always at index 0)
-  // SIMPLE: When question changes, immediately set index to 0
-  // Don't wait for carouselItems - trust that card will be at index 0
+  // CRITICAL: Respect edit mode and user swipes
+  // Navigation (cardNavigate) updates activeStepId without edit mode, so auto-center can work
+  // Editing (cardEdit) sets edit mode, so auto-center is blocked
   useEffect(() => {
     if (!activeStepId) return
     
-    // CRITICAL: In edit mode, don't auto-center - stay on the edited card
+    // CRITICAL: In edit mode, NEVER auto-center - stay on the edited card
     if (isEditMode) {
-      return
+      return // Exit early - don't touch carousel at all
     }
     
     // CRITICAL: When activeStepId changes in progress mode, it's ALWAYS an app-initiated transition
@@ -157,6 +158,43 @@ export default function Home() {
     window.addEventListener('cardEdit', handleCardEdit as EventListener)
     return () => {
       window.removeEventListener('cardEdit', handleCardEdit as EventListener)
+    }
+  }, [carouselItems])
+
+  // CRITICAL: Handle card navigation (swiping) separately from editing
+  // Navigation should update activeStepId WITHOUT entering edit mode
+  useEffect(() => {
+    const handleCardNavigate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ stepId: StepId; cardIndex?: number }>
+      const stepId = customEvent.detail?.stepId
+      if (!stepId) return
+      
+      // CRITICAL: Navigation is NOT editing - don't set isEditMode
+      // Just update activeStepId to sync chat with carousel
+      setActiveStepId(stepId)
+      
+      // Mark as user-initiated to prevent auto-center during navigation
+      isUserSwipeRef.current = true
+      
+      // Navigate carousel to the swiped card
+      const cardIndex = customEvent.detail?.cardIndex !== undefined 
+        ? customEvent.detail.cardIndex 
+        : carouselItems.findIndex(item => item.stepId === stepId)
+      
+      if (cardIndex !== -1) {
+        setCarouselIndex(cardIndex)
+        carouselIndexRef.current = cardIndex
+      }
+      
+      // Clear swipe flag after delay (allows auto-center for next step change)
+      setTimeout(() => {
+        isUserSwipeRef.current = false
+      }, 100)
+    }
+    
+    window.addEventListener('cardNavigate', handleCardNavigate as EventListener)
+    return () => {
+      window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
   }, [carouselItems])
 
@@ -406,13 +444,12 @@ export default function Home() {
                       setCarouselIndex(idx)
                       carouselIndexRef.current = idx
                       
-                      // Extract stepId from the swiped card and dispatch cardEdit event
-                      // This updates the chat to show that question (same as edit pencil)
-                      // CRITICAL: Pass cardIndex so handler uses the actual swiped index, not findIndex by stepId
+                      // CRITICAL: Swiping is navigation, NOT editing
+                      // Dispatch cardNavigate event (not cardEdit) to update chat without entering edit mode
                       const swipedItem = carouselItems[idx]
                       if (swipedItem?.stepId) {
-                        window.dispatchEvent(new CustomEvent('cardEdit', {
-                          detail: { stepId: swipedItem.stepId, focusInput: false, cardIndex: idx }
+                        window.dispatchEvent(new CustomEvent('cardNavigate', {
+                          detail: { stepId: swipedItem.stepId, cardIndex: idx }
                         }))
                       }
                     }}
