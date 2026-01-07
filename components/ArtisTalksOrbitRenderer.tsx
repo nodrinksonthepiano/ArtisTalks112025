@@ -471,52 +471,9 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                   if (!isInteractingRef.current) isOrbitAnimationPaused.current = false; 
                 }, 200) as unknown as number; 
               }}
-              onPointerDown={(e)=>{ 
-                if (!shouldReveal) return;
-                try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}; 
-                activePointerIdRef.current = e.pointerId; 
-                isInteractingRef.current = true; 
-                draggingTokenRef.current = false; 
-                downXYRef.current = { x: e.clientX, y: e.clientY }; 
-                downTsRef.current = (typeof performance!=='undefined'?performance.now():Date.now()); 
-                const { cx, cy } = centerRef.current;
-                lastAngleRef.current = Math.atan2(e.clientY - cy, e.clientX - cx); 
-                suppressClickRef.current = false; 
-                (e.currentTarget.style as any).cursor = 'grabbing'; 
-              }}
-              onPointerMove={(e)=>{ 
-                if (!shouldReveal || activePointerIdRef.current !== e.pointerId || lastAngleRef.current===null) return; 
-                const dx = e.clientX - (downXYRef.current?.x||e.clientX); 
-                const dy = e.clientY - (downXYRef.current?.y||e.clientY); 
-                if (!draggingTokenRef.current && (dx*dx+dy*dy) > 36) { 
-                  draggingTokenRef.current = true; 
-                  suppressClickRef.current = true; 
-                } 
-                const now = (typeof performance!=='undefined'?performance.now():Date.now()); 
-                const dt = Math.max(8, Math.min(80, now - (lastEventTsRef.current||now))) * 0.001; 
-                const { cx, cy } = centerRef.current;
-                const ang = Math.atan2(e.clientY - cy, e.clientX - cx); 
-                let d = ang - (lastAngleRef.current||ang); 
-                if (d > Math.PI) d -= 2*Math.PI; else if (d < -Math.PI) d += 2*Math.PI; 
-                userOffsetRef.current += d; 
-                userVelocityRef.current = 0.6*userVelocityRef.current + 0.4 * (d/dt); 
-                lastAngleRef.current = ang; 
-                lastEventTsRef.current = now; 
-              }}
-              onPointerUp={(e)=>{ 
-                if (!shouldReveal) return;
-                if (activePointerIdRef.current !== null) { 
-                  try { (e.currentTarget as any).releasePointerCapture?.(activePointerIdRef.current); } catch {} 
-                } 
-                activePointerIdRef.current = null; 
-                isInteractingRef.current = false; 
-                draggingTokenRef.current = false; 
-                lastAngleRef.current = null; 
-                (e.currentTarget.style as any).cursor = 'pointer'; 
-                if (hoverPauseTimerRef.current) window.clearTimeout(hoverPauseTimerRef.current); 
-                hoverPauseTimerRef.current = window.setTimeout(()=>{ isOrbitAnimationPaused.current = false; }, 120) as unknown as number; 
-                setTimeout(()=>{ suppressClickRef.current = false; }, 30); 
-              }}
+              // CRITICAL: No onPointerDown/Move/Up here - container handlers (lines 283-331) handle all pointer events
+              // Duplicate handlers were causing double velocity updates, making orbit speed up over time
+              // Container handlers already handle: pointer capture, velocity calculation, interaction state
               onClickCapture={(e)=>{ if (suppressClickRef.current) { e.preventDefault(); e.stopPropagation(); } }}
             >
               {/* Token Circle */}
