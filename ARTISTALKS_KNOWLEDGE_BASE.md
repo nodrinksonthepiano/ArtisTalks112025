@@ -10,6 +10,7 @@
 7. [Live Preview System](#live-preview-system)
 8. [Critical Patterns & Gotchas](#critical-patterns--gotchas)
 9. [Known Issues & Fixes Needed](#known-issues--fixes-needed)
+10. [Upstream: Zeyoda](#upstream-zeyoda-foundation)
 
 ---
 
@@ -658,20 +659,35 @@ When modifying pickers:
 
 ---
 
-## Zeyoda Code References
+## Upstream: Zeyoda (Foundation)
 
-**Repository:** `https://github.com/nodrinksonthepiano/zeyoda-nextjs-52925/tree/feature/coin-colors-live-update`
+ArtisTalks is built on **Zeyoda** patterns. Zeyoda provides the foundation for theming, events, and UI conventions.
 
-**Key Files:**
-- `app/components/ProfileEditPanel.tsx` - Panel UI and color/font/logo handling
-- `app/components/ThemeOrbitRenderer.tsx` - Token color updates via events
-- `app/utils/themeBackground.ts` - Background application logic
+**Zeyoda Repository:** `https://github.com/nodrinksonthepiano/zeyoda-nextjs-52925`  
+**Branch:** `feat/secure-middleware-whitelist-clean`  
+**Knowledge Base:** `ZEYODA_KNOWLEDGE_BASE.md` (in Zeyoda repo)
 
-**Patterns Used:**
-- Event-driven preview system (`artistConfigPreview` / `profilePreview`)
+### Integration Points
+
+| Concern | Zeyoda Source | ArtisTalks Usage |
+|---------|---------------|------------------|
+| Background/theme | `app/utils/themeBackground.ts` | `applyLogoBackground()` — logo/primary color precedence |
+| Event-driven preview | `profilePreview`, `primaryColorChange`, `logoPreviewChange` | Token colors, halo, live preview |
+| Panel UI patterns | `ProfileEditPanel.tsx`, `ThemeOrbitRenderer.tsx` | InlineColorPicker, InlineLogoPicker, ArtisTalksOrbitRenderer |
+| CSS variables | `--primary-color`, `--accent-color` | Same pattern for theming |
+
+### Key Zeyoda Files to Reference
+
+- `app/utils/themeBackground.ts` — `applyLogoBackground()`
+- `app/components/ProfileEditPanel.tsx` — Panel UI and color/font/logo handling
+- `app/components/ThemeOrbitRenderer.tsx` — Token color updates via events
+
+### Patterns Inherited
+
+- Event-driven preview system (`profilePreview`, `profilePreviewClear`)
 - Immediate CSS variable updates
-- `applyArtistBackground` / `applyLogoBackground` function
-- Preview config state for live token updates
+- `applyLogoBackground(profile, logoUrl?, useBackground?)` — background precedence logic
+- Primary vs accent color separation (background vs text)
 
 ---
 

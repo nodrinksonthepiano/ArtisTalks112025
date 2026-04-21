@@ -1,0 +1,156 @@
+{
+  "meta": {
+    "version": "3.0.0",
+    "lastUpdated": "2026-02-22",
+    "project": "nodrinksonthepiano/ArtisTalks112025",
+    "upstream": "nodrinksonthepiano/zeyoda-nextjs-52925",
+    "statusOptions": ["todo", "in_progress", "done", "blocked", "deferred"],
+    "priorityOptions": ["critical", "high", "medium", "low"],
+    "agentInstruction": "Read buildOrder before starting any feature. Check securityIncidents before touching wallet or payment code. Never re-enable fundWallet until SEC-001 remediation is fully checked off."
+  },
+
+  "vision": {
+    "oneLiner": "A protocol for artist sovereignty — artists own their fan graph, revenue, and data.",
+    "qrOnRamp": "QR code replaces Linktree. Fan scans at show, tips Venmo, that tip becomes wallet and fan connection.",
+    "dinosaurButton": "Reveals legacy platform links (Instagram, etc.) framed as 'old internet layer.' Brand statement."
+  },
+
+  "securityIncidents": [
+    {
+      "id": "SEC-001",
+      "date": "2025-10",
+      "status": "partially remediated",
+      "summary": "AI agent sent ~$11 from deployer to scammer via unguarded fundWallet on mainnet.",
+      "rootCauses": ["No network guard", "NEXT_PUBLIC_RPC server-side", "No address allowlist", "World-readable .env"],
+      "remediationStatus": {
+        "networkGuard.ts": "done",
+        "guardedSigner.ts": "done",
+        "apiGuard.ts": "done",
+        "fundWallet": "disabled",
+        "addressAllowlist": "todo",
+        "wallet_funding_audit": "todo",
+        "keyRotation": "human",
+        "envPermissions": "human"
+      },
+      "blockingItems": ["auth-004"]
+    }
+  ],
+
+  "buildOrder": [
+    { "phase": 0, "name": "Prep", "items": [], "reason": "Docs, carousel bug description, SEC-001 confirm" },
+    { "phase": 1, "name": "Security Foundation", "items": ["auth-003", "auth-003b"], "reason": "Audit log before any wallet code" },
+    { "phase": 2, "name": "Feedback & Admin", "items": ["feedback-001", "feedback-002", "feedback-003", "feedback-004", "admin-001", "admin-002", "admin-003"], "reason": "Low risk, no wallet code" },
+    { "phase": 3, "name": "Wallet Funding Re-enable", "items": ["auth-004", "admin-004"], "reason": "After SEC-001 complete" },
+    { "phase": 4, "name": "Venmo Payment Rail", "items": ["payment-001", "payment-002", "payment-003"], "reason": "Broadway on-ramp" },
+    { "phase": 5, "name": "Media Player & Toppins", "items": ["player-001", "player-002", "player-003", "player-004", "player-005"], "reason": "Core monetization" },
+    { "phase": 6, "name": "Artist Withdrawal", "items": ["player-006"], "reason": "After toppins" },
+    { "phase": 7, "name": "Playlisting", "items": ["playlist-001", "playlist-002", "playlist-003", "playlist-004"], "reason": "Self-contained" },
+    { "phase": 8, "name": "Wallet Messaging", "items": ["msg-001"], "reason": "Design only" },
+    { "phase": 9, "name": "Sovereignty", "items": ["sovereignty-001", "sovereignty-002"], "reason": "End goal" }
+  ],
+
+  "sections": [
+    {
+      "id": "auth",
+      "title": "Authentication & Security",
+      "items": [
+        { "id": "auth-001", "title": "Magic.link email login", "status": "done", "priority": "critical", "project": "zeyoda", "dependsOn": null },
+        { "id": "auth-002", "title": "Secure middleware route whitelist", "status": "done", "priority": "critical", "project": "zeyoda", "dependsOn": null },
+        { "id": "auth-003", "title": "Wallet funding audit log", "status": "todo", "priority": "critical", "project": "zeyoda", "dependsOn": null },
+        { "id": "auth-003b", "title": "SEC-001 remediation complete", "status": "in_progress", "priority": "critical", "project": "zeyoda", "notes": "networkGuard, guardedSigner done. addressAllowlist, audit schema, key rotation pending.", "dependsOn": null },
+        { "id": "auth-004", "title": "Safe wallet funding re-enable", "status": "blocked", "priority": "critical", "project": "zeyoda", "dependsOn": ["auth-003", "auth-003b"] }
+      ]
+    },
+    {
+      "id": "curriculum",
+      "title": "Curriculum Flow",
+      "items": [
+        { "id": "curr-001", "title": "Curriculum steps (pre/prod/post/legacy)", "status": "done", "project": "artistalks", "dependsOn": null },
+        { "id": "curr-002", "title": "Inline pickers (colors, logo, font, asset)", "status": "done", "project": "artistalks", "dependsOn": null },
+        { "id": "curr-003", "title": "answeredKeys state", "status": "done", "project": "artistalks", "dependsOn": null }
+      ]
+    },
+    {
+      "id": "carousel",
+      "title": "Chat & Carousel Sync",
+      "items": [
+        { "id": "carousel-001", "title": "Chat + carousel sync fix", "status": "in_progress", "priority": "critical", "project": "artistalks", "branch": "fix-chat-carousel-sync-navigation", "notes": "State can drift when switching edit/progress mode or when swipe and auto-center overlap. activeStepId is single source of truth. cardEdit vs cardNavigate.", "dependsOn": null },
+        { "id": "carousel-002", "title": "Carousel smooth transitions", "status": "todo", "project": "artistalks", "dependsOn": "carousel-001" }
+      ]
+    },
+    {
+      "id": "admin",
+      "title": "Admin Panel",
+      "items": [
+        { "id": "admin-001", "title": "GOSHEESH token opens admin panel", "status": "todo", "priority": "high", "project": "artistalks", "dependsOn": null },
+        { "id": "admin-002", "title": "Feedback ticket inbox", "status": "todo", "project": "artistalks", "dependsOn": ["admin-001", "feedback-001"] },
+        { "id": "admin-003", "title": "PRD todo items in admin", "status": "todo", "project": "artistalks", "dependsOn": "admin-001" },
+        { "id": "admin-004", "title": "Wallet funding controls", "status": "todo", "project": "artistalks", "dependsOn": ["admin-001", "auth-003"] }
+      ]
+    },
+    {
+      "id": "feedback",
+      "title": "Feedback System",
+      "items": [
+        { "id": "feedback-001", "title": "Supabase feedback table", "status": "todo", "project": "zeyoda", "dependsOn": null },
+        { "id": "feedback-002", "title": "POST /api/feedback", "status": "todo", "project": "zeyoda", "dependsOn": "feedback-001" },
+        { "id": "feedback-003", "title": "Feedback button (mic→speaker) in chat", "status": "todo", "project": "artistalks", "dependsOn": "feedback-002" },
+        { "id": "feedback-004", "title": "Dinosaur button", "status": "todo", "project": "artistalks", "dependsOn": null }
+      ]
+    },
+    {
+      "id": "payment",
+      "title": "Venmo Payment Rail",
+      "items": [
+        { "id": "payment-001", "title": "pending_payments table", "status": "todo", "project": "zeyoda", "dependsOn": null },
+        { "id": "payment-002", "title": "Venmo webhook", "status": "todo", "project": "zeyoda", "dependsOn": "payment-001" },
+        { "id": "payment-003", "title": "Top-up prompt in chat", "status": "todo", "project": "artistalks", "dependsOn": "payment-002" }
+      ]
+    },
+    {
+      "id": "player",
+      "title": "Media Player & Toppins",
+      "items": [
+        { "id": "player-001", "title": "Protocol-aware media player", "status": "todo", "project": "artistalks", "dependsOn": null },
+        { "id": "player-002", "title": "POST /api/toppins", "status": "todo", "project": "zeyoda", "dependsOn": ["player-001", "auth-003"] },
+        { "id": "player-003", "title": "Free play tracking", "status": "todo", "project": "zeyoda", "dependsOn": ["player-002", "auth-004"] },
+        { "id": "player-004", "title": "60s free teaser", "status": "todo", "project": "artistalks", "dependsOn": "player-001" },
+        { "id": "player-005", "title": "Artist treasury view", "status": "todo", "project": "artistalks", "dependsOn": "player-002" },
+        { "id": "player-006", "title": "Artist withdrawal", "status": "todo", "project": "zeyoda", "dependsOn": "player-002" }
+      ]
+    },
+    {
+      "id": "playlists",
+      "title": "Playlisting",
+      "items": [
+        { "id": "playlist-001", "title": "playlists table", "status": "todo", "project": "zeyoda", "dependsOn": null },
+        { "id": "playlist-002", "title": "Play queue / play next", "status": "todo", "project": "artistalks", "dependsOn": ["player-001", "playlist-001"] },
+        { "id": "playlist-003", "title": "User-created playlists", "status": "todo", "project": "artistalks", "dependsOn": ["playlist-001", "playlist-002"] },
+        { "id": "playlist-004", "title": "Mixtape token in orbit", "status": "todo", "project": "artistalks", "dependsOn": "playlist-003" }
+      ]
+    },
+    {
+      "id": "messaging",
+      "title": "Wallet Messaging",
+      "items": [
+        { "id": "msg-001", "title": "Wallet inbox schema design", "status": "todo", "project": "zeyoda", "dependsOn": "feedback-001" }
+      ]
+    },
+    {
+      "id": "sovereignty",
+      "title": "Sovereignty",
+      "items": [
+        { "id": "sovereignty-001", "title": "transferEverything() UI", "status": "todo", "project": "zeyoda", "dependsOn": "admin-001" },
+        { "id": "sovereignty-002", "title": "Artist data export", "status": "todo", "project": "zeyoda", "dependsOn": "sovereignty-001" }
+      ]
+    }
+  ],
+
+  "openQuestions": [
+    { "id": "Q-001", "question": "Carousel sync: exact bug symptom?", "status": "open", "blocking": ["carousel-001"] },
+    { "id": "Q-002", "question": "Venmo webhooks reliable?", "status": "open", "blocking": ["payment-002"] },
+    { "id": "Q-003", "question": "Venmo memo format?", "status": "open", "blocking": ["payment-002"] },
+    { "id": "Q-004", "question": "Who pays gas on withdrawal?", "status": "open", "blocking": ["player-006"] },
+    { "id": "Q-005", "question": "Minimum withdrawal threshold?", "status": "open", "blocking": ["player-006"] }
+  ]
+}
