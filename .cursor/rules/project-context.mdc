@@ -7,10 +7,11 @@ alwaysApply: true
 
 Before making changes that touch **product features**, **architecture**, or **auth/security**:
 
-1. Read `AGENT_NOTES.md` — vision, rules, SEC-001, project map
-2. Read `ROADMAP.md` — what exists, what's broken, build phases
-3. Read `PRD.json` — items, buildOrder, dependsOn, openQuestions
-4. Read `ARTISTALKS_KNOWLEDGE_BASE.md` — curriculum, carousel, conventions
-5. For Zeyoda: read `ZEYODA_KNOWLEDGE_BASE.md` in the Zeyoda repo
+1. Read `ECOSYSTEM_MEMORY_MAP.md` — route ArtisTalks / Artistocks / Zeyoda memory through the correct project lens
+2. Read `AGENT_NOTES.md` — vision, rules, SEC-001, project map
+3. Read `ROADMAP.md` — what exists, what's broken, build phases
+4. Read `PRD.json` — items, buildOrder, dependsOn, openQuestions
+5. Read `ARTISTALKS_KNOWLEDGE_BASE.md` — curriculum, carousel, conventions
+6. For Zeyoda: read `ZEYODA_KNOWLEDGE_BASE.md` in the Zeyoda repo
 
 For trivial edits (typos, formatting, comments), this is optional.

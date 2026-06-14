@@ -1,16 +1,34 @@
 # ArtisTalks Knowledge Base - Complete System Breakdown
 
 ## Table of Contents
-1. [System Architecture Overview](#system-architecture-overview)
-2. [Database Schema & Structure](#database-schema--structure)
-3. [Curriculum Flow System](#curriculum-flow-system)
-4. [How to Add/Reorder Questions](#how-to-addreorder-questions)
-5. [Inline Picker System](#inline-picker-system)
-6. [Card Generation Logic](#card-generation-logic)
-7. [Live Preview System](#live-preview-system)
-8. [Critical Patterns & Gotchas](#critical-patterns--gotchas)
-9. [Known Issues & Fixes Needed](#known-issues--fixes-needed)
-10. [Upstream: Zeyoda](#upstream-zeyoda-foundation)
+1. [Product Boundary & Memory Routing](#product-boundary--memory-routing)
+2. [System Architecture Overview](#system-architecture-overview)
+3. [Database Schema & Structure](#database-schema--structure)
+4. [Curriculum Flow System](#curriculum-flow-system)
+5. [How to Add/Reorder Questions](#how-to-addreorder-questions)
+6. [Inline Picker System](#inline-picker-system)
+7. [Card Generation Logic](#card-generation-logic)
+8. [Live Preview System](#live-preview-system)
+9. [Critical Patterns & Gotchas](#critical-patterns--gotchas)
+10. [Known Issues & Fixes Needed](#known-issues--fixes-needed)
+11. [Upstream: Zeyoda](#upstream-zeyoda-foundation)
+
+---
+
+## Product Boundary & Memory Routing
+
+Read `ECOSYSTEM_MEMORY_MAP.md` before routing mixed ArtisTalks / Artistocks / Zeyoda concepts.
+
+- **ArtisTalks teaches.**
+- **Artistocks launches.**
+- **Zeyoda protects.**
+- **GOSHBOT routes memory.**
+
+Public ArtisTalks is legacy music-business coaching and release preparation.
+
+In this file, "orbit tokens" and "phase tokens" refer to ArtisTalks UI progress tokens, not Artistocks commerce tokens.
+
+Public ArtisTalks questions should use legacy music-business language: identity, brand, visual world, project, rights awareness, publishing notes, marketing, budget/accounting basics, launch plan, feedback, and legacy. Ownership/web3/Artistocks concepts belong to Future Bridge unless intentionally activated.
 
 ---
 
@@ -662,6 +680,8 @@ When modifying pickers:
 ## Upstream: Zeyoda (Foundation)
 
 ArtisTalks is built on **Zeyoda** patterns. Zeyoda provides the foundation for theming, events, and UI conventions.
+
+Zeyoda references here are shared ecosystem patterns for UI, theming, events, and implementation lessons unless routed elsewhere by `ECOSYSTEM_MEMORY_MAP.md`.
 
 **Zeyoda Repository:** `https://github.com/nodrinksonthepiano/zeyoda-nextjs-52925`  
 **Branch:** `feat/secure-middleware-whitelist-clean`  

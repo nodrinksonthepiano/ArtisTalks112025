@@ -1,12 +1,51 @@
-# Artistocks Protocol — Full System Roadmap
+# ArtisTalks Roadmap — Public Curriculum + Ecosystem Routing
 
 **Last updated: 2026-02-22**
 
 ---
 
+## Memory Routing Note
+
+Use `ECOSYSTEM_MEMORY_MAP.md` before interpreting mixed ArtisTalks / Artistocks / Zeyoda concepts.
+
+- **ArtisTalks teaches.**
+- **Artistocks launches.**
+- **Zeyoda protects.**
+- **GOSHBOT routes memory.**
+
+Preserve useful ecosystem memory, but route each idea through the correct project lane before suggesting work.
+
+---
+
 ## What Exists and Works Today
 
-### Zeyoda
+### ArtisTalks Technical — Works Today
+
+| Feature | Status |
+|---------|--------|
+| Supabase auth | ✅ Done |
+| Single-page design | ✅ Done |
+| Orbital carousel (OrbitPeekCarousel) | ✅ Done |
+| Phase tokens (ArtisTalksOrbitRenderer) | ✅ Done |
+| Chat (EmeraldChat) | ✅ Done |
+| Curriculum flow (pre/prod/post/legacy) | ✅ Done |
+| Inline pickers (colors, logo, font, asset) | ✅ Done |
+| Card generation from curriculum_answers | ✅ Done |
+| activeStepId sync (cardEdit, cardNavigate) | ✅ Done |
+| Live preview (profilePreview events) | ✅ Done |
+| applyLogoBackground (from Zeyoda) | ✅ Done |
+
+### Shared Ecosystem Patterns — Works Today
+
+| Pattern | Source / Use |
+|---------|--------------|
+| Halo / live preview | Zeyoda theming patterns applied in ArtisTalks |
+| Orbit tokens | Shared orbit language adapted for ArtisTalks phase progress |
+| Chat-first UX | Shared ecosystem pattern: chat is the guide |
+| Profile theme handling | Colors, logo, font, and preview events |
+| Agent workflow memory | Docs, PRD, and Cursor rules now route through `ECOSYSTEM_MEMORY_MAP.md` |
+
+### Routed Elsewhere — Artistocks / Zeyoda Commerce & Infrastructure
 
 | Feature | Status |
 |---------|--------|
@@ -28,22 +67,6 @@
 | Venmo/PayPal/Card buttons | ⚠️ Stubbed |
 | fundWallet | ❌ Disabled (403) |
 
-### ArtisTalks
-
-| Feature | Status |
-|---------|--------|
-| Supabase auth | ✅ Done |
-| Single-page design | ✅ Done |
-| Orbital carousel (OrbitPeekCarousel) | ✅ Done |
-| Phase tokens (ArtisTalksOrbitRenderer) | ✅ Done |
-| Chat (EmeraldChat) | ✅ Done |
-| Curriculum flow (pre/prod/post/legacy) | ✅ Done |
-| Inline pickers (colors, logo, font, asset) | ✅ Done |
-| Card generation from curriculum_answers | ✅ Done |
-| activeStepId sync (cardEdit, cardNavigate) | ✅ Done |
-| Live preview (profilePreview events) | ✅ Done |
-| applyLogoBackground (from Zeyoda) | ✅ Done |
-
 ---
 
 ## What Is Broken / In Progress
@@ -55,100 +78,121 @@
 
 ---
 
-## New Supabase Tables Needed
+## ArtisTalks Public Roadmap
 
-| Table | Phase | Purpose |
-|-------|-------|---------|
-| `feedback` | 2 | User/admin feedback tickets |
-| `wallet_funding_audit` | 3 | Log every wallet funding (one per address) |
-| `funding_address_allowlist` | 3 | Approved addresses for funding |
-| `pending_payments` | 4 | Venmo pending records |
-| `play_events` | 5 | Counted listens (idempotency) |
-| `playlists` | 7 | Mixtape tokens |
+Public ArtisTalks is legacy music-business coaching and release preparation. This lane should not mention Artistocks, tokens, wallets, payments, treasury, swaps, funding, or web3 unless intentionally routed through Future Bridge.
 
----
-
-## New API Routes Needed
-
-| Route | Method | Phase | Purpose |
-|-------|--------|-------|---------|
-| `/api/feedback` | POST | 2 | Submit feedback |
-| `/api/payments/create` | POST | 4 | Create pending payment |
-| `/api/payments/venmo-webhook` | POST | 4 | Venmo confirmation |
-| `/api/toppins` | POST | 5 | Deduct $0.02 per listen |
-| `/api/artist/withdraw` | POST | 6 | Artist withdrawal |
-| `/api/artist/transfer-sovereignty` | POST | 9 | transferEverything() |
+- Curriculum v2
+- First 20 questions
+- Champion Heart release-prep path
+- Artist identity
+- Branding / colors / logo / font
+- Visual world / halo data module
+- Project planning
+- Rights / publishing awareness
+- Marketing / content plan
+- Budget / accounting basics
+- Launch planning
+- Feedback
+- Legacy
 
 ---
 
-## Build Phases (In Order)
+## ArtisTalks Technical Roadmap
 
-### Phase 0 — Prep
-- Fill carousel-001 bug description
-- Confirm SEC-001 remediation (key rotation, .env permissions)
-- Drop docs into repos
+- Chat / card sync
+- Carousel polish
+- Orbit behavior
+- Card labels and useful output-card taxonomy
+- Saved answers
+- Supabase `curriculum_answers`
+- Upload polish
+- Profile customization
+- Live preview behavior
+- Feedback button (mic → speaker) in chat
+- Feedback inbox / admin view for ArtisTalks operations
 
-### Phase 1 — Security Foundation
-- `wallet_funding_audit` table
-- `funding_address_allowlist` table
-- SEC-001 docs complete
+---
 
-### Phase 2 — Feedback & Admin
-- `feedback` table
-- POST /api/feedback
-- Feedback button (mic→speaker) in chat
-- Dinosaur button
+## Shared Ecosystem Patterns
+
+- Halo / orbit lessons
+- Theme preview lessons
+- Onboarding lessons
+- Component fixes
+- Design system lessons
+- GOSHBOT / Cursor workflow lessons
+- Dinosaur button as shared ecosystem language, not default public commerce language
+
+---
+
+## Future Bridge
+
+Hidden/admin/safeword/advanced path only. Preserve this memory, but do not surface it in public ArtisTalks until intentionally activated.
+
+- Advanced ownership education
+- Web3 literacy
+- Future Artistocks readiness bridge
 - GOSHEESH token → admin panel
-- Admin: feedback inbox, PRD items
-
-### Phase 3 — Wallet Funding Re-enable
-- Re-secure fundWallet with all guards
-- Admin: funding controls, audit log
-
-### Phase 4 — Venmo Payment Rail
-- pending_payments table
-- /api/payments/create
-- Venmo webhook
-- Top-up prompt in chat
-
-### Phase 5 — Media Player & Toppins
-- Protocol-aware player
-- 60s teaser
-- play_events table
-- POST /api/toppins
-- Free play tracking
-
-### Phase 6 — Artist Withdrawal
-- POST /api/artist/withdraw
-- USDC/Coinbase Commerce
-
-### Phase 7 — Playlisting
-- playlists table
-- Play queue, play next
-- Mixtape tokens in orbit
-
-### Phase 8 — Wallet Messaging
-- Schema design
-
-### Phase 9 — Sovereignty
-- transferEverything() UI
+- Protocol-aware media player
+- Wallet messaging
+- Mixtape token in orbit
+- `transferEverything()` UI
 - Artist data export
+- Sovereignty arc
 
 ---
 
-## Open Questions (Blocking)
+## Routed To Artistocks Or Zeyoda
+
+These ideas are real ecosystem memory, but they are not public ArtisTalks curriculum.
+
+### Artistocks Lane
+
+- Commerce
+- Stock up
+- Artist pages
+- Fan action
+- Tokens
+- Purchases / downloads
+- Payments
+- Venmo / PayPal / Card rails
+- Pending payments
+- Toppins
+- Treasury
+- Withdrawals
+- Swaps
+- Play events tied to commerce
+
+### Zeyoda Foundation Lane
+
+- Auth/security infrastructure
+- Contracts
+- APIs
+- Middleware
+- `wallet_funding_audit`
+- `funding_address_allowlist`
+- Network guards
+- Guarded signer
+- API guard
+- SEC-001 remediation
+- Key rotation and `.env` permissions — human only
+
+---
+
+## Open Questions (Blocking / Routed)
 
 | # | Question | Blocks |
 |---|----------|--------|
-| Q-001 | Carousel sync: exact bug symptom? | carousel-001 |
-| Q-002 | Venmo webhooks reliable? | Phase 4 |
-| Q-003 | Venmo memo format for matching? | Phase 4 |
-| Q-004 | Who pays gas on withdrawal? | Phase 6 |
-| Q-005 | Minimum withdrawal threshold? | Phase 6 |
+| Q-001 | Carousel sync: exact bug symptom? | ArtisTalks Technical — carousel-001 |
+| Q-002 | Venmo webhooks reliable? | Artistocks / Zeyoda — payment rail |
+| Q-003 | Venmo memo format for matching? | Artistocks / Zeyoda — payment rail |
+| Q-004 | Who pays gas on withdrawal? | Artistocks / Zeyoda / Future Bridge |
+| Q-005 | Minimum withdrawal threshold? | Artistocks / Zeyoda / Future Bridge |
 
 ---
 
-## Sovereignty Arc
+## Future Bridge / Ecosystem Context — Sovereignty Arc
 
 ```
 TODAY                    MIDDLE                    END

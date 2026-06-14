@@ -4,6 +4,17 @@
 
 ---
 
+## 0. Ecosystem Memory Routing
+
+- **ArtisTalks teaches.**
+- **Artistocks launches.**
+- **Zeyoda protects.**
+- **GOSHBOT routes memory.**
+
+Before routing mixed ArtisTalks / Artistocks / Zeyoda concepts, read `ECOSYSTEM_MEMORY_MAP.md`. Preserve useful ecosystem memory, but translate every suggestion through the active project's role.
+
+---
+
 ## 1. The Mission
 
 This is a **protocol for artist sovereignty on the internet.**
