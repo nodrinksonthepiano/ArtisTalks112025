@@ -1,6 +1,8 @@
 # ArtisTalks — Experience Architecture (Product Contract)
 
-**Status:** Draft for review. No code changes implied by this document.
+**Status:** Draft for review — revised after lived test (Jun 2026). No code changes implied by this document.
+
+**Agent note:** Swipe **must** dispatch `cardNavigate` and sync chat to the visible card. Do **not** remove that dispatch unless the full focus/objective split (`focusStepId`, "Answer this" promotion, browse-mode UI) ships together. A partial split feels broken: carousel moves, Emerald stays on a different question.
 
 **Purpose:** Settle the "room rules" so chat, carousel, cards, panels, and tokens stop arguing over who owns the artist's focus. Everything downstream — branching, living cards, lessons, park-for-later — depends on these rules being decided first.
 
@@ -42,43 +44,45 @@ Today a step is:
 
 This shape cannot represent selectable options, custom genres, per-question upload, multi-select, branching, lesson content, or living-card metadata. Most of the roadmap is blocked on this one shape, not on the chat/carousel plumbing.
 
-### 1.3 — Browsing can hijack the objective.
+### 1.3 — Swipe-sync is working behavior, not the villain.
 
-Carousel swipe dispatches `cardNavigate`; `EmeraldChat` listens and calls `setCurrentStepId` plus reloads the input. So *looking* at a past card can silently change *what the chat is asking*. This is the core clunk.
+Carousel swipe dispatches `cardNavigate`; `page.tsx` and `EmeraldChat` both listen and sync to the visible card's `stepId`. That is the intended navigation model today: **swipe = navigate the visible journey**.
 
-### 1.4 — Two sources of truth and a forward-pull.
+A Jun 2026 experiment removed the swipe → `cardNavigate` dispatch (partial "focus vs objective" split). Result: carousel moved but Emerald stayed on a different question — with no separate `focusStepId`, no "Answer this" button, and no browse-mode UI to explain the mismatch. That felt broken. **Swipe-sync was restored.** Do not repeat the half-built split.
 
-`EmeraldChat.currentStepId` and `page.activeStepId` both behave like "the current objective" and can drift out of sync. On top of that, `findFirstUnansweredStep` walks focus forward to the next blank even after the artist deliberately navigated somewhere. Together these make the app feel like it is jumping on its own.
+### 1.4 — The real clunk: drift, forward-pull, and scrambled phases.
+
+Three issues actually make the app feel like it is jumping on its own:
+
+1. **Two objective states** — `EmeraldChat.currentStepId` and `page.activeStepId` both behave like "the current step" and can drift apart.
+2. **Forward-pull** — `findFirstUnansweredStep` walks focus forward to the next blank even after the artist deliberately navigated somewhere (e.g. after swipe or token jump).
+3. **Scrambled `phase` tags** — in the current V2 spine, some steps have wrong phase values (for example, genre is `pre` sitting between post-lane steps; fan struggles is `prod`), which makes phase tokens feel random.
 
 Two smaller real issues found in passing:
 
-- the `phase` tags are scrambled in the current V2 spine (for example, genre is `pre` sitting between post-lane steps; fan struggles is `prod`)
 - only two panel trigger types exist today: `colors` and `asset`
+- auto-center and edit-mode handoffs can still fight during transitions (see `AGENT_NOTES.md` §6)
 
 ---
 
-## 2. The Core Rule
+## 2. The Core Rule (current shipping behavior)
 
-The previous simple answer — "swipe should be review-only" — is too blunt. A frozen carousel turns a living launchpad into a museum. But "swipe always changes the chat" causes hijack. The resolution is to separate two ideas that the code currently fuses:
+> **Swipe navigates the visible journey. Chat follows the card you are on. Edit is explicit. Submit moves forward.**
 
-- **Focus** = what the artist is *looking at* (carousel attention, current card, visual focus). Cheap, free to move.
-- **Objective** = the step the chat is *committed to completing/saving an answer for*. Sacred, changes only on intent.
+This is what the code does today and what Champion Heart testing confirmed feels right:
 
-> **Chat owns the objective. The carousel moves focus. Only an intentional act promotes focus into the objective.**
+| Artist action | Carousel | Chat (`currentStepId` / `activeStepId`) |
+|---|---|---|
+| **Swipe** to any card | Moves to that card | Syncs via `cardNavigate` — question + input reload for that `stepId` |
+| **Edit / pencil** on a saved card | Navigates to that card | Enters edit mode via `cardEdit` |
+| **Phase token** click | Auto-centers on current question | Jumps to first unanswered in that phase via `tokenNavigate` |
+| **Submit** an answer | Snaps to current question card (index 0) | Advances to next unanswered step |
 
-What counts as an intentional act:
+`findFirstUnansweredStep` may only run on **forward completion** (submit, continue on celebration steps, initial load) — never to override a deliberate navigation the artist just made.
 
-| Artist action | Moves focus? | Changes objective? |
-|---|---:|---:|
-| Swipe to an **answered** card (review) | Yes | No |
-| Swipe to an **unanswered** question, then **start typing / tap "Answer this"** | Yes | Yes — engagement promotes it |
-| Tap **Edit / pencil** on a saved card | Yes | Yes — edit is explicit |
-| Tap a **phase token** | Yes | Yes — intentional season jump |
-| Submit an answer | — | Yes — advances forward |
+### Optional future polish (not Phase 0)
 
-This keeps the launchpad alive and stops accidental hijack. Browsing is free; committing requires a deliberate move.
-
-`findFirstUnansweredStep` may only run on forward completion — never to override a manual focus or objective.
+A stricter **focus vs objective** split (swipe = look only on answered cards; typing or "Answer this" promotes to objective) remains a possible future UX. It requires shipping together: `focusStepId`, promotion UI, and browse-mode affordances. **Do not implement piecemeal.** The partial experiment caused the Jun 2026 regression.
 
 ---
 
@@ -86,21 +90,24 @@ This keeps the launchpad alive and stops accidental hijack. Browsing is free; co
 
 Most proposed "modes" are content types, not artist mental modes. The artist should only ever feel one of three intents:
 
-1. **Answering** — the chat is on an objective; an input or panel helps complete it.
-2. **Browsing** — the artist is moving attention across the launchpad without committing.
-3. **Editing** — the artist intentionally reopens a saved asset to improve it.
+1. **Answering** — the chat is on a step; an input or panel helps complete it. Swiping to another card switches which step is active (synced chat).
+2. **Editing** — the artist taps pencil on a saved card to revise it (`cardEdit`, edit mode).
+3. **Advancing** — submit or continue moves the journey forward to the next unanswered step.
 
 Everything else — text input, select input, upload, panel, lesson, card, checklist — is a **content type** that renders inside those intents. Keeping intents and content types separate is what stops the architecture from sprawling.
+
+A separate passive **Browsing** mode (look without changing chat) is deferred until the focus/objective machinery exists.
 
 ---
 
 ## 4. Who Owns What
 
-- **Chat** owns the objective and the journey. It is the guide.
-- **Panels / inputs** help complete the current objective. They do not navigate by themselves.
-- **Cards** are the saved artifacts of the journey — read in Browsing, reopened in Editing.
-- **Carousel** is the launchpad surface: it moves focus, displays cards, and features the current objective. It is not a second driver of the objective.
-- **Phase tokens** are intentional season navigation, not passive browsing.
+- **Chat** owns the journey copy and input. It is the guide. Step changes flow through `cardNavigate`, `cardEdit`, `tokenNavigate`, and submit.
+- **Panels / inputs** help complete the current step. They do not navigate by themselves.
+- **Cards** are the saved artifacts of the journey — swiped to revisit, reopened via pencil for editing.
+- **Carousel** is the launchpad surface: swipe dispatches `cardNavigate` so the visible card and chat stay aligned.
+- **Phase tokens** are intentional season jumps to the first unanswered step in that phase.
+- **`activeStepId` (page) and `currentStepId` (EmeraldChat)** should converge toward one source of truth (Phase 0 cleanup).
 
 ---
 
@@ -151,7 +158,13 @@ Same underlying answer data, richer render. This is a render + metadata change, 
 
 ### Phase 0 — Stop the app fighting the artist.
 
-Unify to one objective state. Separate focus from objective. Stop `findFirstUnansweredStep` from overriding manual navigation. Fix the scrambled `phase` tags. Outcome: swipe feels intentional, not random, without making the carousel read-only.
+**Keep swipe-sync** (`cardNavigate` on swipe). Fix the three real culprits:
+
+1. Collapse `EmeraldChat.currentStepId` and `page.activeStepId` toward one source of truth (stop drift).
+2. Stop `findFirstUnansweredStep` from overriding manual navigation (forward-pull only on submit / continue / initial load).
+3. Fix scrambled `phase` tags in `lib/curriculum.ts` so tokens match the journey lane.
+
+Do **not** remove swipe-sync or build a partial focus/objective split in this phase.
 
 ### Phase 1 — Enrich the step schema and wire the fork.
 
@@ -173,6 +186,7 @@ Only after the room rules are proven. A parked question should feel like "this i
 
 ## 8. What Not To Build Yet
 
+- No partial focus/objective split (no removing `cardNavigate` on swipe without full `focusStepId` + promotion UI).
 - No skip/park queue yet.
 - No video lesson cards yet.
 - No broad carousel redesign.
@@ -207,8 +221,8 @@ The architecture is working when Jai can, in one sitting and without the app jum
 2. Reach the genre question, pick from options, and add a genre that is not listed.
 3. Hit the fork, choose "promoting a finished work," and have the journey actually route there.
 4. Upload the Champion Heart cover on a question that should accept it.
-5. Swipe back through answered cards to review, while the chat objective stays put.
-6. Tap edit on one card, improve it, submit, and land back in guided flow.
+5. Swipe back through answered cards to review — Emerald follows each card (question + saved answer visible).
+6. Tap edit on one card, improve it, submit, and land back in guided flow without the app jumping on its own.
 
 If that sitting feels alive and never argues with itself, the room rules are right.
 
