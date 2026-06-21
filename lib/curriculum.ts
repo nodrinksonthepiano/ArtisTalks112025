@@ -335,6 +335,47 @@ export function getStep(id: StepId): CurriculumStep {
   return CURRICULUM[id] || CURRICULUM.INIT;
 }
 
+/** V2 main flow only — walks INIT → nextStep → … → COMPLETE (excludes compatibility stubs). */
+export function getCurriculumSpineOrder(): StepId[] {
+  const order: StepId[] = []
+  const visited = new Set<StepId>()
+  let current: StepId = 'INIT'
+
+  while (!visited.has(current)) {
+    visited.add(current)
+    order.push(current)
+    const next: StepId = getStep(current).nextStep
+    if (next === current) break
+    current = next
+  }
+
+  return order
+}
+
+const PHASE_TOKEN_SKIP_STEP_IDS = new Set<StepId>([
+  'INIT',
+  'COMPLETE',
+  'MISSION_GIFT',
+  'PRE_COMPLETE',
+  'PROJECT_NAME',
+  'PROJECT_DESCRIPTION',
+  'ASSET_UPLOAD_PANEL',
+  'PROD_COMPLETE',
+  'PROMO_STRATEGY',
+  'TARGET_AUDIENCE',
+  'LAUNCH_DATE',
+  'POST_COMPLETE',
+  'GRATITUDE',
+  'LEGACY_VISION',
+  'FEEDBACK_LOOP',
+])
+
+function isPhaseTokenCandidate(step: CurriculumStep): boolean {
+  if (PHASE_TOKEN_SKIP_STEP_IDS.has(step.id)) return false
+  if (step.id.includes('_COMPLETE')) return false
+  return Boolean(step.key && step.key.length > 0)
+}
+
 /**
  * Find the first unanswered step in a specific phase
  * Used for token navigation - clicking a token jumps to first unanswered question of that phase
@@ -343,37 +384,15 @@ export function findFirstUnansweredStepInPhase(
   phase: 'pre' | 'prod' | 'post' | 'legacy',
   answeredKeys: Set<string>
 ): StepId | null {
-  // Get all steps for this phase (excluding completion steps)
-  const phaseSteps = Object.values(CURRICULUM).filter(step => {
-    if (!step.phase || step.phase !== phase) return false;
-    // Exclude completion/transition steps
-    if (step.id.includes('_COMPLETE') || step.id === 'INIT' || step.id === 'COMPLETE') return false;
-    // Exclude legacy compatibility stubs from phase token navigation
-    if ([
-      'MISSION_GIFT',
-      'PROJECT_NAME',
-      'PROJECT_DESCRIPTION',
-      'ASSET_UPLOAD_PANEL',
-      'PROMO_STRATEGY',
-      'TARGET_AUDIENCE',
-      'LAUNCH_DATE',
-      'GRATITUDE',
-      'LEGACY_VISION',
-      'FEEDBACK_LOOP'
-    ].includes(step.id)) return false;
-    // Only count steps that have a key (actual work steps)
-    return step.key && step.key.length > 0;
-  });
-  
-  if (phaseSteps.length === 0) return null;
-  
-  // Find first unanswered step
-  for (const step of phaseSteps) {
+  for (const stepId of getCurriculumSpineOrder()) {
+    const step = getStep(stepId)
+    if (step.phase !== phase) continue
+    if (!isPhaseTokenCandidate(step)) continue
     if (!answeredKeys.has(step.key)) {
-      return step.id;
+      return step.id
     }
   }
-  
-  return null; // All answered
+
+  return null // All answered in this phase
 }
 
