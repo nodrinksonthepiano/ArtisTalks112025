@@ -107,7 +107,7 @@ export function useCarouselItems(
         }
 
         // Build carousel items from answers
-        const answeredItems: CarouselItem[] = (answers || [])
+        const mappedItems: (CarouselItem | null)[] = (answers || [])
           .map((answer, answerIndex) => {
             // Extract content and media URLs from answer_data
             const answerData = answer.answer_data as any
@@ -143,8 +143,13 @@ export function useCarouselItems(
             // Format title as mad lib: "Question Key: Answer" (e.g., "Artist Name: JaiTea")
             const label = keyToLabel(answer.question_key)
             const cardTitle = content ? `${label}: ${content}` : `${label}: `
+            const itemType: CarouselItem['type'] =
+              step?.phase === 'prod' ? 'pro' :
+              step?.phase === 'legacy' ? 'loop' :
+              step?.phase === 'post' ? 'post' :
+              'pre'
 
-            return {
+            const carouselItem: CarouselItem = {
               id: `${answer.question_key}-${answer.created_at}`,
               stepId,
               questionKey: answer.question_key,
@@ -153,10 +158,14 @@ export function useCarouselItems(
               imageUrl,
               videoUrl,
               audioUrl,
-              type: (step?.phase === 'prod' ? 'pro' : step?.phase === 'legacy' ? 'loop' : step?.phase) || 'pre',
+              type: itemType,
               createdAt: answer.created_at
             }
+
+            return carouselItem
           })
+
+        const answeredItems: CarouselItem[] = mappedItems
           .filter((item): item is CarouselItem => item !== null) // Remove nulls (celebration steps)
 
         // CRITICAL: Build final items list and ensure current question card exists immediately

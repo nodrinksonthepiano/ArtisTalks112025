@@ -25,7 +25,7 @@ function toRGBA(hexOrRgb: string, alpha: number) {
   }
   if (h.startsWith('rgb')) {
     return h.replace(/rgba?\(([^)]+)\)/, (_m, inner) => {
-      const parts = inner.split(',').map(p => p.trim());
+      const parts = inner.split(',').map((p: string) => p.trim());
       const [r, g, b] = parts;
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     });

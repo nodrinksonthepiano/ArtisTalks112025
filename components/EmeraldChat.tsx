@@ -704,8 +704,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Add only user's answer to full history - question is already there from when it was shown
     setFullHistory(prev => [...prev, userMessage])
     
-    // Clear chat history - only keep current question (will be replaced with next question)
-    setHistory([])
+    // Keep the current question visible until the next one is ready.
+    // Clearing history here creates an empty render gap where INIT can flash.
     setInput('')
 
     try {

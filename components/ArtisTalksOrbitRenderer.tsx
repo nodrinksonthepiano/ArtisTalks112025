@@ -26,6 +26,7 @@ const WHEEL_SENS = 0.0016;      // rad per wheel deltaY unit
 const DRAG_SENS = 0.008;        // rad per px (approx)
 const FRICTION = 1.8;           // 1/s velocity decay
 const V_EPS = 0.003;            // rad/s threshold to stop inertia
+const MAX_USER_VELOCITY = 1.5;  // rad/s cap to prevent runaway spin
 
 const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   featuredContentRef,
@@ -225,7 +226,14 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
 
     // Seed initial positions immediately, then start RAF
     positionOnce();
-    
+
+    // CRITICAL: Cancel any existing RAF before starting a new one.
+    // This effect can re-run when phaseTokens (progress) changes, and stacked
+    // animation loops were causing the orbit to speed up out of control.
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current);
+      animationFrameIdRef.current = null;
+    }
     animationFrameIdRef.current = requestAnimationFrame(animate);
 
     // Listen to hero:pinned for stable carousel dimensions (Priority 1 - matches OvalGlowBackdrop pattern)
@@ -253,6 +261,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
 
     // Interaction handlers - COPIED FROM ZEYODA ThemeOrbitRenderer.tsx lines 226-343
     const container = orbitContainerRef.current;
+    let cleanupContainer: (() => void) | null = null;
     if (container) {
       const timestampNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
       
@@ -277,6 +286,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         userOffsetRef.current += d;
         const instV = d / dt;
         userVelocityRef.current = 0.6 * userVelocityRef.current + 0.4 * instV;
+        userVelocityRef.current = Math.max(-MAX_USER_VELOCITY, Math.min(MAX_USER_VELOCITY, userVelocityRef.current));
         lastEventTsRef.current = now;
       };
       
@@ -313,6 +323,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         if (d > Math.PI) d -= 2*Math.PI; else if (d < -Math.PI) d += 2*Math.PI;
         userOffsetRef.current += d;
         userVelocityRef.current = 0.6*userVelocityRef.current + 0.4 * (d/dt);
+        userVelocityRef.current = Math.max(-MAX_USER_VELOCITY, Math.min(MAX_USER_VELOCITY, userVelocityRef.current));
         lastAngleRef.current = ang;
         lastEventTsRef.current = now;
       };
@@ -343,7 +354,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
       container.addEventListener('click', onClickCapture, true);
 
       // cleanup listeners
-      const cleanup = () => {
+      cleanupContainer = () => {
         container.removeEventListener('wheel', onWheel as any);
         container.removeEventListener('pointerdown', onPointerDown as any);
         container.removeEventListener('pointermove', onPointerMove as any);
@@ -352,15 +363,19 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         container.removeEventListener('pointerleave', onPointerLeave);
         container.removeEventListener('click', onClickCapture, true);
       };
-
-      return () => {
-        cleanup();
-      };
     }
 
+    // CRITICAL: Single unified cleanup. Always remove container listeners,
+    // window listeners, hover timer, and the active animation frame so the
+    // effect re-running (e.g. on progress change) can never stack RAF loops.
     return () => {
+      if (cleanupContainer) cleanupContainer();
       window.removeEventListener('hero:pinned', onHeroPinned);
       window.removeEventListener('carousel:stable', onStable);
+      if (hoverPauseTimerRef.current) {
+        window.clearTimeout(hoverPauseTimerRef.current);
+        hoverPauseTimerRef.current = null;
+      }
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
         animationFrameIdRef.current = null;
@@ -401,13 +416,14 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
           const isProfileEstablished = profile?.artist_name && (profile?.primary_color || profile?.brand_color);
           
           // Get branded colors (with preview fallback)
-          const primaryColor = isProfileEstablished
+          // Final fallback guarantees a string so style props never receive null/undefined.
+          const primaryColor = (isProfileEstablished
             ? (previewConfig?.primary_color || profile?.primary_color || profile?.brand_color)
-            : defaultColors[token.id];
+            : defaultColors[token.id]) || defaultColors[token.id];
             
-          const accentColor = isProfileEstablished
+          const accentColor = (isProfileEstablished
             ? (previewConfig?.accent_color || profile?.accent_color)
-            : '#fffacd'; // Default gold etching
+            : '#fffacd') || '#fffacd'; // Default gold etching
           
           const fillPercentage = Math.min(100, Math.max(0, token.progress));
           const isFilled = fillPercentage >= 100;

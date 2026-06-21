@@ -215,6 +215,7 @@ export default function Home() {
   const [previewOverrides, setPreviewOverrides] = useState<{
     primary_color?: string
     accent_color?: string
+    brand_color?: string
     logo_url?: string
     logo_use_background?: boolean
   } | null>(null)
@@ -231,7 +232,7 @@ export default function Home() {
           accent_color: customEvent.detail.previewConfig?.accent_color,
           brand_color: customEvent.detail.previewConfig?.brand_color,
           // CRITICAL: Clear logo when primary color is set (user chose background color)
-          logo_url: customEvent.detail.previewConfig?.logo_url !== undefined ? customEvent.detail.previewConfig.logo_url : prev?.logo_url,
+          logo_url: customEvent.detail.previewConfig?.logo_url !== undefined ? (customEvent.detail.previewConfig.logo_url ?? undefined) : prev?.logo_url,
           logo_use_background: customEvent.detail.previewConfig?.logo_use_background !== undefined ? customEvent.detail.previewConfig.logo_use_background : prev?.logo_use_background
         }))
       }
@@ -242,7 +243,7 @@ export default function Home() {
       if (customEvent.detail) {
         setPreviewOverrides(prev => ({
           ...prev,
-          logo_url: customEvent.detail.logo_url !== undefined ? customEvent.detail.logo_url : prev?.logo_url,
+          logo_url: customEvent.detail.logo_url !== undefined ? (customEvent.detail.logo_url ?? undefined) : prev?.logo_url,
           logo_use_background: customEvent.detail.logo_use_background !== undefined ? customEvent.detail.logo_use_background : prev?.logo_use_background
         }))
       }

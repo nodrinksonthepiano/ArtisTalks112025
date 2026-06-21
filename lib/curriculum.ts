@@ -1,24 +1,41 @@
 export type StepId = 
-  // PRE phase
+  // Curriculum V2 spine
   | 'INIT'
-  | 'MISSION_GIFT'
   | 'COLORS_PANEL'
+  | 'GIFT_PRESENCE'
+  | 'KNOWN_FOR_LEGACY'
+  | 'KNOWN_FOR_EXPRESSION'
+  | 'TARGET_REACH'
+  | 'GENRE_ASSOCIATIONS'
+  | 'BUSINESS_OFFERING'
+  | 'CURRENT_FOCUS_PILLAR'
+  | 'FAN_CONNECTION'
+  | 'FAN_STRUGGLES'
+  | 'FAN_DREAMS'
+  | 'AUDIENCE_AVATAR'
+  | 'COLLABORATORS'
+  | 'OPEN_FOR_SUPPORT'
+  | 'PLAYLIST_CONTEXT'
+  | 'SPONSOR_BRAND_ALLIES'
+  | 'INFLUENCERS_COMMUNITIES'
+  | 'WARDROBE_IMAGE'
+  | 'SIGNATURE_WORLD'
+  | 'GRATITUDE_MOMENTUM'
+  | 'COMPLETE'
+  // Compatibility stubs for older saved cards / events
+  | 'MISSION_GIFT'
   | 'PRE_COMPLETE'
-  // PROD phase
   | 'PROJECT_NAME'
   | 'PROJECT_DESCRIPTION'
   | 'ASSET_UPLOAD_PANEL'
   | 'PROD_COMPLETE'
-  // POST phase
   | 'PROMO_STRATEGY'
   | 'TARGET_AUDIENCE'
   | 'LAUNCH_DATE'
   | 'POST_COMPLETE'
-  // LEGACY phase
   | 'GRATITUDE'
   | 'LEGACY_VISION'
-  | 'FEEDBACK_LOOP'
-  | 'COMPLETE';
+  | 'FEEDBACK_LOOP';
 
 export interface CurriculumStep {
   id: StepId;
@@ -32,40 +49,200 @@ export interface CurriculumStep {
 
 // The Deterministic "Script" for all phases
 export const CURRICULUM: Record<StepId, CurriculumStep> = {
-  // PRE Phase
+  // Curriculum V2 spine
   INIT: {
     id: 'INIT',
-    question: "Welcome, My Champion! I am here to help you build your legacy. First things first: What is your artist name?",
+    question: "Welcome, My Champion. First things first: what is your artist name?",
     nextStep: 'COLORS_PANEL',
     key: 'artist_name',
-    placeholder: "e.g. JAI, The Beatles...",
+    placeholder: "e.g. JAI",
     phase: 'pre'
   },
   COLORS_PANEL: {
     id: 'COLORS_PANEL',
     question: "Great! Now choose your brand colors, logo, and font.",
-    nextStep: 'MISSION_GIFT',
+    nextStep: 'GIFT_PRESENCE',
     key: 'colors_set',
     triggersPanel: 'colors',
     phase: 'pre'
   },
+  GIFT_PRESENCE: {
+    id: 'GIFT_PRESENCE',
+    question: "Acknowledge yourself. What makes your presence a gift to the world?",
+    nextStep: 'KNOWN_FOR_LEGACY',
+    key: 'gift_to_world',
+    placeholder: "My presence is a gift because...",
+    phase: 'pre'
+  },
+  KNOWN_FOR_LEGACY: {
+    id: 'KNOWN_FOR_LEGACY',
+    question: "In 5, 50, or 100 years, people are celebrating your life and your contributions. What are they saying you were really known for?",
+    nextStep: 'KNOWN_FOR_EXPRESSION',
+    key: 'known_for_legacy',
+    placeholder: "They say I was known for...",
+    phase: 'legacy'
+  },
+  KNOWN_FOR_EXPRESSION: {
+    id: 'KNOWN_FOR_EXPRESSION',
+    question: "What do you want your words, actions, music, and art to be known for?",
+    nextStep: 'TARGET_REACH',
+    key: 'known_for_expression',
+    placeholder: "My words, actions, music, and art are known for...",
+    phase: 'pre'
+  },
+  TARGET_REACH: {
+    id: 'TARGET_REACH',
+    question: "Is your target reach local, regional, national, international, or something more specific?",
+    nextStep: 'GENRE_ASSOCIATIONS',
+    key: 'target_reach',
+    placeholder: "Local, regional, national, international...",
+    phase: 'post'
+  },
+  GENRE_ASSOCIATIONS: {
+    id: 'GENRE_ASSOCIATIONS',
+    question: "What are the top three genres, scenes, or worlds people are likely to associate you with?",
+    nextStep: 'BUSINESS_OFFERING',
+    key: 'genre_associations',
+    placeholder: "e.g. R&B, Broadway, sacred pop...",
+    phase: 'pre'
+  },
+  BUSINESS_OFFERING: {
+    id: 'BUSINESS_OFFERING',
+    question: "What kind of creative business are you building, and what are your main products or services right now?",
+    nextStep: 'CURRENT_FOCUS_PILLAR',
+    key: 'business_type_products_services',
+    placeholder: "Songs, live shows, writing, production, merch, visuals, licensing, events...",
+    phase: 'pre'
+  },
+  CURRENT_FOCUS_PILLAR: {
+    id: 'CURRENT_FOCUS_PILLAR',
+    question: "What are you creating now: something brand new, something you are finishing, or something finished that needs promotion and momentum?",
+    nextStep: 'FAN_CONNECTION',
+    key: 'current_focus_pillar',
+    placeholder: "Creating new / finishing / promoting / not sure",
+    phase: 'pre'
+  },
+  FAN_CONNECTION: {
+    id: 'FAN_CONNECTION',
+    question: "What do your fans connect to most in you, your music, your message, or your creative business?",
+    nextStep: 'FAN_STRUGGLES',
+    key: 'fan_connection',
+    placeholder: "My fans connect to...",
+    phase: 'post'
+  },
+  FAN_STRUGGLES: {
+    id: 'FAN_STRUGGLES',
+    question: "What do your fans struggle with in their own lives?",
+    nextStep: 'FAN_DREAMS',
+    key: 'fan_struggles',
+    placeholder: "My fans struggle with...",
+    phase: 'prod'
+  },
+  FAN_DREAMS: {
+    id: 'FAN_DREAMS',
+    question: "What do your fans dream of?",
+    nextStep: 'AUDIENCE_AVATAR',
+    key: 'fan_dreams',
+    placeholder: "My fans dream of...",
+    phase: 'prod'
+  },
+  AUDIENCE_AVATAR: {
+    id: 'AUDIENCE_AVATAR',
+    question: "Who is your ideal listener or supporter? Think age, location, interests, habits, hangout spots, values, and what they care about.",
+    nextStep: 'COLLABORATORS',
+    key: 'audience_avatar',
+    placeholder: "My ideal listener is...",
+    phase: 'post'
+  },
+  COLLABORATORS: {
+    id: 'COLLABORATORS',
+    question: "Who are some artists, producers, writers, creators, or leaders you would love to collaborate with?",
+    nextStep: 'OPEN_FOR_SUPPORT',
+    key: 'collaborators_wishlist',
+    placeholder: "I would love to collaborate with...",
+    phase: 'prod'
+  },
+  OPEN_FOR_SUPPORT: {
+    id: 'OPEN_FOR_SUPPORT',
+    question: "Who are some artists you could open for, support, tour with, or share a stage with?",
+    nextStep: 'PLAYLIST_CONTEXT',
+    key: 'open_for_support_targets',
+    placeholder: "I could open for, support, tour with, or share a stage with...",
+    phase: 'post'
+  },
+  PLAYLIST_CONTEXT: {
+    id: 'PLAYLIST_CONTEXT',
+    question: "If your music was in a playlist, who would you be played before and after?",
+    nextStep: 'SPONSOR_BRAND_ALLIES',
+    key: 'playlist_context',
+    placeholder: "I would be played before/after...",
+    phase: 'post'
+  },
+  SPONSOR_BRAND_ALLIES: {
+    id: 'SPONSOR_BRAND_ALLIES',
+    question: "What sponsors, brands, local businesses, or aligned partners would make sense in your world?",
+    nextStep: 'INFLUENCERS_COMMUNITIES',
+    key: 'sponsor_brand_allies',
+    placeholder: "Aligned partners could include...",
+    phase: 'post'
+  },
+  INFLUENCERS_COMMUNITIES: {
+    id: 'INFLUENCERS_COMMUNITIES',
+    question: "Who are the influencers, communities, groups, venues, scenes, or tribes that already gather people similar to your audience?",
+    nextStep: 'WARDROBE_IMAGE',
+    key: 'influencers_communities',
+    placeholder: "My people are already gathering around...",
+    phase: 'post'
+  },
+  WARDROBE_IMAGE: {
+    id: 'WARDROBE_IMAGE',
+    question: "What does your on-stage wardrobe or public image look like when you are fully showing up?",
+    nextStep: 'SIGNATURE_WORLD',
+    key: 'wardrobe_public_image',
+    placeholder: "When I am fully showing up, I look like...",
+    phase: 'pre'
+  },
+  SIGNATURE_WORLD: {
+    id: 'SIGNATURE_WORLD',
+    question: "What lyric, phrase, symbol, image, story, joke, or piece of stage banter could become part of your signature world?",
+    nextStep: 'GRATITUDE_MOMENTUM',
+    key: 'signature_world_elements',
+    placeholder: "A signature piece of my world is...",
+    phase: 'post'
+  },
+  GRATITUDE_MOMENTUM: {
+    id: 'GRATITUDE_MOMENTUM',
+    question: "What are you grateful for right now, and what blessing might already be on the way that you cannot fully see yet?",
+    nextStep: 'COMPLETE',
+    key: 'gratitude_momentum',
+    placeholder: "I am grateful for...",
+    phase: 'legacy'
+  },
+  COMPLETE: {
+    id: 'COMPLETE',
+    question: "Beautiful. We have the first real map of your release world. The next move is to test this against the work.",
+    nextStep: 'COMPLETE',
+    key: 'completed',
+    placeholder: "",
+    phase: 'legacy'
+  },
+
+  // Compatibility stubs for older saved cards / events. The main V2 flow does not route through these.
   MISSION_GIFT: {
     id: 'MISSION_GIFT',
-    question: "I love those colors. Now, tell me: What makes your presence a gift to the world?",
-    nextStep: 'PRE_COMPLETE',
+    question: "Acknowledge yourself. What makes your presence a gift to the world?",
+    nextStep: 'KNOWN_FOR_LEGACY',
     key: 'gift_to_world',
-    placeholder: "I bring energy/light/truth...",
+    placeholder: "My presence is a gift because...",
     phase: 'pre'
   },
   PRE_COMPLETE: {
     id: 'PRE_COMPLETE',
     question: "Outstanding! Your foundation is set. Ready to create?",
-    nextStep: 'PROJECT_NAME',
-    key: 'pre_complete', // Match reference branch - needs key for card creation
+    nextStep: 'FAN_STRUGGLES',
+    key: 'pre_complete',
     phase: 'pre'
   },
-  
-  // PROD Phase
   PROJECT_NAME: {
     id: 'PROJECT_NAME',
     question: "What are you working on right now? Give me the name of your current project.",
@@ -93,12 +270,10 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   PROD_COMPLETE: {
     id: 'PROD_COMPLETE',
     question: "Beautiful! Your project is taking shape.",
-    nextStep: 'PROMO_STRATEGY',
+    nextStep: 'TARGET_REACH',
     key: 'prod_complete',
     phase: 'prod'
   },
-  
-  // POST Phase
   PROMO_STRATEGY: {
     id: 'PROMO_STRATEGY',
     question: "How will you share this with the world? What's your promotion plan?",
@@ -126,12 +301,10 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   POST_COMPLETE: {
     id: 'POST_COMPLETE',
     question: "Perfect! Your launch plan is ready.",
-    nextStep: 'GRATITUDE',
+    nextStep: 'KNOWN_FOR_LEGACY',
     key: 'post_complete',
     phase: 'post'
   },
-  
-  // LEGACY Phase
   GRATITUDE: {
     id: 'GRATITUDE',
     question: "What are you grateful for in this journey?",
@@ -155,14 +328,6 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
     key: 'feedback_loop',
     placeholder: "Email, social media, live chats...",
     phase: 'legacy'
-  },
-  COMPLETE: {
-    id: 'COMPLETE',
-    question: "Outstanding. Your legacy is defined. The Champion is proud.",
-    nextStep: 'COMPLETE',
-    key: 'completed',
-    placeholder: "",
-    phase: 'legacy'
   }
 };
 
@@ -183,46 +348,27 @@ export function findFirstUnansweredStepInPhase(
     if (!step.phase || step.phase !== phase) return false;
     // Exclude completion/transition steps
     if (step.id.includes('_COMPLETE') || step.id === 'INIT' || step.id === 'COMPLETE') return false;
+    // Exclude legacy compatibility stubs from phase token navigation
+    if ([
+      'MISSION_GIFT',
+      'PROJECT_NAME',
+      'PROJECT_DESCRIPTION',
+      'ASSET_UPLOAD_PANEL',
+      'PROMO_STRATEGY',
+      'TARGET_AUDIENCE',
+      'LAUNCH_DATE',
+      'GRATITUDE',
+      'LEGACY_VISION',
+      'FEEDBACK_LOOP'
+    ].includes(step.id)) return false;
     // Only count steps that have a key (actual work steps)
     return step.key && step.key.length > 0;
   });
   
   if (phaseSteps.length === 0) return null;
   
-  // Sort by curriculum order (follow nextStep chain starting from first step in phase)
-  // Find the entry point for this phase
-  let entryStep: StepId | null = null;
-  if (phase === 'pre') entryStep = 'INIT';
-  else if (phase === 'prod') entryStep = 'PROJECT_NAME';
-  else if (phase === 'post') entryStep = 'PROMO_STRATEGY';
-  else if (phase === 'legacy') entryStep = 'GRATITUDE';
-  
-  if (!entryStep) return null;
-  
-  // Follow the chain from entry point, collecting phase steps in order
-  const orderedSteps: CurriculumStep[] = [];
-  let current: StepId | null = entryStep;
-  const visited = new Set<StepId>();
-  
-  while (current && !visited.has(current)) {
-    visited.add(current);
-    const step: CurriculumStep | undefined = CURRICULUM[current];
-    if (!step) break;
-    
-    // Add to ordered list if it's a phase step
-    if (phaseSteps.includes(step)) {
-      orderedSteps.push(step);
-    }
-    
-    // Move to next step
-    current = step.nextStep;
-    
-    // Stop if we've left this phase
-    if (current && CURRICULUM[current]?.phase !== phase) break;
-  }
-  
   // Find first unanswered step
-  for (const step of orderedSteps) {
+  for (const step of phaseSteps) {
     if (!answeredKeys.has(step.key)) {
       return step.id;
     }
