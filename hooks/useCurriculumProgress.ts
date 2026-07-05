@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM } from '@/lib/curriculum'
+import { getPhaseCandidateKeys } from '@/lib/curriculum'
 
 export interface CurriculumProgress {
   preProgress: number    // 0-100 (calculated dynamically from curriculum)
@@ -70,43 +70,24 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
           answeredKeysArray = answers?.map(a => a.question_key).filter(k => k && k.length > 0) || []
         }
 
-        // Helper function to calculate progress for a phase dynamically
+        // CRITICAL: Denominators come from the V2 spine candidates only
+        // (getPhaseCandidateKeys) - the same set token-jump navigation uses.
+        // Counting all CURRICULUM entries inflated denominators with compatibility
+        // stubs (e.g. PROD could never pass ~43% even fully answered) and required
+        // a hardcoded PRE=100% hack that lied in the other direction.
         const calculatePhaseProgress = (phase: 'pre' | 'prod' | 'post' | 'legacy'): number => {
-          // Get all steps for this phase from CURRICULUM
-          // Exclude completion steps (PRE_COMPLETE, PROD_COMPLETE, etc.) and INIT
-          const phaseSteps = Object.values(CURRICULUM).filter(step => {
-            if (!step.phase || step.phase !== phase) return false
-            // Exclude completion/transition steps
-            if (step.id.includes('_COMPLETE') || step.id === 'INIT' || step.id === 'COMPLETE') return false
-            // Only count steps that have a key (actual work steps)
-            return step.key && step.key.length > 0
-          })
+          const candidateKeys = getPhaseCandidateKeys(phase)
+          if (candidateKeys.length === 0) return 0
 
-          if (phaseSteps.length === 0) return 0
-
-          // Get unique keys (some steps may share the same key)
-          const uniqueKeys = Array.from(new Set(phaseSteps.map(step => step.key)))
-
-          // Count how many unique keys are completed
-          const completedKeys = uniqueKeys.filter(key => answeredKeysArray.includes(key)).length
-
-          // Calculate percentage: (completed / total) * 100
-          return Math.round((completedKeys / uniqueKeys.length) * 100)
+          const completedKeys = candidateKeys.filter(key => answeredKeysArray.includes(key)).length
+          return Math.round((completedKeys / candidateKeys.length) * 100)
         }
 
         // Calculate progress dynamically for each phase
-        let preProgress = calculatePhaseProgress('pre')
+        const preProgress = calculatePhaseProgress('pre')
         const proProgress = calculatePhaseProgress('prod')
         const postProgress = calculatePhaseProgress('post')
         const loopProgress = calculatePhaseProgress('legacy')
-        
-        // CRITICAL: Force PRE to 100% when all PRE questions are answered
-        // PRE questions: artist_name, colors_set, gift_to_world
-        const preRequiredKeys = ['artist_name', 'colors_set', 'gift_to_world']
-        const allPreAnswered = preRequiredKeys.every(key => key && key.length > 0 && answeredKeysArray.includes(key))
-        if (allPreAnswered) {
-          preProgress = 100
-        }
 
         // Determine current module based on progress
         let currentModule: CurriculumProgress['currentModule'] | undefined

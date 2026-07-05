@@ -176,9 +176,12 @@ export function useCarouselItems(
         // This ensures only ONE current question card exists at a time
         finalItems = finalItems.filter(item => !item.isCurrentQuestion)
         
-        // CRITICAL: In edit mode, update answered cards in-place with typing input
-        if (isEditMode && activeStepId) {
-          // Find the answered card being edited and update its title with typing input
+        // CRITICAL: Update the active answered card in-place with live typing input.
+        // Uses typingInputRef (not the closure) because this function is invoked via
+        // loadItemsRef from the typing debounce effect and the closure value goes stale.
+        // Guarded to non-empty input so a plain swipe/pencil (input not yet loaded)
+        // never blanks the card title.
+        if (activeStepId && typingInputRef.current) {
           const editedCardIndex = finalItems.findIndex(item => item.stepId === activeStepId)
           if (editedCardIndex !== -1) {
             const editedCard = finalItems[editedCardIndex]
@@ -187,24 +190,24 @@ export function useCarouselItems(
               .split('_')
               .map(word => word.charAt(0).toUpperCase() + word.slice(1))
               .join(' ')
-            const cardTitle = currentTypingInput ? `${label}: ${currentTypingInput}` : `${label}: `
             finalItems[editedCardIndex] = {
               ...editedCard,
-              title: cardTitle
+              title: `${label}: ${typingInputRef.current}`
             }
           }
         }
         
         // CRITICAL: Use synchronously created current question card (from useMemo above)
-        // Only add if not in edit mode (edit mode uses answered cards only)
+        // Only inject it when the step is genuinely UNANSWERED. When the artist navigates
+        // to an already-answered step, the answered card IS the surface - replacing it with
+        // a synthetic question card at index 0 reshuffled the deck mid-swipe and broke
+        // the carousel (cards "disappearing", index pointing at the wrong card).
         if (!isEditMode && currentQuestionCard) {
-          // CRITICAL: Always include current question card - it represents the question being asked
-          // Filter out any answered items with the same stepId to prevent duplicates
-          finalItems = finalItems.filter(item => item.stepId !== currentQuestionCard.stepId)
-          
-          // CRITICAL: Always add at the front (index 0) - featured spot
-          // This ensures current question card is always visible immediately, preventing flash
-          finalItems = [currentQuestionCard, ...finalItems]
+          const alreadyAnswered = finalItems.some(item => item.questionKey === currentQuestionCard.questionKey)
+          if (!alreadyAnswered) {
+            // CRITICAL: Always add at the front (index 0) - featured spot
+            finalItems = [currentQuestionCard, ...finalItems]
+          }
         }
 
         setItems(finalItems)
@@ -277,19 +280,26 @@ export function useCarouselItems(
     // CRITICAL: If activeStepId exists, guarantee current card at index 0
     // Never fall back to answered items when question is active
     if (activeStepId) {
-      // INIT special case: currentQuestionCard is null until typing starts
-      // Return empty array instead of falling back to answered items
+      // INIT special case: currentQuestionCard is null until typing starts.
+      // Fresh user: no answered items either, so this stays empty (preserves the
+      // "surprise" moment). Returning user who navigated back to the answered
+      // name card: keep the answered deck visible instead of blanking it.
       if (!currentQuestionCard) {
-        return [] // Empty until INIT typing starts - prevents Artist Name flash
+        return itemsWithoutCurrent
       }
       
-      // Always include current card at index 0
-      // Filter out any answered items with the same stepId to prevent duplicates
-      const dedupedItems = itemsWithoutCurrent.filter(item => item.stepId !== currentQuestionCard.stepId)
+      // CRITICAL: If the active step is already answered (artist swiped/navigated to it),
+      // keep the answered card in place - injecting a synthetic question card here
+      // reordered the deck under the artist's finger and broke swiping.
+      const alreadyAnswered = itemsWithoutCurrent.some(
+        item => item.questionKey === currentQuestionCard.questionKey
+      )
+      if (alreadyAnswered) {
+        return itemsWithoutCurrent
+      }
       
-      // CRITICAL: Always add at the front (index 0) - featured spot
-      // This ensures current question card is always visible immediately, preventing flash
-      return [currentQuestionCard, ...dedupedItems]
+      // Unanswered step: current question card leads at index 0 (featured spot)
+      return [currentQuestionCard, ...itemsWithoutCurrent]
     }
     
     // No active step - return answered items only

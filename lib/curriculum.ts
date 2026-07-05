@@ -377,6 +377,23 @@ function isPhaseTokenCandidate(step: CurriculumStep): boolean {
 }
 
 /**
+ * All answerable question keys for a phase, walking the V2 spine only.
+ * Single source of truth for phase progress denominators - keeps token fill %
+ * consistent with token-jump targets (findFirstUnansweredStepInPhase) and
+ * excludes compatibility stubs that would inflate the count.
+ */
+export function getPhaseCandidateKeys(phase: 'pre' | 'prod' | 'post' | 'legacy'): string[] {
+  const keys = new Set<string>()
+  for (const stepId of getCurriculumSpineOrder()) {
+    const step = getStep(stepId)
+    if (step.phase !== phase) continue
+    if (!isPhaseTokenCandidate(step)) continue
+    keys.add(step.key)
+  }
+  return Array.from(keys)
+}
+
+/**
  * Find the first unanswered step in a specific phase
  * Used for token navigation - clicking a token jumps to first unanswered question of that phase
  */

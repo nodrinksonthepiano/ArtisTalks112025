@@ -102,21 +102,17 @@ export default function Home() {
       return // Exit early - don't touch carousel at all
     }
     
-    // CRITICAL: When activeStepId changes in progress mode, it's ALWAYS an app-initiated transition
-    // Clear isUserSwipeRef immediately to allow auto-center after edit submit
-    if (prevQuestionRef.current !== activeStepId) {
-      isUserSwipeRef.current = false
-    }
-    
-    // If user just swiped (and step hasn't changed), skip auto-advance to prevent fighting
+    // CRITICAL: A step change can be USER-initiated (swipe/pencil dispatch cardNavigate/cardEdit,
+    // which set isUserSwipeRef before updating activeStepId) or APP-initiated (submit/resume).
+    // If the user caused it, consume the flag and do NOT auto-center - snapping to index 0
+    // here is what made the carousel fight every swipe.
     if (isUserSwipeRef.current) {
-      setTimeout(() => {
-        isUserSwipeRef.current = false
-      }, 100)
+      isUserSwipeRef.current = false
+      prevQuestionRef.current = activeStepId
       return
     }
     
-    // ALWAYS set to 0 when step changes in progress mode (unless user swiping)
+    // App-initiated transition (submit advance, resume): center on current question card (index 0)
     if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== activeStepId) {
       setCarouselIndex(0)
       carouselIndexRef.current = 0
@@ -169,8 +165,10 @@ export default function Home() {
       const stepId = customEvent.detail?.stepId
       if (!stepId) return
       
-      // CRITICAL: Navigation is NOT editing - don't set isEditMode
-      // Just update activeStepId to sync chat with carousel
+      // CRITICAL: Navigation is NOT editing - swiping away abandons any in-progress edit.
+      // Without this, edit mode stuck ON after pencil+swipe and the carousel froze
+      // (edit mode suppresses the current question card and blocks auto-center forever).
+      setIsEditMode(false)
       setActiveStepId(stepId)
       
       // Mark as user-initiated to prevent auto-center during navigation
@@ -412,9 +410,12 @@ export default function Home() {
               {/* CRITICAL: INIT is special - only render when typing has started (surprise moment) */}
               {/* Gate by activeStepId (single source of truth) not carouselItems.length */}
               {(() => {
-                // CRITICAL: INIT is special - only render when typing has started
+                // CRITICAL: INIT is special for FRESH users - only render when typing has
+                // started (the "surprise" moment). A returning artist who swipes back to
+                // their answered name card also has activeStepId === 'INIT'; hiding the
+                // stage then made the whole carousel vanish mid-swipe.
                 if (activeStepId === 'INIT') {
-                  return activeStepId === 'INIT' && currentTypingInput.length > 0
+                  return currentTypingInput.length > 0 || (carouselItems && carouselItems.length >= 1)
                 }
                 // For all other cases: Render if activeStepId is set OR answered items exist
                 return activeStepId || (carouselItems && carouselItems.length >= 1)
@@ -612,11 +613,14 @@ export default function Home() {
                     }
                   }}
                   onCurrentStepChange={(stepId) => {
-                    // CRITICAL: Only update activeStepId if NOT in edit mode
-                    // In edit mode, activeStepId is controlled by cardEdit event
-                    if (!isEditMode) {
-                      setActiveStepId(stepId)
+                    // CRITICAL: EmeraldChat's currentStepId is the authoritative step.
+                    // Always follow it - keeping a gate here is what let the two states drift
+                    // (e.g. token click while editing moved chat but froze the page/carousel).
+                    // If chat moved to a DIFFERENT step while editing, the edit was abandoned.
+                    if (isEditMode && stepId !== activeStepId) {
+                      setIsEditMode(false)
                     }
+                    setActiveStepId(stepId)
                   }}
                   onSubmitCard={(answer, stepId) => {
                     // Clear typing state

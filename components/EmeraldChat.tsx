@@ -44,12 +44,33 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     history: Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>
   }>>([])
   
+  // CRITICAL: The full color picker should only render when the artist is actively
+  // answering the colors step (unanswered) or explicitly chose to edit their brand.
+  // Swiping/navigating onto an ANSWERED colors card shows a compact summary instead -
+  // the full picker hijacking the chat on a casual swipe was a tested pain point.
+  const [pickerOpenedExplicitly, setPickerOpenedExplicitly] = useState(false)
+  const keepPickerOpenRef = useRef(false)
+  
   const currentStep = getStep(currentStepId)
   const supabase = createClient()
   const debounceTimer = useRef<NodeJS.Timeout | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
+  
+  // Reset the explicit-open flag whenever the step changes, unless the step change
+  // itself carried the intent to open the picker (pencil edit on the colors card).
+  useEffect(() => {
+    if (keepPickerOpenRef.current) {
+      keepPickerOpenRef.current = false
+      return
+    }
+    setPickerOpenedExplicitly(false)
+  }, [currentStepId])
+  
+  const isColorsStep = getStep(currentStepId)?.triggersPanel === 'colors'
+  const showColorsPicker = isColorsStep && (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
+  const showColorsSummary = isColorsStep && !showColorsPicker
   
   // Notify parent of current step change (for carousel)
   // CRITICAL: Always notify parent when currentStepId changes
@@ -177,6 +198,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const step = getStep(stepId)
     const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
     
+    // Pencil-editing the colors card is an EXPLICIT request to open the brand picker
+    // (survives the reset-on-step-change effect via keepPickerOpenRef)
+    if (step.triggersPanel === 'colors') {
+      keepPickerOpenRef.current = true
+      setPickerOpenedExplicitly(true)
+    }
+    
     // Find assistant question in history
     const assistantQuestionIndex = history.findIndex(msg => msg.stepId === stepId && msg.role === 'assistant')
     
@@ -225,6 +253,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       if (stepId) {
         const step = getStep(stepId)
         setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
+        setInput('') // Token jumps target unanswered questions - leftover text from the previous step must not carry over
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
         setFullHistory(prev => [...prev, stepMessage])
@@ -863,16 +892,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         textAlign: 'center', /* EXACT from nodrinks */
         color: 'white', /* EXACT from nodrinks */
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
-        // CRITICAL: Expand height when picker is shown
-        minHeight: currentStep?.triggersPanel === 'colors' ? '500px' : 'auto'
+        // CRITICAL: Expand height only when the full picker is shown (not the compact summary)
+        minHeight: showColorsPicker ? '500px' : 'auto'
       }}
     >
       <div>
         {/* Current Question OR Inline Picker */}
         {currentStep && currentStep.question && (
           <>
-            {/* Show inline picker if this step triggers a panel */}
-            {currentStep.triggersPanel === 'colors' ? (
+            {/* Show inline picker if this step triggers a panel AND the artist is actively answering/editing it */}
+            {showColorsPicker ? (
               <div className="mb-4">
                 <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
                   {currentStep.question}
@@ -908,6 +937,51 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                     // No need to dispatch events - InlineColorPicker handles everything
                   }}
                 />
+              </div>
+            ) : showColorsSummary ? (
+              /* Browsing an already-answered colors card: compact summary, no picker hijack */
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  Your brand is set.
+                </h2>
+                <div className="flex items-center justify-center gap-3 mb-4">
+                  <span
+                    title="Primary color"
+                    style={{
+                      width: 22, height: 22, borderRadius: 6, display: 'inline-block',
+                      backgroundColor: profile?.primary_color || '#10b981',
+                      border: '1px solid rgba(255,255,255,0.4)'
+                    }}
+                  />
+                  <span
+                    title="Accent color"
+                    style={{
+                      width: 22, height: 22, borderRadius: 6, display: 'inline-block',
+                      backgroundColor: profile?.accent_color || '#fbbf24',
+                      border: '1px solid rgba(255,255,255,0.4)'
+                    }}
+                  />
+                  {profile?.logo_url && (
+                    <img
+                      src={profile.logo_url}
+                      alt="Logo"
+                      style={{ height: 22, width: 'auto', borderRadius: 4 }}
+                    />
+                  )}
+                  <span
+                    className="text-sm text-zinc-200"
+                    style={{ fontFamily: profile?.font_family || undefined }}
+                  >
+                    {(profile?.font_family || 'Default').split(',')[0]}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpenedExplicitly(true)}
+                  className="px-4 py-2 rounded-lg border border-emerald-400/50 text-emerald-200 hover:bg-emerald-500/10 transition-colors text-sm"
+                >
+                  Open brand settings
+                </button>
               </div>
             ) : (
               <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
