@@ -135,7 +135,7 @@ export function useCarouselItems(
               stepId = step?.id || answer.question_key as StepId
             }
             
-            const content = answerData?.text || answerData?.content || ''
+            const content = answerData?.label || answerData?.text || answerData?.content || ''
             const imageUrl = answerData?.imageUrl || answerData?.image_url || answerData?.url
             const videoUrl = answerData?.videoUrl || answerData?.video_url
             const audioUrl = answerData?.audioUrl || answerData?.audio_url

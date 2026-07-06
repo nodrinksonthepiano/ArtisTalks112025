@@ -4,9 +4,10 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import InlineColorPicker from '@/components/InlineColorPicker'
+import InlineSelectPicker from '@/components/InlineSelectPicker'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -68,7 +69,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setPickerOpenedExplicitly(false)
   }, [currentStepId])
   
-  const isColorsStep = getStep(currentStepId)?.triggersPanel === 'colors'
+  const isColorsStep = isColorsPanelStep(getStep(currentStepId))
+  const isSelectInputStep = isSelectStep(getStep(currentStepId))
   const showColorsPicker = isColorsStep && (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
   const showColorsSummary = isColorsStep && !showColorsPicker
   
@@ -160,6 +162,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       msg => msg.stepId === stepId && msg.role === 'user'
     )
     if (fullHistoryAnswer) {
+      if (isSelectStep(step)) {
+        return resolveSelectValue(step, fullHistoryAnswer.content)
+      }
       return fullHistoryAnswer.content
     }
     
@@ -180,8 +185,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         .single()
       
       if (answer?.answer_data) {
-        const answerData = answer.answer_data as any
-        return answerData?.text || answerData?.content || ''
+        const answerData = answer.answer_data as { text?: string; content?: string; label?: string }
+        const raw = answerData?.text || answerData?.content || ''
+        if (isSelectStep(step)) {
+          return resolveSelectValue(step, raw)
+        }
+        return answerData?.label || raw
       }
     } catch (err) {
       console.error('Error loading answer:', err)
@@ -200,7 +209,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     
     // Pencil-editing the colors card is an EXPLICIT request to open the brand picker
     // (survives the reset-on-step-change effect via keepPickerOpenRef)
-    if (step.triggersPanel === 'colors') {
+    if (isColorsPanelStep(step)) {
       keepPickerOpenRef.current = true
       setPickerOpenedExplicitly(true)
     }
@@ -433,6 +442,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // Live Typing Effect
   useEffect(() => {
     if (!onProfileUpdate) return
+    if (isSelectInputStep) return
     
     // CRITICAL FIX: Don't update profile if input is empty or we're submitting
     // This prevents empty strings from overwriting saved values when input is cleared
@@ -466,7 +476,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [input, currentStep.key, onProfileUpdate, isSubmitting])
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId])
 
   const handleUndo = () => {
     if (previousStepId) {
@@ -562,7 +572,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     e.preventDefault()
     
     // CRITICAL: If picker is active, save to curriculum_answers and advance to next step
-    if (currentStep?.triggersPanel === 'colors') {
+    if (isColorsPanelStep(currentStep)) {
       // Profile is already updated by picker (live preview)
       // Now save to curriculum_answers when user clicks Send
       // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
@@ -717,9 +727,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       return
     }
     
-    if (!input.trim() || isSubmitting) return
+    const isSelectSubmit = isSelectStep(currentStep)
+    const selectedEnum = isSelectSubmit ? input.trim() : ''
+    const displayAnswer = isSelectSubmit
+      ? (getSelectLabel(currentStep, selectedEnum) || '')
+      : input.trim()
 
-    const answer = input.trim()
+    if (isSelectSubmit) {
+      if (!selectedEnum || !displayAnswer || isSubmitting) return
+    } else if (!input.trim() || isSubmitting) {
+      return
+    }
+
+    const answer = isSelectSubmit ? displayAnswer : input.trim()
     setIsSubmitting(true)
 
     // Trigger card swipe animation before saving
@@ -757,10 +777,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           const { error: updateError } = await supabase
             .from('curriculum_answers')
             .update({
-              answer_data: { 
-                text: answer,
-                step_id: currentStepId
-              }
+              answer_data: isSelectSubmit
+                ? {
+                    text: selectedEnum,
+                    label: displayAnswer,
+                    step_id: currentStepId,
+                  }
+                : {
+                    text: answer,
+                    step_id: currentStepId,
+                  },
             })
             .eq('id', existingAnswer.id)
           
@@ -772,10 +798,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           const { error: insertError } = await supabase.from('curriculum_answers').insert({
             user_id: user.id,
             question_key: currentStep.key,
-            answer_data: { 
-              text: answer,
-              step_id: currentStepId
-            },
+            answer_data: isSelectSubmit
+              ? {
+                  text: selectedEnum,
+                  label: displayAnswer,
+                  step_id: currentStepId,
+                }
+              : {
+                  text: answer,
+                  step_id: currentStepId,
+                },
             project_id: null 
           })
           
@@ -1187,23 +1219,41 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </div>
         ) : (
           <>
-            {/* Hide input when picker is active - user clicks Send to advance */}
-            {currentStep?.triggersPanel !== 'colors' && (
+            {/* Hide text input when picker or select is active */}
+            {!isColorsStep && !isSelectInputStep && (
               <input
                 ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={currentStep.placeholder || "Type your answer..."}
+                placeholder={getStepPlaceholder(currentStep)}
                 disabled={currentStepId === 'COMPLETE' || isSubmitting}
                 className="email-input"
                 autoFocus
               />
             )}
+            {isSelectInputStep && currentStep.input?.kind === 'select' && (
+              <InlineSelectPicker
+                options={currentStep.input.options}
+                value={input || null}
+                disabled={currentStepId === 'COMPLETE' || isSubmitting}
+                onChange={(value) => {
+                  setInput(value)
+                  const label = getSelectLabel(currentStep, value)
+                  if (onTypingUpdate && label) {
+                    onTypingUpdate(label, currentStepId)
+                  }
+                }}
+              />
+            )}
             <button
               type="submit"
               disabled={
-                (currentStep?.triggersPanel !== 'colors' && !input.trim()) 
+                (isColorsStep
+                  ? false
+                  : isSelectInputStep
+                    ? !input.trim() || !getSelectLabel(currentStep, input)
+                    : !input.trim())
                 || isSubmitting 
                 || currentStepId === 'COMPLETE'
               }

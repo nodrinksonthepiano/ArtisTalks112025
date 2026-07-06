@@ -37,6 +37,20 @@ export type StepId =
   | 'LEGACY_VISION'
   | 'FEEDBACK_LOOP';
 
+export type PillarChoice = 'creating_new' | 'finishing' | 'promoting' | 'not_sure'
+
+export type StepInput =
+  | { kind: 'text'; placeholder?: string }
+  | { kind: 'select'; options: { label: string; value: PillarChoice }[] }
+  | { kind: 'panel'; panel: 'colors' | 'asset' }
+
+export const PILLAR_SELECT_OPTIONS: { label: string; value: PillarChoice }[] = [
+  { label: 'Creating something new', value: 'creating_new' },
+  { label: 'Finishing something in progress', value: 'finishing' },
+  { label: 'Promoting something finished', value: 'promoting' },
+  { label: "I'm not sure yet", value: 'not_sure' },
+]
+
 export interface CurriculumStep {
   id: StepId;
   question: string;
@@ -44,7 +58,37 @@ export interface CurriculumStep {
   key: string; // The key used in the database (curriculum_answers table)
   placeholder?: string;
   triggersPanel?: 'colors' | 'asset'; // Panel to trigger after this step
+  input?: StepInput;
   phase?: 'pre' | 'prod' | 'post' | 'legacy';
+}
+
+export function isSelectStep(step: CurriculumStep): boolean {
+  return step.input?.kind === 'select'
+}
+
+export function isColorsPanelStep(step: CurriculumStep): boolean {
+  if (step.input?.kind === 'panel') return step.input.panel === 'colors'
+  return step.triggersPanel === 'colors'
+}
+
+export function getStepPlaceholder(step: CurriculumStep): string {
+  if (step.input?.kind === 'text' && step.input.placeholder) return step.input.placeholder
+  return step.placeholder || 'Type your answer...'
+}
+
+export function getSelectLabel(step: CurriculumStep, value: string): string | undefined {
+  if (step.input?.kind !== 'select') return undefined
+  return step.input.options.find((o) => o.value === value)?.label
+}
+
+/** Map stored answer (enum, label, or legacy free text) back to a select value. */
+export function resolveSelectValue(step: CurriculumStep, raw: string): string {
+  if (!raw || step.input?.kind !== 'select') return raw
+  const byValue = step.input.options.find((o) => o.value === raw)
+  if (byValue) return byValue.value
+  const byLabel = step.input.options.find((o) => o.label === raw)
+  if (byLabel) return byLabel.value
+  return ''
 }
 
 // The Deterministic "Script" for all phases
@@ -116,10 +160,14 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   },
   CURRENT_FOCUS_PILLAR: {
     id: 'CURRENT_FOCUS_PILLAR',
-    question: "What are you creating now: something brand new, something you are finishing, or something finished that needs promotion and momentum?",
+    question: 'Where are you in your journey right now?',
     nextStep: 'FAN_CONNECTION',
     key: 'current_focus_pillar',
     placeholder: "Creating new / finishing / promoting / not sure",
+    input: {
+      kind: 'select',
+      options: PILLAR_SELECT_OPTIONS,
+    },
     phase: 'pre'
   },
   FAN_CONNECTION: {
