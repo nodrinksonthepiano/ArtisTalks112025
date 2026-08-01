@@ -27,13 +27,16 @@ alwaysApply: true
 - The first question is always **artist name only** — never "artist name or email"
 - Public ArtisTalks uses legacy music-business language. Route token, wallet, treasury, swap, blockchain, crypto, web3, payment-rail, toppins, and funding concepts to Artistocks, Zeyoda, or Future Bridge per `ECOSYSTEM_MEMORY_MAP.md`
 - Do not write "six-question free taste" — it is 8 steps / 7 questions to the affirmation
+- Prefer **affirmative language** in artist-facing copy and voice docs: state what to do; leave out prohibitions unless a hard boundary requires them
 
 ## Product invariants
 
 - **Access and payment are separate fields.** Never collapse `access_status` and `payment_status` into one
 - The code **`cancakes`** is an access/payment-path code, never an OTP or login credential. It is checked only after identity is verified
 - A claimed artist name is a locked door: send the code to the email on file, and offer no "continue anyway" path
-- The **ArtisTalks Guide** is the voice inside the emerald chat. It is not GOSHBOT and gets no tools, no GOSHBOT memory, no file system, no payments, and no external actions
+- The **ArtisTalks Guide** is the voice inside the emerald chat. It is not GOSHBOT and gets no tools, no GOSHBOT memory, no file system, no payments, and no external actions. It speaks as the **guide**, not as Jai
+- Ship **no business-outcome promises** in public ArtisTalks (streams, placements, income, industry results)
+- Rights, legal, tax, and accounting topics stay at **awareness** level, with a handoff to the artist's PRO or attorney
 - In voice/curriculum docs, never promote a `[NEEDS JAI]` gap into shipped copy by writing plausible-sounding replacement text
 
 ## Current plan

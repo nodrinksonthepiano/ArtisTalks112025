@@ -1,6 +1,6 @@
 # STEP_PLAN.md — ArtisTalks Launch Plan
 
-**Status:** Sprint 0 (docs only). No application code has been changed.
+**Status:** Sprint 0 complete. Sprint 1 next. No application code has been changed.
 **Last updated:** 2026-08-01
 
 > ArtisTalks teaches. Artistocks launches. Zeyoda protects. GOSHBOT routes memory.
@@ -273,31 +273,29 @@ No `middleware.ts`, no rate limiting, no whitelist, no admin route in this repo.
 
 Each sprint is one sitting with a test runnable in a private browser window. Nothing later gets touched early.
 
-### Sprint 0 — Docs and decisions. No code. ← current
+### Sprint 0 — Docs and decisions. No code. ✓
 
 Write `STEP_PLAN.md`, `ARTISTALKS_GUIDE_VOICE.md`, the constraints/rules update, and fix the stale V1 flow order in `ARTISTALKS_KNOWLEDGE_BASE.md`.
 
 **Done when:** the docs describe the code that actually exists, and the decisions are frozen.
 
-### Sprint 1 — Open the door
+### Sprint 1 — Anonymous free taste ← current
 
-Change the two auth gates at `app/page.tsx:374` and `:602`. Nothing else.
+Open the emerald chat without login. Local draft store. Live artist name at the top. Zero Supabase traffic while anonymous.
 
-**Done when:** a private window loads and shows the header and the chat with no login wall. Nothing saves yet.
+**Touches:** `app/page.tsx` (auth gates at lines 374, 484, 602), new `lib/draft.ts`, new `hooks/useDraft.ts`, `components/EmeraldChat.tsx` (draft read/write; guard all Supabase paths when `!user`).
 
-### Sprint 2 — Local draft store
+**Done when:**
 
-New `lib/draft.ts` and `hooks/useDraft.ts`. Answers write locally. The per-keystroke Supabase upsert becomes a local write; the database write moves to submit-time for logged-in users only.
+- a private browser opens the emerald chat with no account
+- the first prompt is artist name only
+- the artist name appears live at the top as they type
+- anonymous answers write locally and survive refresh
+- the Network tab shows **zero** Supabase calls while typing or answering anonymously
+- no private saved artist data loads before verification
+- no auth, payment, phase-tag, enrichment, or accordion work in this sprint
 
-**Done when:** type a name, refresh, it is still there — and the Network tab shows **zero** Supabase calls while typing.
-
-### Sprint 3 — The name lands at the top, live
-
-Header reads draft first, profile second. The `currentTypingInput` plumbing already exists (`app/page.tsx:607-614`); it needs to reach the `h1` at line 389.
-
-**Done when:** every keystroke appears at the top of the page, anonymously, with no network traffic.
-
-### Sprint 4 — Phase-tag fix (tiny, isolated)
+### Sprint 2 — Phase-tag fix (tiny, isolated)
 
 **Proposed, not yet applied.** `lib/curriculum.ts` only — `phase` values. The `nextStep` chain does **not** change.
 
@@ -310,47 +308,47 @@ The run to the affirmation is currently tagged `pre, pre, pre, legacy, pre, post
 
 **Done when:** the orbit tokens fill in a pattern that reads as intentional.
 
-### Sprint 5 — The living affirmation
+### Sprint 3 — The living affirmation
 
 New card assembling the five keys in §6. Grows line by line.
 
 **Done when:** after step 8, the artist reads a complete sentence built from their own words.
 
-### Sprint 6 — Email gate and draft migration
+### Sprint 4 — Email gate and draft migration
 
 Ask for email after the affirmation. `signInWithOtp`. On verify, migrate the local draft into `curriculum_answers` and `profiles`.
 
 **Done when:** the anonymous answers survive login as rows and cards, nothing duplicated, nothing lost.
 
-### Sprint 7 — Server-side recognition
+### Sprint 5 — Server-side recognition
 
 New `app/api/artist/recognize/route.ts`. Service role. Returns `{ claimed: boolean }` only. Needs a normalized `artist_name_slug` column with a unique index, plus rate limiting in the same commit. See §3 for the full requirement list.
 
 **Done when:** a curl loop gets throttled; no response body contains an email under any input; a production bundle grep finds no artist list.
 
-### Sprint 8 — The locked door
+### Sprint 6 — The locked door
 
 Rewrite `AuthPanel`. Artist name only — delete "or Email" from line 162, delete the `{email}` render at line 94. Copy becomes "Enter the code sent to [Artist Name]'s email." No continue-anyway. Private data does not load until the code verifies.
 
 **Done when:** a returning artist types only their name, gets a code, and no email appears in the UI, the network response, or the console — and their private data is provably absent from the page before verification.
 
-### Sprint 9 — Access and payment as two columns
+### Sprint 7 — Access and payment as two columns
 
 `access_status` and `payment_status` on `profiles`, set by hand in the Supabase dashboard. `cancakes` checked after identity verification, changing only the payment path. No wallet code.
 
 **Done when:** flipping someone to `coin_granted` lets them skip apply; flipping `pay_what_you_can` shows the flexible amount.
 
-### Sprint 10 — Wire the fork ("choose your own journey")
+### Sprint 8 — Wire the fork ("choose your own journey")
 
 Prerequisite: the enriched step schema in `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §5, which lets `next` be a branch map instead of a hardcoded string. Then `CURRENT_FOCUS_PILLAR` actually routes.
 
 **Done when:** picking "promoting something finished" routes to the promo questions and not the creating-new ones.
 
-### Sprint 11 — Uploads
+### Sprint 9 — Uploads
 
 Local object-URL preview before login; real storage upload only after verification. Permanent storage begins only once the artist saves/applies, so anonymous visitors cannot fill storage. The existing upload route already enforces `user.id` ownership, so this is mostly a client-side gate.
 
-### Sprint 12 — The ArtisTalks Guide
+### Sprint 10 — The ArtisTalks Guide
 
 Last. Boundaries per §1. The only net-new system in the plan.
 
@@ -360,8 +358,8 @@ Last. Boundaries per §1. The only net-new system in the plan.
 
 | Sprints | Status |
 |---|---|
-| 1–9 | Launch-critical. Must ship for the Orbit Launch. |
-| 10–12 | Can land during the Orbit rather than before it. |
+| 1–7 | Launch-critical. Must ship for the Orbit Launch. |
+| 8–10 | Can land during the Orbit rather than before it. |
 
 ---
 
@@ -403,7 +401,7 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 7. `cancakes` is a payment-path code, never a login code.
 8. The free taste is 8 steps / 7 questions to the affirmation.
 9. "Six-question free taste" is retired language.
-10. The phase-tag fix is documented as Sprint 4, not yet applied.
+10. The phase-tag fix is documented as Sprint 2, not yet applied.
 11. lowercase "my champion" = every artist; capitalized "Champions" = the Orbit Launch cohort.
 12. Orbit Launch artists are never called founders. The cohort revolves.
 13. The ArtisTalks Guide is the emerald chat voice, is not GOSHBOT, and is built last.
