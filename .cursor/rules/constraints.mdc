@@ -5,6 +5,37 @@ alwaysApply: true
 
 # Constraints
 
+## Workflow
+
 - **Never** read or modify `.env` — only the user handles environment variables
 - **Never** run git commands — the user manages version control
+- **Never** commit — the user commits personally
 - **Propose a plan** before making non-trivial code changes
+
+## Security
+
+- **Never** touch wallet-signing code or re-enable `fundWallet` — see SEC-001 in `AGENT_NOTES.md`
+- **Never** expose an email address in UI, network responses, logs, or error messages. No masked emails either (no `j•••@gmail.com`)
+- **Never** ship an artist list, cohort list, or whitelist to the client. Artist-name recognition is server-side only
+- Any artist-name recognition endpoint **must** ship with rate limiting in the same commit — it creates an enumeration surface that does not currently exist
+
+## Language
+
+- **Never** call an ArtisTalks Orbit Launch artist a *founder*, *founding artist*, or *founding member*. "Founder" refers to Jai only. The Orbit cohort revolves — returning mastermind members plus new artists — so the word is inaccurate as well as off-brand
+- lowercase **"my champion"** = term of address for every artist using the SaaS, including the Orbit Launch group
+- capitalized **"Champions"** = the named ArtisTalks Orbit Launch cohort
+- The first question is always **artist name only** — never "artist name or email"
+- Public ArtisTalks uses legacy music-business language. Route token, wallet, treasury, swap, blockchain, crypto, web3, payment-rail, toppins, and funding concepts to Artistocks, Zeyoda, or Future Bridge per `ECOSYSTEM_MEMORY_MAP.md`
+- Do not write "six-question free taste" — it is 8 steps / 7 questions to the affirmation
+
+## Product invariants
+
+- **Access and payment are separate fields.** Never collapse `access_status` and `payment_status` into one
+- The code **`cancakes`** is an access/payment-path code, never an OTP or login credential. It is checked only after identity is verified
+- A claimed artist name is a locked door: send the code to the email on file, and offer no "continue anyway" path
+- The **ArtisTalks Guide** is the voice inside the emerald chat. It is not GOSHBOT and gets no tools, no GOSHBOT memory, no file system, no payments, and no external actions
+- In voice/curriculum docs, never promote a `[NEEDS JAI]` gap into shipped copy by writing plausible-sounding replacement text
+
+## Current plan
+
+`STEP_PLAN.md` holds the frozen decisions and sprint order. Read it before starting funnel, auth, or curriculum work. Do not touch the chat/carousel drift bug during funnel sprints — see `STEP_PLAN.md` §10.

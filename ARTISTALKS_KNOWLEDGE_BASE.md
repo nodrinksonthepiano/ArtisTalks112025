@@ -134,7 +134,7 @@ user_id: abc123, question_key: 'logo_uploaded', answer_data: {"text": "Logo uplo
 
 ### Step Definition Structure
 
-Each step in `lib/curriculum.ts` follows this pattern:
+Each step in `lib/curriculum.ts` follows this pattern (interface at `lib/curriculum.ts:54-63`):
 
 ```typescript
 STEP_ID: {
@@ -143,38 +143,60 @@ STEP_ID: {
   nextStep: 'NEXT_STEP_ID',        // Where to go after this step
   key: 'question_key',             // Database key (curriculum_answers.question_key)
   placeholder?: "Placeholder...",  // Input placeholder (optional)
-  triggersPanel?: 'colors' | 'logo' | 'font' | 'asset',  // Inline picker type (optional)
-  phase: 'pre' | 'prod' | 'post' | 'legacy'  // Phase for progress tracking
+  triggersPanel?: 'colors' | 'asset',  // Inline picker type (optional)
+  input?: StepInput,               // Typed input descriptor (optional)
+  phase?: 'pre' | 'prod' | 'post' | 'legacy'  // Phase for progress tracking
 }
 ```
 
-### Current Flow Order
+`StepInput` (`lib/curriculum.ts:42-45`) is one of:
 
-**PRE Phase:**
-1. `INIT` → `COLORS_PANEL` (key: `artist_name`)
-2. `COLORS_PANEL` → `MISSION_GIFT` (key: `colors_set`, triggers: `colors`)
-3. `MISSION_GIFT` → `FONT_PANEL` (key: `gift_to_world`)
-4. `FONT_PANEL` → `LOGO_PANEL` (key: `font_set`, triggers: `font`)
-5. `LOGO_PANEL` → `PRE_COMPLETE` (key: `logo_uploaded`, triggers: `logo`)
-6. `PRE_COMPLETE` → `PROJECT_NAME` (key: `pre_complete`)
+```typescript
+| { kind: 'text'; placeholder?: string }
+| { kind: 'select'; options: { label: string; value: PillarChoice }[] }
+| { kind: 'panel'; panel: 'colors' | 'asset' }
+```
 
-**PROD Phase:**
-7. `PROJECT_NAME` → `PROJECT_DESCRIPTION` (key: `project_name`)
-8. `PROJECT_DESCRIPTION` → `ASSET_UPLOAD_PANEL` (key: `project_description`)
-9. `ASSET_UPLOAD_PANEL` → `PROD_COMPLETE` (key: `asset_uploaded`, triggers: `asset`)
-10. `PROD_COMPLETE` → `PROMO_STRATEGY` (key: `prod_complete`)
+**Only two panel types exist:** `colors` and `asset`. There is no separate `logo` or `font` panel type in the step schema — logo and font are handled inside the inline colors picker, which saves the `logo_uploaded` and `font_set` answer keys on Send (see `components/EmeraldChat.tsx:602-641`). The standalone `LogoPanel` and `FontPanel` components still exist and are reachable via `activePanel`, but the main V2 flow does not route through them.
 
-**POST Phase:**
-11. `PROMO_STRATEGY` → `TARGET_AUDIENCE` (key: `promo_strategy`)
-12. `TARGET_AUDIENCE` → `LAUNCH_DATE` (key: `target_audience`)
-13. `LAUNCH_DATE` → `POST_COMPLETE` (key: `launch_date`)
-14. `POST_COMPLETE` → `GRATITUDE` (key: `post_complete`)
+### Current Flow Order (Curriculum V2 spine)
 
-**LEGACY Phase:**
-15. `GRATITUDE` → `LEGACY_VISION` (key: `gratitude_practice`)
-16. `LEGACY_VISION` → `FEEDBACK_LOOP` (key: `legacy_vision`)
-17. `FEEDBACK_LOOP` → `COMPLETE` (key: `feedback_loop`)
-18. `COMPLETE` → `COMPLETE` (key: `completed`, end state)
+This is the flow the code actually implements. Verified against `lib/curriculum.ts` on 2026-08-01.
+
+| # | Step ID | Key | `phase` tag |
+|---|---------|-----|-------------|
+| 1 | `INIT` | `artist_name` | `pre` |
+| 2 | `COLORS_PANEL` (panel: colors) | `colors_set` | `pre` |
+| 3 | `GIFT_PRESENCE` | `gift_to_world` | `pre` |
+| 4 | `KNOWN_FOR_LEGACY` | `known_for_legacy` | `legacy` ⚠️ |
+| 5 | `KNOWN_FOR_EXPRESSION` | `known_for_expression` | `pre` |
+| 6 | `TARGET_REACH` | `target_reach` | `post` ⚠️ |
+| 7 | `GENRE_ASSOCIATIONS` | `genre_associations` | `pre` |
+| 8 | `BUSINESS_OFFERING` | `business_type_products_services` | `pre` |
+| 9 | `CURRENT_FOCUS_PILLAR` (select) | `current_focus_pillar` | `pre` |
+| 10 | `FAN_CONNECTION` | `fan_connection` | `post` |
+| 11 | `FAN_STRUGGLES` | `fan_struggles` | `prod` |
+| 12 | `FAN_DREAMS` | `fan_dreams` | `prod` |
+| 13 | `AUDIENCE_AVATAR` | `audience_avatar` | `post` |
+| 14 | `COLLABORATORS` | `collaborators_wishlist` | `prod` |
+| 15 | `OPEN_FOR_SUPPORT` | `open_for_support_targets` | `post` |
+| 16 | `PLAYLIST_CONTEXT` | `playlist_context` | `post` |
+| 17 | `SPONSOR_BRAND_ALLIES` | `sponsor_brand_allies` | `post` |
+| 18 | `INFLUENCERS_COMMUNITIES` | `influencers_communities` | `post` |
+| 19 | `WARDROBE_IMAGE` | `wardrobe_public_image` | `pre` |
+| 20 | `SIGNATURE_WORLD` | `signature_world_elements` | `post` |
+| 21 | `GRATITUDE_MOMENTUM` | `gratitude_momentum` | `legacy` |
+| 22 | `COMPLETE` | `completed` | `legacy` (end state) |
+
+Steps 1–8 are the **free taste**: 8 steps, 7 questions (step 2 is a panel, not a question). The living affirmation completes at step 8, followed by the email save/apply gate. See `STEP_PLAN.md` §5.
+
+⚠️ **Known issue — scrambled phase tags.** Steps 4 and 6 jump the orbit tokens out of the `pre` lane and back for a single step, which makes the token fill look random during the free taste. A fix is documented as Sprint 4 in `STEP_PLAN.md` and has **not** been applied. Also flagged in `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.4.
+
+⚠️ **Known issue — the journey fork is collected but never used.** `CURRENT_FOCUS_PILLAR` (step 9) asks the branching question, but its `nextStep` is hardcoded to `FAN_CONNECTION` at `lib/curriculum.ts:164`. Every artist gets the identical linear march. Choose-your-own-journey is not broken — it has not been built yet. See `STEP_PLAN.md` Sprint 10 and `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.1.
+
+### Compatibility stubs
+
+`lib/curriculum.ts` also defines 13 legacy step IDs (`MISSION_GIFT`, `PRE_COMPLETE`, `PROJECT_NAME`, `PROJECT_DESCRIPTION`, `ASSET_UPLOAD_PANEL`, `PROD_COMPLETE`, `PROMO_STRATEGY`, `TARGET_AUDIENCE`, `LAUNCH_DATE`, `POST_COMPLETE`, `GRATITUDE`, `LEGACY_VISION`, `FEEDBACK_LOOP`) at lines 278–379. These exist so older saved cards and events still resolve. **The main V2 flow does not route through them.** An earlier version of this document described that older flow as current; it was stale and has been corrected.
 
 ---
 
