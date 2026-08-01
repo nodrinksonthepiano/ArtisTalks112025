@@ -96,10 +96,10 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   // Curriculum V2 spine
   INIT: {
     id: 'INIT',
-    question: "Welcome, My Champion. First things first: what is your artist name?",
+    question: "What is your artist name?",
     nextStep: 'COLORS_PANEL',
     key: 'artist_name',
-    placeholder: "e.g. JAI",
+    placeholder: "What is your artist name?",
     phase: 'pre'
   },
   COLORS_PANEL: {
@@ -398,6 +398,40 @@ export function getCurriculumSpineOrder(): StepId[] {
   }
 
   return order
+}
+
+/** Last step of the anonymous free taste (step 8). Gate follows when its key is answered. */
+export const FREE_TASTE_LAST_STEP_ID: StepId = 'BUSINESS_OFFERING'
+export const FREE_TASTE_LAST_KEY = 'business_type_products_services'
+
+export const ANONYMOUS_GATE_MESSAGE =
+  'To save it and keep building, apply yourself.\n\nEnter your email to save your page and request access to the ArtisTalks Orbit Launch.'
+
+export function isFreeTasteGateReached(answeredKeys: Set<string>): boolean {
+  return answeredKeys.has(FREE_TASTE_LAST_KEY)
+}
+
+export function isBeyondFreeTaste(stepId: StepId): boolean {
+  const spine = getCurriculumSpineOrder()
+  const lastIndex = spine.indexOf(FREE_TASTE_LAST_STEP_ID)
+  const stepIndex = spine.indexOf(stepId)
+  if (lastIndex === -1 || stepIndex === -1) return false
+  return stepIndex > lastIndex
+}
+
+export function clampStepToFreeTaste(stepId: StepId): StepId {
+  return isBeyondFreeTaste(stepId) ? FREE_TASTE_LAST_STEP_ID : stepId
+}
+
+/** First unanswered step within the free-taste range (INIT → BUSINESS_OFFERING). */
+export function findFirstUnansweredInFreeTaste(answeredKeys: Set<string>): StepId {
+  for (const stepId of getCurriculumSpineOrder()) {
+    if (isBeyondFreeTaste(stepId)) break
+    const step = getStep(stepId)
+    if (!step.key || step.key.length === 0) continue
+    if (!answeredKeys.has(step.key)) return stepId
+  }
+  return FREE_TASTE_LAST_STEP_ID
 }
 
 const PHASE_TOKEN_SKIP_STEP_IDS = new Set<StepId>([

@@ -1,50 +1,74 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
+import { getDraftAnsweredKeys } from '@/lib/draft'
 
 /**
  * Shared hook for tracking answered curriculum questions
  * Extracted from EmeraldChat.tsx for reuse in ArtisTalksOrbitRenderer
- * 
- * Returns [answeredKeys, setAnsweredKeys] tuple for optimistic updates
  */
-export function useAnsweredKeys(userId: string | null): [Set<string>, (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void] {
-  const [answeredKeys, setAnsweredKeys] = useState<Set<string>>(new Set())
+export function useAnsweredKeys(
+  userId: string | null
+): [
+  Set<string>,
+  (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void,
+  () => Promise<Set<string>>,
+] {
+  const [answeredKeys, setAnsweredKeysState] = useState<Set<string>>(new Set())
   const supabase = createClient()
+
+  const setAnsweredKeys = useCallback(
+    (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+      setAnsweredKeysState((prev) =>
+        typeof updater === 'function' ? updater(prev) : updater
+      )
+    },
+    []
+  )
+
+  const reloadAnsweredKeys = useCallback(async (): Promise<Set<string>> => {
+    if (!userId) {
+      const draftKeys = getDraftAnsweredKeys()
+      setAnsweredKeysState(draftKeys)
+      return draftKeys
+    }
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) {
+        const empty = new Set<string>()
+        setAnsweredKeysState(empty)
+        return empty
+      }
+
+      const { data: answers, error } = await supabase
+        .from('curriculum_answers')
+        .select('question_key')
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Error loading answered keys:', error)
+        return new Set()
+      }
+
+      const keys = new Set(answers?.map((a) => a.question_key) || [])
+      setAnsweredKeysState(keys)
+      return keys
+    } catch (err) {
+      console.error('Error in reloadAnsweredKeys:', err)
+      return new Set()
+    }
+  }, [userId, supabase])
 
   useEffect(() => {
     if (!userId) {
-      setAnsweredKeys(new Set())
+      setAnsweredKeysState(getDraftAnsweredKeys())
       return
     }
 
-    async function loadAnsweredKeys() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setAnsweredKeys(new Set())
-          return
-        }
-        
-        const { data: answers, error } = await supabase
-          .from('curriculum_answers')
-          .select('question_key')
-          .eq('user_id', user.id)
-        
-        if (error) {
-          console.error('Error loading answered keys:', error)
-          return
-        }
-        
-        const keys = new Set(answers?.map(a => a.question_key) || [])
-        setAnsweredKeys(keys)
-      } catch (err) {
-        console.error('Error in loadAnsweredKeys:', err)
-      }
-    }
-    
-    loadAnsweredKeys()
-    
-    // Subscribe to changes
+    void reloadAnsweredKeys()
+
     const channel = supabase
       .channel('answered-keys')
       .on(
@@ -55,19 +79,15 @@ export function useAnsweredKeys(userId: string | null): [Set<string>, (updater: 
           table: 'curriculum_answers',
         },
         () => {
-          loadAnsweredKeys()
+          void reloadAnsweredKeys()
         }
       )
       .subscribe()
-    
+
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, supabase])
+  }, [userId, supabase, reloadAnsweredKeys])
 
-  // Return both state and setter for optimistic updates
-  return [answeredKeys, setAnsweredKeys]
+  return [answeredKeys, setAnsweredKeys, reloadAnsweredKeys]
 }
-
-
-

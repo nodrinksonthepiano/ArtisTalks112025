@@ -2,7 +2,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Profile } from '@/hooks/useProfile';
 import { CurriculumProgress } from '@/hooks/useCurriculumProgress';
-import { findFirstUnansweredStepInPhase } from '@/lib/curriculum';
+import { findFirstUnansweredStepInPhase, isBeyondFreeTaste } from '@/lib/curriculum';
 
 interface ArtisTalksOrbitRendererProps {
   featuredContentRef: React.RefObject<HTMLDivElement | null>;
@@ -18,6 +18,7 @@ interface ArtisTalksOrbitRendererProps {
   profile?: Profile | null; // ADD: Full profile for colors
   progress: CurriculumProgress; // ADD: Progress for reveal logic
   answeredKeys: Set<string>; // ADD: For finding unanswered steps
+  isAnonymous?: boolean;
 }
 
 const ORBIT_SPEED = 0.3; // natural radians/sec
@@ -36,6 +37,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   profile,
   progress,
   answeredKeys,
+  isAnonymous = false,
 }) => {
   // CRITICAL: Preview config for live token color updates during editing
   // This is set via event from ColorPanel/InlineColorPicker and cleared when profile changes
@@ -447,11 +449,10 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
               e.preventDefault();
               e.stopPropagation();
               const firstUnanswered = findFirstUnansweredStepInPhase(token.id, answeredKeys);
-              if (firstUnanswered) {
-                window.dispatchEvent(new CustomEvent('tokenNavigate', { 
-                  detail: { stepId: firstUnanswered } 
-                }));
-              }
+              if (!firstUnanswered || (isAnonymous && isBeyondFreeTaste(firstUnanswered))) return;
+              window.dispatchEvent(new CustomEvent('tokenNavigate', { 
+                detail: { stepId: firstUnanswered } 
+              }));
             }
           };
           

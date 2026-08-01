@@ -1,13 +1,22 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
+import {
+  getDraftAnswerText,
+  getDraftAnsweredKeys,
+  loadDraft,
+  setDraftCurrentStepId,
+  setDraftProfilePreview,
+  upsertDraftAnswer,
+} from '@/lib/draft'
 import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
+import OtpEmailFlow from '@/components/OtpEmailFlow'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -19,9 +28,13 @@ interface EmeraldChatProps {
   profile?: Profile | null // CRITICAL: Profile prop for inline pickers
   answeredKeys: Set<string> // ADD: Shared answered keys state
   setAnsweredKeys: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void // ADD: Setter for optimistic updates
+  isAnonymous?: boolean
+  onDraftRefresh?: () => void
 }
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys }: EmeraldChatProps) {
+const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
+
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, isAnonymous = false, onDraftRefresh }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -58,6 +71,21 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
+  const [anonymousGateView, setAnonymousGateView] = useState(false)
+
+  const isGated = isAnonymous && isFreeTasteGateReached(answeredKeys)
+  const showGateUI = isGated && anonymousGateView
+
+  const gateEmailPlaceholder = useMemo(() => {
+    const artistName =
+      profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
+    return artistName ? `Enter ${artistName}'s email` : 'Enter your email'
+  }, [profile?.artist_name, answeredKeys])
+
+  const hasUserHistory = fullHistory.some((m) => m.role === 'user')
+  const hideAnonymousInitNav =
+    isAnonymous && currentStepId === 'INIT' && !answeredKeys.has('artist_name')
+  const showNavToolbar = !hideAnonymousInitNav
   
   // Reset the explicit-open flag whenever the step changes, unless the step change
   // itself carried the intent to open the picker (pencil edit on the colors card).
@@ -94,13 +122,22 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // Helper: Find first unanswered question in curriculum flow
   // CRITICAL: Accept optional answeredKeysOverride to use updated keys immediately after state update
   const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT', answeredKeysOverride?: Set<string>): StepId => {
-    // Use override if provided (for immediate updates), otherwise use closure value
     const keysToCheck = answeredKeysOverride || answeredKeys
-    let current: StepId = startFrom
+
+    if (isAnonymous && isFreeTasteGateReached(keysToCheck)) {
+      return FREE_TASTE_LAST_STEP_ID
+    }
+
+    let current: StepId = isAnonymous ? clampStepToFreeTaste(startFrom) : startFrom
     const visited = new Set<StepId>()
     
     while (current !== 'COMPLETE' && !visited.has(current)) {
       visited.add(current)
+
+      if (isAnonymous && isBeyondFreeTaste(current)) {
+        return findFirstUnansweredInFreeTaste(keysToCheck)
+      }
+
       const step = getStep(current)
       
       // CRITICAL: Completion steps (PRE_COMPLETE, PROD_COMPLETE, etc.) are celebrations
@@ -151,7 +188,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     
     return 'COMPLETE'
-  }, [answeredKeys])
+  }, [answeredKeys, isAnonymous])
   
   // Helper: Load answer from fullHistory or database
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
@@ -170,6 +207,17 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     
     // Try 2: Load from database (only if not found in fullHistory)
     if (!step.key) return ''
+    
+    if (isAnonymous) {
+      const draftText = getDraftAnswerText(step.key)
+      if (draftText) {
+        if (isSelectStep(step)) {
+          return resolveSelectValue(step, draftText)
+        }
+        return draftText
+      }
+      return ''
+    }
     
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -197,11 +245,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     
     return ''
-  }, [fullHistory, supabase])
+  }, [fullHistory, supabase, isAnonymous])
   
   // CRITICAL: Update question IMMEDIATELY (synchronous) - no async delay
   // This prevents flash of wrong question (like INIT) during carousel navigation
   const handleEditStep = useCallback(async (stepId: StepId, focusInput: boolean = false) => {
+    if (isAnonymous && isBeyondFreeTaste(stepId)) return
+
+    setAnonymousGateView(false)
     // Clear redo stack when editing (editing is a new action)
     setRedoStack([])
     const step = getStep(stepId)
@@ -252,7 +303,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         inputRef.current?.focus()
       }, 50)
     }
-  }, [history, loadAnswerForStep])
+  }, [history, loadAnswerForStep, isAnonymous])
   
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
@@ -260,6 +311,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const customEvent = e as CustomEvent<{ stepId: StepId }>
       const stepId = customEvent.detail?.stepId
       if (stepId) {
+        if (isAnonymous && isBeyondFreeTaste(stepId)) return
+        setAnonymousGateView(false)
         const step = getStep(stepId)
         setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
         setInput('') // Token jumps target unanswered questions - leftover text from the previous step must not carry over
@@ -273,7 +326,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [onCurrentStepChange])
+  }, [onCurrentStepChange, isAnonymous])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -300,8 +353,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const customEvent = e as CustomEvent<{ stepId: StepId }>
       const stepId = customEvent.detail?.stepId
       if (stepId) {
+        if (isAnonymous && isBeyondFreeTaste(stepId)) return
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
-        // Just update currentStepId to sync chat with carousel
+        setAnonymousGateView(false)
         const step = getStep(stepId)
         setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
@@ -318,21 +372,79 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep])
+  }, [loadAnswerForStep, isAnonymous])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
-    // Only run once on initial mount (when history is empty)
     if (history.length > 0) return
-    
-    // CRITICAL: Set INIT immediately to ensure card appears right away
-    // Don't wait for answeredKeys - it loads asynchronously and causes race conditions
+
+    if (isAnonymous) {
+      const draft = loadDraft()
+      const hasDraftProgress =
+        draft &&
+        (draft.answers.length > 0 ||
+          draft.currentStepId !== 'INIT' ||
+          !!draft.profilePreview.artist_name)
+
+      if (hasDraftProgress && draft) {
+        hasInitializedRef.current = true
+        const draftKeys = getDraftAnsweredKeys()
+
+        if (isFreeTasteGateReached(draftKeys)) {
+          setAnonymousGateView(true)
+          setCurrentStepId(FREE_TASTE_LAST_STEP_ID)
+          if (draft.currentStepId !== FREE_TASTE_LAST_STEP_ID) {
+            setDraftCurrentStepId(FREE_TASTE_LAST_STEP_ID)
+          }
+          const gateMessage = {
+            role: 'assistant' as const,
+            content: ANONYMOUS_GATE_MESSAGE,
+            stepId: FREE_TASTE_LAST_STEP_ID,
+          }
+          setHistory([gateMessage])
+          setFullHistory([gateMessage])
+          return
+        }
+
+        let stepId = clampStepToFreeTaste(draft.currentStepId)
+        if (isBeyondFreeTaste(draft.currentStepId)) {
+          stepId = findFirstUnansweredInFreeTaste(draftKeys)
+          setDraftCurrentStepId(stepId)
+        }
+        const step = getStep(stepId)
+        setCurrentStepId(stepId)
+        const assistantContent = stepId === 'INIT' ? getStep('INIT').question : step.question
+        const stepMessage = {
+          role: 'assistant' as const,
+          content: assistantContent,
+          stepId,
+        }
+        setHistory([stepMessage])
+        setFullHistory([stepMessage])
+
+        if (stepId === 'INIT' && draft.profilePreview.artist_name) {
+          setInput(draft.profilePreview.artist_name)
+          if (onTypingUpdate) {
+            onTypingUpdate(draft.profilePreview.artist_name, 'INIT')
+          }
+        } else if (step.key) {
+          const saved = getDraftAnswerText(step.key)
+          if (saved) setInput(saved)
+        }
+        return
+      }
+    }
+
     const initStep = getStep('INIT')
-    setCurrentStepId('INIT') // Effect at line 55-59 handles notification automatically
-    const initMessage = { role: 'assistant' as const, content: initStep.question, stepId: 'INIT' as StepId }
+    setCurrentStepId('INIT')
+    const initMessage = {
+      role: 'assistant' as const,
+      content: initStep.question,
+      stepId: 'INIT' as StepId,
+    }
     setHistory([initMessage])
-    setFullHistory([initMessage]) // Add to full history too
-  }, [onCurrentStepChange]) // Added onCurrentStepChange to deps
+    setFullHistory([initMessage])
+  }, [onCurrentStepChange, isAnonymous, onTypingUpdate])
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -354,6 +466,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     
     // Skip if already initialized (user is actively progressing through curriculum)
     if (hasInitializedRef.current) return
+
+    if (isAnonymous && isFreeTasteGateReached(answeredKeys)) {
+      hasInitializedRef.current = true
+      return
+    }
     
     // CRITICAL: Only sync on initial load (0 -> N), not when new answers are saved (N -> N+1)
     const currentSize = answeredKeys.size
@@ -395,7 +512,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // This prevents it from overriding manual step advancement
       hasInitializedRef.current = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length]) // answeredKeys.size triggers, but guard prevents re-runs
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -441,13 +558,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   // Live Typing Effect
   useEffect(() => {
-    if (!onProfileUpdate) return
     if (isSelectInputStep) return
     
-    // CRITICAL FIX: Don't update profile if input is empty or we're submitting
-    // This prevents empty strings from overwriting saved values when input is cleared
     if (!input.trim() || isSubmitting) {
-      // Clear any pending debounce timer if input is empty
       if (debounceTimer.current) {
         clearTimeout(debounceTimer.current)
         debounceTimer.current = null
@@ -458,25 +571,33 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
     
     debounceTimer.current = setTimeout(() => {
-      // Double-check we still have a value (user might have cleared it during debounce)
       if (!input.trim()) return
       
-      if (currentStep.key === 'artist_name') {
-        onProfileUpdate({ artist_name: input })
-      } else if (currentStep.key === 'gift_to_world') {
-        onProfileUpdate({ mission_statement: input })
+      if (isAnonymous) {
+        if (currentStep.key === 'artist_name') {
+          setDraftProfilePreview({ artist_name: input })
+          onDraftRefresh?.()
+        } else if (currentStep.key === 'gift_to_world') {
+          setDraftProfilePreview({ mission_statement: input })
+          onDraftRefresh?.()
+        }
+      } else if (onProfileUpdate) {
+        if (currentStep.key === 'artist_name') {
+          onProfileUpdate({ artist_name: input })
+        } else if (currentStep.key === 'gift_to_world') {
+          onProfileUpdate({ mission_statement: input })
+        }
       }
       
-      // Live typing update for carousel card
       if (onTypingUpdate) {
         onTypingUpdate(input, currentStepId)
       }
-    }, 50) // Reduced from 300ms to 50ms for faster card updates
+    }, 50)
 
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId])
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh])
 
   const handleUndo = () => {
     if (previousStepId) {
@@ -513,8 +634,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }
 
   const handleLast = () => {
-    // Go back to previous question (Last button)
     if (previousStepId && !isSubmitting) {
+      setAnonymousGateView(false)
       const prevStep = getStep(previousStepId)
       setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       // Find the step before previous for new previousStepId
@@ -530,8 +651,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }
   
   const handleNext = () => {
-    // Skip current question (Next button) - don't create empty card, just move forward
     if (isSubmitting || currentStepId === 'COMPLETE') return
+    if (isAnonymous && currentStepId === 'INIT') return
+    if (isAnonymous && isFreeTasteGateReached(answeredKeys)) return
+    if (isAnonymous && isBeyondFreeTaste(currentStep.nextStep)) return
     
     const nextStepId = currentStep.nextStep
     const firstUnanswered = findFirstUnansweredStep(nextStepId)
@@ -576,14 +699,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Profile is already updated by picker (live preview)
       // Now save to curriculum_answers when user clicks Send
       // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = isAnonymous
+        ? { data: { user: null } }
+        : await supabase.auth.getUser()
       
-      // Declare variables outside if block so they're available for setTimeout
       let nextStepId = currentStep.nextStep
       let finalStep = getStep(nextStepId)
       
-      if (user && currentStep.key) {
-        // Save colors, logo, and font together
+      if ((user || isAnonymous) && currentStep.key) {
         const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
         const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
         const brandColor = (currentPickerState.colors as any)?.brand_color || profile?.brand_color || primaryColor
@@ -595,73 +718,94 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           : profile?.logo_use_background || false
         const fontFamily = currentPickerState.font?.font_family || profile?.font_family
         
-        // CRITICAL: Save all three keys for backward compatibility and progress tracking
-        // This ensures progress calculation, carousel, and sync all work correctly
-        
-        // 1. Save colors_set (main key)
-        await supabase.from('curriculum_answers').upsert({
-          user_id: user.id,
-          question_key: 'colors_set',
-          answer_data: {
+        if (user) {
+          await supabase.from('curriculum_answers').upsert({
+            user_id: user.id,
+            question_key: 'colors_set',
+            answer_data: {
+              text: 'Colors set',
+              primary: primaryColor,
+              accent: accentColor,
+              brand_color: brandColor,
+              step_id: currentStepId
+            },
+            project_id: null
+          })
+          
+          if (logoUrl) {
+            await supabase.from('curriculum_answers').upsert({
+              user_id: user.id,
+              question_key: 'logo_uploaded',
+              answer_data: {
+                text: 'Logo uploaded',
+                url: logoUrl,
+                logo_use_background: logoUseBackground,
+                step_id: currentStepId
+              },
+              project_id: null
+            })
+          }
+          
+          if (fontFamily) {
+            await supabase.from('curriculum_answers').upsert({
+              user_id: user.id,
+              question_key: 'font_set',
+              answer_data: {
+                text: 'Font set',
+                font: fontFamily,
+                step_id: currentStepId
+              },
+              project_id: null
+            })
+          }
+        } else {
+          upsertDraftAnswer('colors_set', {
             text: 'Colors set',
             primary: primaryColor,
             accent: accentColor,
             brand_color: brandColor,
-            step_id: currentStepId
-          },
-          project_id: null
-        })
-        
-        // 2. Save logo_uploaded (if logo exists)
-        if (logoUrl) {
-          await supabase.from('curriculum_answers').upsert({
-            user_id: user.id,
-            question_key: 'logo_uploaded',
-            answer_data: {
+            step_id: currentStepId,
+          })
+          if (logoUrl) {
+            upsertDraftAnswer('logo_uploaded', {
               text: 'Logo uploaded',
               url: logoUrl,
               logo_use_background: logoUseBackground,
-              step_id: currentStepId
-            },
-            project_id: null
-          })
-        }
-        
-        // 3. Save font_set (if font selected)
-        if (fontFamily) {
-          await supabase.from('curriculum_answers').upsert({
-            user_id: user.id,
-            question_key: 'font_set',
-            answer_data: {
+              step_id: currentStepId,
+            })
+          }
+          if (fontFamily) {
+            upsertDraftAnswer('font_set', {
               text: 'Font set',
               font: fontFamily,
-              step_id: currentStepId
-            },
-            project_id: null
+              step_id: currentStepId,
+            })
+          }
+          setDraftProfilePreview({
+            primary_color: primaryColor ?? undefined,
+            accent_color: accentColor ?? undefined,
+            brand_color: brandColor ?? undefined,
+            logo_url: logoUrl ?? undefined,
+            logo_use_background: logoUseBackground,
+            font_family: fontFamily ?? undefined,
           })
+          onDraftRefresh?.()
         }
         
-        // CRITICAL: Update answeredKeys BEFORE checking completion steps
-        // Create updated Set that includes all keys from this panel (reuse existing logoUrl/fontFamily vars)
         const updatedAnsweredKeys = new Set(answeredKeys)
         updatedAnsweredKeys.add('colors_set')
         if (logoUrl) updatedAnsweredKeys.add('logo_uploaded')
         if (fontFamily) updatedAnsweredKeys.add('font_set')
         setAnsweredKeys(updatedAnsweredKeys)
         
-        // Clear picker state for next step
         setCurrentPickerState({})
         
-        // Advance to next step (update variables declared above)
         nextStepId = currentStep.nextStep
         finalStep = getStep(nextStepId)
         
-        // CRITICAL: If next step is a completion step, check if we should show it
-        // Completion steps should be shown when all questions in their phase are answered
         if (finalStep.id.includes('_COMPLETE')) {
           const phase = finalStep.phase
           if (phase) {
-            // Get all steps in this phase (excluding completion steps)
             const phaseSteps = Object.values(CURRICULUM).filter(s => 
               s.phase === phase && 
               !s.id.includes('_COMPLETE') && 
@@ -669,35 +813,35 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               s.key.length > 0
             )
             
-            // CRITICAL: Use updatedAnsweredKeys (includes current panel keys) not stale answeredKeys
             const allPhaseAnswered = phaseSteps.every(s => updatedAnsweredKeys.has(s.key))
             
             if (!allPhaseAnswered) {
-              // Not all answered - skip to first unanswered question
-              // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
               const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
               nextStepId = firstUnanswered
               finalStep = getStep(nextStepId)
             }
-            // If all answered, keep nextStepId as the completion step
           }
         } else {
-          // Not a completion step - skip to first unanswered question
-          // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
           const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
           nextStepId = firstUnanswered
           finalStep = getStep(nextStepId)
         }
+
+        if (isAnonymous) {
+          if (isBeyondFreeTaste(nextStepId)) {
+            nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
+            finalStep = getStep(nextStepId)
+          }
+          setDraftCurrentStepId(nextStepId)
+        }
       }
       
       setTimeout(() => {
-        // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
-        // Just advance to next step (inline picker will render automatically)
         const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
         setHistory([nextMessage])
         setFullHistory(prev => [...prev, nextMessage])
         setPreviousStepId(currentStepId)
-        setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
+        setCurrentStepId(nextStepId)
       }, 300)
       return
     }
@@ -706,10 +850,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // No input required, just show Continue button
     // Celebration cards disappear immediately when Continue is clicked, next card appears instantly
     if (currentStepId.includes('_COMPLETE') && currentStepId !== 'COMPLETE') {
-      // CRITICAL: Always jump to next unanswered question, even if user edited/swiped back
-      // This ensures flow always moves forward, never backward
-      // CRITICAL: Instant transition - celebration card disappears immediately, next card appears instantly
+      if (isAnonymous && isFreeTasteGateReached(answeredKeys)) return
       const nextStepId = currentStep.nextStep
+      if (isAnonymous && isBeyondFreeTaste(nextStepId)) return
       const firstUnanswered = findFirstUnansweredStep(nextStepId, answeredKeys)
       const finalStep = getStep(firstUnanswered)
       
@@ -759,7 +902,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
     try {
       // 2. Save to Supabase (The Log)
-      const { data: { user } } = await supabase.auth.getUser()
+      const user = isAnonymous ? null : (await supabase.auth.getUser()).data.user
       
       if (user) {
         // Save the answer to the log (use upsert to update existing answer or insert new)
@@ -824,8 +967,27 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
            if (currentStep.key === 'gift_to_world') onProfileUpdate({ mission_statement: answer })
         }
 
-      } else {
-        console.log("No user logged in - skipping DB save.")
+      } else if (isAnonymous && currentStep.key) {
+        upsertDraftAnswer(
+          currentStep.key,
+          isSelectSubmit
+            ? {
+                text: selectedEnum,
+                label: displayAnswer,
+                step_id: currentStepId,
+              }
+            : {
+                text: answer,
+                step_id: currentStepId,
+              }
+        )
+        if (currentStep.key === 'artist_name') {
+          setDraftProfilePreview({ artist_name: answer })
+        }
+        if (currentStep.key === 'gift_to_world') {
+          setDraftProfilePreview({ mission_statement: answer })
+        }
+        onDraftRefresh?.()
       }
 
       // Clear redo stack when user makes a new action (can't redo after new action)
@@ -835,6 +997,22 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // This ensures PRE_COMPLETE check uses the updated Set including the current answer
       const updatedAnsweredKeys = new Set([...answeredKeys, currentStep.key])
       setAnsweredKeys(updatedAnsweredKeys)
+
+      if (isAnonymous && updatedAnsweredKeys.has(FREE_TASTE_LAST_KEY)) {
+        setAnonymousGateView(true)
+        setDraftCurrentStepId(FREE_TASTE_LAST_STEP_ID)
+        const gateMessage = {
+          role: 'assistant' as const,
+          content: ANONYMOUS_GATE_MESSAGE,
+          stepId: FREE_TASTE_LAST_STEP_ID,
+        }
+        setHistory([gateMessage])
+        setFullHistory((prev) => [...prev, gateMessage])
+        setPreviousStepId(currentStepId)
+        setCurrentStepId(FREE_TASTE_LAST_STEP_ID)
+        setIsSubmitting(false)
+        return
+      }
 
       // 3. Move to Next Step
       let nextStepId = currentStep.nextStep
@@ -867,12 +1045,17 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           }
         }
       } else {
-        // Not a completion step - skip to first unanswered question
-        // CRITICAL: Pass updatedAnsweredKeys to use immediately updated keys
         const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
         nextStepId = firstUnanswered
       }
       
+      if (isAnonymous) {
+        if (isBeyondFreeTaste(nextStepId)) {
+          nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
+        }
+        setDraftCurrentStepId(nextStepId === 'COMPLETE' ? 'COMPLETE' : nextStepId)
+      }
+
       const finalStep = getStep(nextStepId)
       
       // CRITICAL: Instant transition - no delay for seamless UX
@@ -929,8 +1112,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       }}
     >
       <div>
-        {/* Current Question OR Inline Picker */}
-        {currentStep && currentStep.question && (
+        {/* Current Question OR Inline Picker OR anonymous gate */}
+        {showGateUI ? (
+          <p
+            className="gold-etched"
+            style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
+          >
+            {ANONYMOUS_GATE_MESSAGE}
+          </p>
+        ) : currentStep && currentStep.question && (
           <>
             {/* Show inline picker if this step triggers a panel AND the artist is actively answering/editing it */}
             {showColorsPicker ? (
@@ -1017,8 +1207,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               </div>
             ) : (
               <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
-                {currentStepId === 'INIT' 
-                  ? "Welcome, My Champion! What is your artist name?"
+                {currentStepId === 'INIT'
+                  ? INIT_WELCOME_HEADLINE
                   : currentStep.question
                 }
               </h1>
@@ -1089,12 +1279,36 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </div>
         )}
         
-        {/* Input Area */}
+        {/* Input Area — gate OTP is separate from curriculum submit */}
+        {showGateUI ? (
+          <div className="w-full">
+            {showNavToolbar && hasUserHistory && (
+              <div className="flex items-center justify-center gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
+                  style={{
+                    color: '#fffacd',
+                    textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
+                    fontFamily: 'Arial, sans-serif',
+                    fontWeight: 'bold',
+                  }}
+                  title="View history"
+                >
+                  <span className="text-xs font-medium">H</span>
+                </button>
+              </div>
+            )}
+            <OtpEmailFlow emailPlaceholder={gateEmailPlaceholder} sendButtonLabel="Send code" />
+          </div>
+        ) : (
       <form onSubmit={handleSubmit} id="artistForm">
         {/* Navigation Buttons - Back/Next/Undo/Redo */}
+        {showNavToolbar && (
         <div className="flex items-center justify-center gap-2 mb-2">
           {/* History Button - View full conversation */}
-          {fullHistory.length > 0 && (
+          {hasUserHistory && (
             <button
               type="button"
               onClick={() => setShowHistory(!showHistory)}
@@ -1131,7 +1345,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )}
           
           {/* Next Button - Skip current question */}
-          {!isSubmitting && currentStepId !== 'COMPLETE' && (
+          {!isSubmitting && currentStepId !== 'COMPLETE' && !(isAnonymous && isGated) && (
             <button
               type="button"
               onClick={handleNext}
@@ -1187,6 +1401,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             </button>
           )}
         </div>
+        )}
 
         {/* CRITICAL: All celebration steps show Continue button instead of input */}
         {/* Celebration cards are temporary - disappear immediately when Continue is clicked */}
@@ -1195,12 +1410,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             <button
               type="button"
               onClick={() => {
-                // CRITICAL: Mark as initialized BEFORE advancing to prevent initialization effect from interfering
+                if (isAnonymous && isFreeTasteGateReached(answeredKeys)) return
                 hasInitializedRef.current = true
-                // CRITICAL: Always jump to next unanswered question, even if user edited/swiped back
-                // This ensures flow always moves forward, never backward
-                // CRITICAL: Instant transition - celebration card disappears immediately, next card appears instantly
                 const nextStepId = currentStep.nextStep
+                if (isAnonymous && isBeyondFreeTaste(nextStepId)) return
                 const firstUnanswered = findFirstUnansweredStep(nextStepId, answeredKeys)
                 const finalStep = getStep(firstUnanswered)
                 const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: firstUnanswered }
@@ -1274,6 +1487,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </>
         )}
       </form>
+        )}
       </div>
     </motion.div>
   )

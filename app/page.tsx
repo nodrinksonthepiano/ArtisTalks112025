@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react'
 import EmeraldChat from "@/components/EmeraldChat";
-import AuthPanel from "@/components/AuthPanel";
 import DataReset from "@/components/DataReset";
 import OrbitPeekCarousel from "@/components/OrbitPeekCarousel";
 import ArtisTalksOrbitRenderer from "@/components/ArtisTalksOrbitRenderer";
@@ -16,17 +15,35 @@ import { useCurriculumProgress } from "@/hooks/useCurriculumProgress";
 import { useCarouselItems } from "@/hooks/useCarouselItems";
 import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
 import { applyLogoBackground } from "@/utils/themeBackground";
-import { StepId, getStep } from "@/lib/curriculum";
+import { loadDraft, getDraftAnsweredKeys, getDraftAnswerText } from '@/lib/draft'
+import { migrateAnonymousDraft } from '@/lib/migrateDraft'
+import { useDraft } from '@/hooks/useDraft'
+import {
+  StepId,
+  FREE_TASTE_LAST_STEP_ID,
+  findFirstUnansweredInFreeTaste,
+  isBeyondFreeTaste,
+  isFreeTasteGateReached,
+} from "@/lib/curriculum";
 
 export default function Home() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [migrating, setMigrating] = useState(false)
   
   // Lifted State: Profile Data
-  const { profile, updateProfile, loading: profileLoading } = useProfile()
+  const { profile, updateProfile, loading: profileLoading } = useProfile(user?.id ?? null)
   
-  // Shared answered keys state (for token navigation and curriculum flow)
+  const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
+  
   const [answeredKeys, setAnsweredKeys] = useAnsweredKeys(user?.id ?? null)
+  
+  const handleDraftRefresh = () => {
+    refreshDraft()
+    if (!user) {
+      setAnsweredKeys(getDraftAnsweredKeys())
+    }
+  }
   
   // Curriculum Progress (single source of truth)
   // CRITICAL: Pass answeredKeys for immediate progress updates (coins fill as user progresses)
@@ -74,7 +91,7 @@ export default function Home() {
   const isUserSwipeRef = useRef<boolean>(false)
   
   // Carousel items from curriculum answers + current question card
-  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode)
+  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode, answeredKeys)
   
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
@@ -127,6 +144,8 @@ export default function Home() {
       const customEvent = e as CustomEvent<{ stepId: StepId; focusInput?: boolean; cardIndex?: number }>
       const stepId = customEvent.detail?.stepId
       if (!stepId) return
+
+      if (!user && isBeyondFreeTaste(stepId)) return
       
       // CRITICAL: Enter edit mode - set activeStepId to the card being edited
       setActiveStepId(stepId)
@@ -164,6 +183,8 @@ export default function Home() {
       const customEvent = e as CustomEvent<{ stepId: StepId; cardIndex?: number }>
       const stepId = customEvent.detail?.stepId
       if (!stepId) return
+
+      if (!user && isBeyondFreeTaste(stepId)) return
       
       // CRITICAL: Navigation is NOT editing - swiping away abandons any in-progress edit.
       // Without this, edit mode stuck ON after pencil+swipe and the carousel froze
@@ -196,18 +217,35 @@ export default function Home() {
     }
   }, [carouselItems])
 
-  // CRITICAL: Clear activeStepId when user logs out
-  // Don't set INIT on login - let EmeraldChat set it via onCurrentStepChange when typing starts
-  // This matches the "surprise" behavior - no card/halo until user starts typing
+  const prevUserRef = useRef<any>(undefined)
+
+  // Clear funnel state on logout only — not on initial anonymous load
   useEffect(() => {
-    if (!user) {
-      // Clear when user logs out
+    const hadUser = prevUserRef.current != null
+    if (hadUser && !user) {
       setActiveStepId(null)
       setIsEditMode(false)
       prevQuestionRef.current = null
     }
-    // Don't set INIT on login - EmeraldChat will set it when user starts typing
+    prevUserRef.current = user
   }, [user])
+
+  // Restore anonymous draft step on load
+  useEffect(() => {
+    if (!user && hydrated) {
+      const saved = loadDraft()
+      if (saved?.currentStepId) {
+        const draftKeys = getDraftAnsweredKeys()
+        let stepId = saved.currentStepId
+        if (isFreeTasteGateReached(draftKeys) || isBeyondFreeTaste(stepId)) {
+          stepId = isFreeTasteGateReached(draftKeys)
+            ? FREE_TASTE_LAST_STEP_ID
+            : findFirstUnansweredInFreeTaste(draftKeys)
+        }
+        setActiveStepId(stepId)
+      }
+    }
+  }, [user, hydrated])
   
   // Temporary preview state for live background updates (unified for logo + colors)
   const [previewOverrides, setPreviewOverrides] = useState<{
@@ -264,23 +302,70 @@ export default function Home() {
   const haloContainerRef = useRef<HTMLDivElement>(null) // Separate container for halo (below mission, above FeaturedContent)
   const chatRef = useRef<HTMLDivElement>(null)
   const isOrbitAnimationPaused = useRef(false)
+  const establishInFlightRef = useRef(false)
+  const migrationPromiseRef = useRef<Promise<void> | null>(null)
+
+  const establishSession = async (nextUser: any) => {
+    if (establishInFlightRef.current) return
+    establishInFlightRef.current = true
+
+    try {
+      if (!nextUser) {
+        setUser(null)
+        setMigrating(false)
+        setLoading(false)
+        return
+      }
+
+      const draftToMigrate = loadDraft()
+      const needsMigration =
+        draftToMigrate &&
+        (draftToMigrate.answers.length > 0 ||
+          draftToMigrate.profilePreview.artist_name ||
+          draftToMigrate.profilePreview.mission_statement)
+
+      const draftKeysBeforeMigrate = getDraftAnsweredKeys()
+      const continueAfterFreeTaste = isFreeTasteGateReached(draftKeysBeforeMigrate)
+
+      if (needsMigration) {
+        setMigrating(true)
+        try {
+          if (!migrationPromiseRef.current) {
+            migrationPromiseRef.current = migrateAnonymousDraft(nextUser.id)
+              .then(() => {
+                refreshDraft()
+              })
+              .finally(() => {
+                migrationPromiseRef.current = null
+              })
+          }
+          await migrationPromiseRef.current
+          if (continueAfterFreeTaste) {
+            setActiveStepId('CURRENT_FOCUS_PILLAR')
+          }
+        } catch (err) {
+          console.error('Draft migration failed:', err)
+        } finally {
+          setMigrating(false)
+        }
+      }
+
+      setUser(nextUser)
+      setLoading(false)
+    } finally {
+      establishInFlightRef.current = false
+    }
+  }
 
   useEffect(() => {
     const supabase = createClient()
 
-    // 1. Check active session on load
-    async function checkUser() {
-      const { data: { session } } = await supabase.auth.getSession()
-      setUser(session?.user ?? null)
-      setLoading(false)
-    }
-
-    checkUser()
-
-    // 2. Listen for changes (login/logout)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+        void establishSession(session?.user ?? null)
+      } else if (event === 'SIGNED_OUT') {
+        void establishSession(null)
+      }
     })
 
     return () => subscription.unsubscribe()
@@ -292,9 +377,97 @@ export default function Home() {
     return { ...profile, ...previewOverrides } as Profile | null
   }, [profile, previewOverrides])
 
+  const anonymousChatProfile = useMemo((): Profile | null => {
+    if (user || !draft) return null
+    const preview = draft.profilePreview
+    return {
+      id: 'anonymous',
+      artist_name: preview.artist_name ?? null,
+      mission_statement: preview.mission_statement ?? null,
+      email: null,
+      primary_color: preview.primary_color ?? null,
+      accent_color: preview.accent_color ?? null,
+      brand_color: preview.brand_color ?? null,
+      font_family: preview.font_family ?? null,
+      logo_url: preview.logo_url ?? null,
+      logo_use_background: preview.logo_use_background ?? null,
+    }
+  }, [user, draft])
+
+  const chatProfile = useMemo(() => {
+    if (user) return mergedProfile
+    if (!anonymousChatProfile) return null
+    return { ...anonymousChatProfile, ...previewOverrides } as Profile
+  }, [user, mergedProfile, anonymousChatProfile, previewOverrides])
+
+  const handleAnonymousProfileUpdate = async (updates: Partial<Profile>) => {
+    updateProfilePreview({
+      artist_name: updates.artist_name,
+      mission_statement: updates.mission_statement,
+      primary_color: updates.primary_color,
+      accent_color: updates.accent_color,
+      brand_color: updates.brand_color,
+      font_family: updates.font_family,
+      logo_url: updates.logo_url,
+      logo_use_background: updates.logo_use_background,
+    })
+    setPreviewOverrides((prev) => ({
+      ...prev,
+      primary_color: updates.primary_color ?? prev?.primary_color,
+      accent_color: updates.accent_color ?? prev?.accent_color,
+      brand_color: updates.brand_color ?? prev?.brand_color,
+      logo_url: updates.logo_url ?? prev?.logo_url,
+      logo_use_background: updates.logo_use_background ?? prev?.logo_use_background,
+    }))
+    handleDraftRefresh()
+  }
+
+  const anonymousLiveName =
+    !user && hydrated
+      ? activeStepId === 'INIT'
+        ? currentTypingInput
+        : draft?.profilePreview?.artist_name || getDraftAnswerText('artist_name') || ''
+      : ''
+
+  const showCarouselStage = (() => {
+    if (activeStepId === 'INIT') {
+      return currentTypingInput.length > 0 || (carouselItems && carouselItems.length >= 1)
+    }
+    return activeStepId || (carouselItems && carouselItems.length >= 1)
+  })()
+
+  const emeraldChatProps = {
+    onProfileUpdate: user ? updateProfile : handleAnonymousProfileUpdate,
+    onTriggerPanel: setActivePanel,
+    onTypingUpdate: (input: string, stepId: StepId) => {
+      setCurrentTypingInput(input)
+      if (activeStepId !== stepId) {
+        console.warn('Typing stepId mismatch:', { activeStepId, stepId })
+      }
+    },
+    onCurrentStepChange: (stepId: StepId) => {
+      if (isEditMode && stepId !== activeStepId) {
+        setIsEditMode(false)
+      }
+      setActiveStepId(stepId)
+    },
+    onSubmitCard: () => {
+      setCurrentTypingInput('')
+      if (isEditMode) {
+        setIsEditMode(false)
+      }
+    },
+    profile: chatProfile,
+    answeredKeys,
+    setAnsweredKeys,
+    isAnonymous: !user,
+    onDraftRefresh: handleDraftRefresh,
+  }
+
   // Get current primary color for halo (Zeyoda pattern: livePrimaryColor || config || default)
   // In Zeyoda: currentPrimaryColor = livePrimaryColor || artistConfig?.theme?.primaryColor || '#0a1a3b'
-  const currentPrimaryColor = mergedProfile?.primary_color || mergedProfile?.brand_color || profile?.primary_color || profile?.brand_color || '#0a0a0a'
+  const currentPrimaryColor =
+    chatProfile?.primary_color || chatProfile?.brand_color || '#0a0a0a'
 
   // Apply logo background when profile or preview changes (Zeyoda pattern)
   // Debounced to prevent glitching during typing
@@ -355,23 +528,26 @@ export default function Home() {
     }
   }, [mergedProfile, previewOverrides, user])
 
-  if (loading) {
-    // Simple loading spinner while checking auth
+  if (loading || migrating || (user && profileLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-emerald-500">
-        <div className="animate-pulse">Loading Sanctuary...</div>
+        <div className="animate-pulse">
+          {migrating ? 'Saving your progress...' : 'Loading Sanctuary...'}
+        </div>
       </div>
     )
   }
+
+  const loggedInReady = Boolean(user) && !migrating
 
   return (
     <div 
       className="flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
     >
-      {user && <DataReset />}
+      <DataReset isAnonymous={!user} />
       <main className={`app-main ${!user ? 'login-view' : ''}`}>
         <div className="text-center">
-          {user ? (
+          {loggedInReady ? (
             <>
               <h1 
                 className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-1 cursor-pointer hover:opacity-80 transition-opacity" 
@@ -409,17 +585,7 @@ export default function Home() {
               {/* Render stage when question is active OR when we have answered items */}
               {/* CRITICAL: INIT is special - only render when typing has started (surprise moment) */}
               {/* Gate by activeStepId (single source of truth) not carouselItems.length */}
-              {(() => {
-                // CRITICAL: INIT is special for FRESH users - only render when typing has
-                // started (the "surprise" moment). A returning artist who swipes back to
-                // their answered name card also has activeStepId === 'INIT'; hiding the
-                // stage then made the whole carousel vanish mid-swipe.
-                if (activeStepId === 'INIT') {
-                  return currentTypingInput.length > 0 || (carouselItems && carouselItems.length >= 1)
-                }
-                // For all other cases: Render if activeStepId is set OR answered items exist
-                return activeStepId || (carouselItems && carouselItems.length >= 1)
-              })() ? (
+              {showCarouselStage ? (
                 <div 
                   ref={haloContainerRef}
                   className="relative w-full max-w-5xl mx-auto"
@@ -472,6 +638,7 @@ export default function Home() {
                     profile={profile}
                     progress={progress}
                     answeredKeys={answeredKeys}
+                    isAnonymous={false}
                   />
                 </div>
               ) : null}
@@ -480,10 +647,89 @@ export default function Home() {
         </div>
         
         {/* Band C: Action section - OUTSIDE text-center, matches Zeyoda structure */}
-        <div className="action-section text-center" style={{ width: '100%', maxWidth: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: !user ? '100vh' : 'auto' }}>
+        <div
+          className="action-section text-center"
+          style={{
+            width: '100%',
+            maxWidth: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: !user ? '100vh' : 'auto',
+          }}
+        >
           {!user && (
-            <div id="login-prompts-container" className="login-prompts" style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              <AuthPanel />
+            <div
+              id="anonymous-funnel"
+              className="w-full flex flex-col items-center justify-center"
+              style={{ width: '100%' }}
+            >
+              {anonymousLiveName.length > 0 && (
+                <h1
+                  className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-4 transition-opacity"
+                  style={{
+                    fontFamily: chatProfile?.font_family || 'Geist Sans, sans-serif',
+                    color: chatProfile?.accent_color || chatProfile?.brand_color || '#10b981',
+                    maxWidth: '85%',
+                    margin: '0 auto',
+                    lineHeight: '1.1',
+                  }}
+                >
+                  {anonymousLiveName}
+                </h1>
+              )}
+
+              {showCarouselStage && (
+                <div
+                  ref={haloContainerRef}
+                  className="relative w-full max-w-5xl mx-auto"
+                  style={{ marginTop: '8px', marginBottom: '16px', overflow: 'visible' }}
+                >
+                  <OvalGlowBackdrop
+                    containerRef={featuredContentRef}
+                    primaryColor={currentPrimaryColor}
+                    intensity={0.95}
+                    zIndex={1}
+                  />
+                  <OrbitPeekCarousel
+                    items={carouselItems}
+                    index={carouselIndex}
+                    onIndexChange={(idx) => {
+                      isUserSwipeRef.current = true
+                      setCarouselIndex(idx)
+                      carouselIndexRef.current = idx
+                      const swipedItem = carouselItems[idx]
+                      if (swipedItem?.stepId) {
+                        window.dispatchEvent(
+                          new CustomEvent('cardNavigate', {
+                            detail: { stepId: swipedItem.stepId, cardIndex: idx },
+                          })
+                        )
+                      }
+                    }}
+                    containerRef={featuredContentRef}
+                    theme={{
+                      fontFamily: chatProfile?.font_family || undefined,
+                      primaryColor: chatProfile?.primary_color || chatProfile?.brand_color || undefined,
+                      accentColor: chatProfile?.accent_color || chatProfile?.brand_color || undefined,
+                    }}
+                  />
+                  <ArtisTalksOrbitRenderer
+                    featuredContentRef={featuredContentRef}
+                    chatRef={chatRef}
+                    isOrbitAnimationPaused={isOrbitAnimationPaused}
+                    phaseTokens={phaseTokens}
+                    profile={chatProfile}
+                    progress={progress}
+                    answeredKeys={answeredKeys}
+                    isAnonymous
+                  />
+                </div>
+              )}
+
+              <div ref={chatRef} className="w-full flex justify-center">
+                <EmeraldChat {...emeraldChatProps} />
+              </div>
             </div>
           )}
         </div>
@@ -599,44 +845,9 @@ export default function Home() {
         
         {/* Chat input container - Minimal spacing, seamless from landing page (Zeyoda pattern: 16px margin) */}
         <div className="flex justify-center" style={{ marginTop: '16px', marginBottom: '16px' }}>
-          {user && (
+          {loggedInReady && (
             <div ref={chatRef} className="w-full flex justify-center">
-              <EmeraldChat 
-                  onProfileUpdate={updateProfile}
-                  onTriggerPanel={setActivePanel}
-                  onTypingUpdate={(input, stepId) => {
-                    setCurrentTypingInput(input)
-                    // CRITICAL: activeStepId is already set (by cardEdit or onCurrentStepChange)
-                    // Just ensure it matches - if not, something is wrong
-                    if (activeStepId !== stepId) {
-                      console.warn('Typing stepId mismatch:', { activeStepId, stepId })
-                    }
-                  }}
-                  onCurrentStepChange={(stepId) => {
-                    // CRITICAL: EmeraldChat's currentStepId is the authoritative step.
-                    // Always follow it - keeping a gate here is what let the two states drift
-                    // (e.g. token click while editing moved chat but froze the page/carousel).
-                    // If chat moved to a DIFFERENT step while editing, the edit was abandoned.
-                    if (isEditMode && stepId !== activeStepId) {
-                      setIsEditMode(false)
-                    }
-                    setActiveStepId(stepId)
-                  }}
-                  onSubmitCard={(answer, stepId) => {
-                    // Clear typing state
-                    setCurrentTypingInput('')
-                    
-                    // CRITICAL: If in edit mode, exit edit mode and transition to progress mode
-                    if (isEditMode) {
-                      setIsEditMode(false)
-                      // activeStepId will be updated by handleSubmit in EmeraldChat
-                      // which calls onCurrentStepChange with next unanswered step
-                    }
-                  }}
-                  profile={profile}
-                  answeredKeys={answeredKeys}
-                  setAnsweredKeys={setAnsweredKeys}
-                />
+              <EmeraldChat {...emeraldChatProps} />
             </div>
           )}
         </div>

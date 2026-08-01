@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { getPhaseCandidateKeys } from '@/lib/curriculum'
+import { getDraftAnswerText, loadDraft } from '@/lib/draft'
 
 export interface CurriculumProgress {
-  preProgress: number    // 0-100 (calculated dynamically from curriculum)
-  proProgress: number    // 0-100 (calculated dynamically from curriculum)
-  postProgress: number   // 0-100 (calculated dynamically from curriculum)
-  loopProgress: number   // 0-100 (calculated dynamically from curriculum - maps to 'legacy' phase)
+  preProgress: number
+  proProgress: number
+  postProgress: number
+  loopProgress: number
   currentModule?: {
     id: string
     title: string
@@ -15,7 +16,26 @@ export interface CurriculumProgress {
   }
 }
 
-export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<string>): CurriculumProgress {
+function computeProgressFromKeys(answeredKeysArray: string[]): Omit<CurriculumProgress, 'currentModule'> {
+  const calculatePhaseProgress = (phase: 'pre' | 'prod' | 'post' | 'legacy'): number => {
+    const candidateKeys = getPhaseCandidateKeys(phase)
+    if (candidateKeys.length === 0) return 0
+    const completedKeys = candidateKeys.filter((key) => answeredKeysArray.includes(key)).length
+    return Math.round((completedKeys / candidateKeys.length) * 100)
+  }
+
+  return {
+    preProgress: calculatePhaseProgress('pre'),
+    proProgress: calculatePhaseProgress('prod'),
+    postProgress: calculatePhaseProgress('post'),
+    loopProgress: calculatePhaseProgress('legacy'),
+  }
+}
+
+export function useCurriculumProgress(
+  userId: string | null,
+  answeredKeys?: Set<string>
+): CurriculumProgress {
   const [progress, setProgress] = useState<CurriculumProgress>({
     preProgress: 0,
     proProgress: 0,
@@ -26,26 +46,31 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
 
   useEffect(() => {
     if (!userId) {
-      setProgress({
-        preProgress: 0,
-        proProgress: 0,
-        postProgress: 0,
-        loopProgress: 0,
-      })
+      const keys = answeredKeys ? Array.from(answeredKeys).filter((k) => k && k.length > 0) : []
+      const phaseProgress = computeProgressFromKeys(keys)
+
+      let currentModule: CurriculumProgress['currentModule'] | undefined
+      if (keys.includes('gift_to_world')) {
+        const giftText = getDraftAnswerText('gift_to_world')
+        currentModule = {
+          id: 'gift-to-world',
+          title: 'Your Gift to the World',
+          content: giftText,
+          type: 'pre',
+        }
+      }
+
+      setProgress({ ...phaseProgress, currentModule })
       return
     }
 
     async function loadProgress() {
       try {
-        // CRITICAL: Use optimistic answeredKeys Set if provided (for immediate updates)
-        // Otherwise query database (for initial load or when subscription fires)
         let answeredKeysArray: string[] = []
         let answers: any[] | null = null
-        
+
         if (answeredKeys && answeredKeys.size > 0) {
-          // Use optimistic Set - filter out empty strings
-          answeredKeysArray = Array.from(answeredKeys).filter(k => k && k.length > 0)
-          // Still query for answer_data (needed for gift_to_world module)
+          answeredKeysArray = Array.from(answeredKeys).filter((k) => k && k.length > 0)
           const { data: dbAnswers } = await supabase
             .from('curriculum_answers')
             .select('question_key, answer_data, created_at')
@@ -53,7 +78,6 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
             .order('created_at', { ascending: false })
           answers = dbAnswers || null
         } else {
-          // Fallback to database query
           const { data: dbAnswers, error } = await supabase
             .from('curriculum_answers')
             .select('question_key, answer_data, created_at')
@@ -66,41 +90,17 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
           }
 
           answers = dbAnswers || null
-          // Extract question_key values - filter out empty strings
-          answeredKeysArray = answers?.map(a => a.question_key).filter(k => k && k.length > 0) || []
+          answeredKeysArray = answers?.map((a) => a.question_key).filter((k) => k && k.length > 0) || []
         }
 
-        // CRITICAL: Denominators come from the V2 spine candidates only
-        // (getPhaseCandidateKeys) - the same set token-jump navigation uses.
-        // Counting all CURRICULUM entries inflated denominators with compatibility
-        // stubs (e.g. PROD could never pass ~43% even fully answered) and required
-        // a hardcoded PRE=100% hack that lied in the other direction.
-        const calculatePhaseProgress = (phase: 'pre' | 'prod' | 'post' | 'legacy'): number => {
-          const candidateKeys = getPhaseCandidateKeys(phase)
-          if (candidateKeys.length === 0) return 0
+        const phaseProgress = computeProgressFromKeys(answeredKeysArray)
 
-          const completedKeys = candidateKeys.filter(key => answeredKeysArray.includes(key)).length
-          return Math.round((completedKeys / candidateKeys.length) * 100)
-        }
-
-        // Calculate progress dynamically for each phase
-        const preProgress = calculatePhaseProgress('pre')
-        const proProgress = calculatePhaseProgress('prod')
-        const postProgress = calculatePhaseProgress('post')
-        const loopProgress = calculatePhaseProgress('legacy')
-
-        // Determine current module based on progress
         let currentModule: CurriculumProgress['currentModule'] | undefined
-        
-        // If they've answered gift_to_world, create the first tile
-        // Use first match (which is now latest due to DESC ordering)
         if (answeredKeysArray.includes('gift_to_world')) {
-          // Query for gift_to_world answer_data if not already loaded
           let giftAnswer: any = null
           if (answers) {
             giftAnswer = answers.find((a: any) => a.question_key === 'gift_to_world')
           } else {
-            // Need to query for answer_data
             const { data: giftData } = await supabase
               .from('curriculum_answers')
               .select('answer_data')
@@ -112,22 +112,15 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
             giftAnswer = giftData
           }
           const giftText = giftAnswer?.answer_data?.text || ''
-          
           currentModule = {
             id: 'gift-to-world',
             title: 'Your Gift to the World',
             content: giftText,
-            type: 'pre'
+            type: 'pre',
           }
         }
 
-        setProgress({
-          preProgress,
-          proProgress,
-          postProgress,
-          loopProgress,
-          currentModule,
-        })
+        setProgress({ ...phaseProgress, currentModule })
       } catch (err) {
         console.error('Error in useCurriculumProgress:', err)
       }
@@ -135,7 +128,6 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
 
     loadProgress()
 
-    // Subscribe to changes in curriculum_answers
     const channel = supabase
       .channel(`curriculum-progress-${userId}`)
       .on(
@@ -155,8 +147,7 @@ export function useCurriculumProgress(userId: string | null, answeredKeys?: Set<
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, supabase, answeredKeys]) // Watch answeredKeys for immediate updates
+  }, [userId, supabase, answeredKeys])
 
   return progress
 }
-

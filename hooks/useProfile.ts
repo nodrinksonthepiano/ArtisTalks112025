@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 
 export interface Profile {
@@ -14,112 +14,101 @@ export interface Profile {
   brand_color?: string | null
 }
 
-export function useProfile() {
+export function useProfile(userId: string | null) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
-  // 1. Load Profile on Mount
-  useEffect(() => {
-    async function loadProfile() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          setLoading(false)
-          return
-        }
-
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-
-        if (data) {
-          console.log("✅ Profile loaded from DB:", data)
-          setProfile(data)
-        } else {
-          console.log("⚠️ No profile in DB, using default.")
-          setProfile({
-            id: user.id,
-            artist_name: null,
-            mission_statement: null,
-            email: user.email || null
-          })
-        }
-      } catch (e) {
-        console.error('Profile load error:', e)
-      } finally {
-        setLoading(false)
-      }
+  const reloadProfile = useCallback(async () => {
+    if (!userId) {
+      setProfile(null)
+      setLoading(false)
+      return null
     }
 
-    loadProfile()
-  }, [])
-
-  // 2. Optimistic Update Function
-  const updateProfile = async (updates: Partial<Profile>) => {
-    console.log("🔄 updateProfile called with:", updates)
-
-    // CRITICAL FIX: Handle null profile case (brand new user)
-    // If profile is null, we must create a new profile object instead of staying null
-    if (!profile) {
-       const { data: { user } } = await supabase.auth.getUser()
-       if (!user) {
-         console.warn("⚠️ Cannot update profile: no user logged in")
-         return
-       }
-       
-       // Create new profile object with defaults merged with updates
-       const newProfile: Profile = {
-            id: user.id,
-            artist_name: null,
-            mission_statement: null,
-            email: user.email || null,
-            ...updates  // Updates override defaults
-       }
-       
-       // Update state immediately (optimistic)
-       setProfile(newProfile)
-       
-       // Save to database
-       try {
-            const { error } = await supabase.from('profiles').upsert(newProfile)
-            if (error) throw error
-            console.log("✅ Saved NEW profile to DB:", newProfile)
-       } catch (err) { 
-         console.error("❌ Save NEW failed:", err)
-         // On error, we could revert state, but for now we keep optimistic update
-       }
-       return
-    }
-
-    // Normal Case: Profile exists, merge updates
-    const newProfile = { ...profile, ...updates }
-    
-    // Update state immediately (optimistic)
-    setProfile(newProfile)
-
-    // Save to database
+    setLoading(true)
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('profiles')
-        .upsert({ 
-          id: profile.id,
-          ...updates
-        })
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()
 
       if (error) throw error
-      console.log("✅ Saved UPDATE to DB")
+
+      if (data) {
+        setProfile(data as Profile)
+        return data as Profile
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const fallback: Profile = {
+        id: userId,
+        artist_name: null,
+        mission_statement: null,
+        email: user?.email || null,
+      }
+      setProfile(fallback)
+      return fallback
+    } catch (e) {
+      console.error('Profile load error:', e)
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [userId, supabase])
+
+  useEffect(() => {
+    void reloadProfile()
+  }, [reloadProfile])
+
+  const updateProfile = async (updates: Partial<Profile>) => {
+    if (!userId) {
+      console.warn('⚠️ Cannot update profile: no user logged in')
+      return
+    }
+
+    if (!profile) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const newProfile: Profile = {
+        id: userId,
+        artist_name: null,
+        mission_statement: null,
+        email: user?.email || null,
+        ...updates,
+      }
+      setProfile(newProfile)
+      try {
+        const { error } = await supabase.from('profiles').upsert(newProfile)
+        if (error) throw error
+      } catch (err) {
+        console.error('❌ Save NEW failed:', err)
+      }
+      return
+    }
+
+    const newProfile = { ...profile, ...updates }
+    setProfile(newProfile)
+
+    try {
+      const { error } = await supabase.from('profiles').upsert({
+        id: profile.id,
+        ...updates,
+      })
+      if (error) throw error
     } catch (err) {
-      console.error("❌ Save UPDATE failed:", err)
-      // On error, we could revert to previous state, but for now we keep optimistic update
+      console.error('❌ Save UPDATE failed:', err)
     }
   }
 
   return {
     profile,
     loading,
-    updateProfile
+    updateProfile,
+    reloadProfile,
   }
 }
