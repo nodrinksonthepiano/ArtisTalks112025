@@ -16,7 +16,9 @@ import {
 } from '@/lib/draft'
 import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
+import LivingAffirmation from '@/components/LivingAffirmation'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
+import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -81,6 +83,30 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
     return artistName ? `Enter ${artistName}'s email` : 'Enter your email'
   }, [profile?.artist_name, answeredKeys])
+
+  /** Gate-only Living Affirmation — derived from exact draft answers; no persistence. */
+  const livingAffirmationText = useMemo(() => {
+    if (!showGateUI) return ''
+    return assembleLivingAffirmation({
+      artist_name: getDraftAnswerText('artist_name'),
+      genre_associations: getDraftAnswerText('genre_associations'),
+      business_type_products_services: getDraftAnswerText('business_type_products_services'),
+      known_for_expression: getDraftAnswerText('known_for_expression'),
+      known_for_legacy: getDraftAnswerText('known_for_legacy'),
+    })
+  }, [showGateUI, answeredKeys])
+
+  /** BUSINESS_OFFERING input hint only — display copy; curriculum question untouched. */
+  const stepInputPlaceholder = useMemo(() => {
+    if (currentStep.key !== 'business_type_products_services') {
+      return getStepPlaceholder(currentStep)
+    }
+    const artistName =
+      profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
+    return artistName
+      ? `What products or services will you offer? Where is ${artistName}'s first dollar made?`
+      : 'What products or services will you offer? Where is your first dollar made?'
+  }, [currentStep, profile?.artist_name, answeredKeys])
 
   const hasUserHistory = fullHistory.some((m) => m.role === 'user')
   const hideAnonymousInitNav =
@@ -1114,12 +1140,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       <div>
         {/* Current Question OR Inline Picker OR anonymous gate */}
         {showGateUI ? (
-          <p
-            className="gold-etched"
-            style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
-          >
-            {ANONYMOUS_GATE_MESSAGE}
-          </p>
+          <>
+            <LivingAffirmation text={livingAffirmationText} />
+            <p
+              className="gold-etched"
+              style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
+            >
+              {ANONYMOUS_GATE_MESSAGE}
+            </p>
+          </>
         ) : currentStep && currentStep.question && (
           <>
             {/* Show inline picker if this step triggers a panel AND the artist is actively answering/editing it */}
@@ -1439,7 +1468,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={getStepPlaceholder(currentStep)}
+                placeholder={stepInputPlaceholder}
                 disabled={currentStepId === 'COMPLETE' || isSubmitting}
                 className="email-input"
                 autoFocus
