@@ -15,8 +15,12 @@ import { useCurriculumProgress } from "@/hooks/useCurriculumProgress";
 import { useCarouselItems } from "@/hooks/useCarouselItems";
 import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
 import { applyLogoBackground } from "@/utils/themeBackground";
-import { loadDraft, getDraftAnsweredKeys, getDraftAnswerText } from '@/lib/draft'
+import { loadDraft, getDraftAnsweredKeys, getDraftAnswerText, clearDraft } from '@/lib/draft'
 import { migrateAnonymousDraft } from '@/lib/migrateDraft'
+import {
+  clearReturningClaimMarker,
+  hasReturningClaimMarker,
+} from '@/lib/returningClaim'
 import { useDraft } from '@/hooks/useDraft'
 import {
   StepId,
@@ -326,8 +330,14 @@ export default function Home() {
 
       const draftKeysBeforeMigrate = getDraftAnsweredKeys()
       const continueAfterFreeTaste = isFreeTasteGateReached(draftKeysBeforeMigrate)
+      const isReturningClaim = hasReturningClaimMarker()
 
-      if (needsMigration) {
+      if (isReturningClaim) {
+        // Returning claimed-name login — never migrate anonymous draft into this account
+        clearDraft()
+        clearReturningClaimMarker()
+        refreshDraft()
+      } else if (needsMigration) {
         setMigrating(true)
         try {
           if (!migrationPromiseRef.current) {

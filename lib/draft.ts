@@ -104,3 +104,21 @@ export function getDraftAnswerText(question_key: string): string {
   const text = typeof data.text === 'string' ? data.text : ''
   return label || text
 }
+
+/**
+ * Clear only the attempted artist_name answer + profile preview name.
+ * Used when a claimed name is rejected locally ("Use a different artist name").
+ * No Supabase writes.
+ */
+export function clearDraftArtistNameAttempt(): void {
+  if (typeof window === 'undefined') return
+  const draft = loadDraft()
+  if (!draft) return
+
+  draft.answers = draft.answers.filter((a) => a.question_key !== 'artist_name')
+  if (draft.profilePreview) {
+    draft.profilePreview = { ...draft.profilePreview, artist_name: null }
+  }
+  draft.currentStepId = 'INIT'
+  saveDraft(draft)
+}

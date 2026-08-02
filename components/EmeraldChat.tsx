@@ -13,12 +13,18 @@ import {
   setDraftCurrentStepId,
   setDraftProfilePreview,
   upsertDraftAnswer,
+  clearDraftArtistNameAttempt,
 } from '@/lib/draft'
 import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
 import LivingAffirmation from '@/components/LivingAffirmation'
+import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
+import {
+  clearReturningClaimMarker,
+  setReturningClaimMarker,
+} from '@/lib/returningClaim'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -74,9 +80,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
   const [anonymousGateView, setAnonymousGateView] = useState(false)
+  const [claimedGateView, setClaimedGateView] = useState(false)
+  const [claimedArtistName, setClaimedArtistName] = useState('')
+  const [claimError, setClaimError] = useState('')
 
   const isGated = isAnonymous && isFreeTasteGateReached(answeredKeys)
-  const showGateUI = isGated && anonymousGateView
+  const showGateUI = isGated && anonymousGateView && !claimedGateView
+  const showClaimedGate = isAnonymous && claimedGateView && claimedArtistName.length > 0
 
   const gateEmailPlaceholder = useMemo(() => {
     const artistName =
@@ -585,6 +595,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // Live Typing Effect
   useEffect(() => {
     if (isSelectInputStep) return
+    if (claimedGateView) return
     
     if (!input.trim() || isSubmitting) {
       if (debounceTimer.current) {
@@ -623,7 +634,35 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh])
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh, claimedGateView])
+
+  // Keep portal headline on the claimed name while the sanctuary gate is open
+  useEffect(() => {
+    if (!claimedGateView || !claimedArtistName) return
+    onTypingUpdate?.(claimedArtistName, 'INIT')
+  }, [claimedGateView, claimedArtistName, onTypingUpdate])
+
+  const handleUseDifferentArtistName = () => {
+    clearReturningClaimMarker()
+    clearDraftArtistNameAttempt()
+    setClaimedGateView(false)
+    setClaimedArtistName('')
+    setClaimError('')
+    setAnonymousGateView(false)
+    setAnsweredKeys((prev) => {
+      const next = new Set(prev)
+      next.delete('artist_name')
+      return next
+    })
+    setCurrentStepId('INIT')
+    setPreviousStepId(null)
+    setInput('')
+    setHistory([])
+    setFullHistory([])
+    onTypingUpdate?.('', 'INIT')
+    onDraftRefresh?.()
+    setTimeout(() => inputRef.current?.focus(), 50)
+  }
 
   const handleUndo = () => {
     if (previousStepId) {
@@ -910,6 +949,61 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
     const answer = isSelectSubmit ? displayAnswer : input.trim()
     setIsSubmitting(true)
+    setClaimError('')
+
+    // Returning-artist recognition — only after Submit on artist_name (anonymous)
+    if (isAnonymous && currentStep.key === 'artist_name') {
+      try {
+        const res = await fetch('/api/artist/claim-challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artist_name: answer }),
+        })
+        const data = (await res.json().catch(() => ({}))) as {
+          claimed?: boolean
+          sent?: boolean
+          error?: string
+        }
+
+        if (res.status === 429) {
+          setClaimError(
+            typeof data.error === 'string' && data.error
+              ? data.error
+              : 'Too many attempts. Try again later.'
+          )
+          setIsSubmitting(false)
+          return
+        }
+
+        if (!res.ok) {
+          setClaimError(
+            typeof data.error === 'string' && data.error
+              ? data.error
+              : 'Unable to continue. Try again.'
+          )
+          setIsSubmitting(false)
+          return
+        }
+
+        if (data.claimed) {
+          // Do not keep claimed name in anonymous curriculum draft
+          clearDraftArtistNameAttempt()
+          setReturningClaimMarker()
+          setClaimedArtistName(answer)
+          setClaimedGateView(true)
+          onTypingUpdate?.(answer, 'INIT')
+          onDraftRefresh?.()
+          setInput('')
+          setIsSubmitting(false)
+          return
+        }
+        // unclaimed → continue into free taste below
+      } catch {
+        setClaimError('Unable to continue. Try again.')
+        setIsSubmitting(false)
+        return
+      }
+    }
 
     // Trigger card swipe animation before saving
     if (onSubmitCard) {
@@ -1138,8 +1232,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       }}
     >
       <div>
-        {/* Current Question OR Inline Picker OR anonymous gate */}
-        {showGateUI ? (
+        {/* Current Question OR Inline Picker OR anonymous gate OR claimed sanctuary */}
+        {showClaimedGate ? (
+          <ClaimedArtistGate
+            artistName={claimedArtistName}
+            onUseDifferentName={handleUseDifferentArtistName}
+          />
+        ) : showGateUI ? (
           <>
             <LivingAffirmation text={livingAffirmationText} />
             <p
@@ -1308,8 +1407,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </div>
         )}
         
-        {/* Input Area — gate OTP is separate from curriculum submit */}
-        {showGateUI ? (
+        {/* Input Area — claimed sanctuary / gate OTP are separate from curriculum submit */}
+        {showClaimedGate ? null : showGateUI ? (
           <div className="w-full">
             {showNavToolbar && hasUserHistory && (
               <div className="flex items-center justify-center gap-2 mb-2">
@@ -1473,6 +1572,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 className="email-input"
                 autoFocus
               />
+            )}
+            {claimError && (
+              <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
+                {claimError}
+              </p>
             )}
             {isSelectInputStep && currentStep.input?.kind === 'select' && (
               <InlineSelectPicker
