@@ -429,12 +429,26 @@ export default function Home() {
         : draft?.profilePreview?.artist_name || getDraftAnswerText('artist_name') || ''
       : ''
 
+  /** Anonymous gift subtitle — only when gift_to_world exists; no fallback copy. */
+  const anonymousGiftSubtitle =
+    !user && hydrated
+      ? (
+          draft?.profilePreview?.mission_statement?.trim() ||
+          getDraftAnswerText('gift_to_world').trim() ||
+          ''
+        )
+      : ''
+
   const showCarouselStage = (() => {
     if (activeStepId === 'INIT') {
       return currentTypingInput.length > 0 || (carouselItems && carouselItems.length >= 1)
     }
     return activeStepId || (carouselItems && carouselItems.length >= 1)
   })()
+
+  /** First land only: centered welcome card. Exits as soon as name typing/stage begins (answer B). */
+  const isAnonymousPoster =
+    !user && hydrated && anonymousLiveName.length === 0 && !showCarouselStage
 
   const emeraldChatProps = {
     onProfileUpdate: user ? updateProfile : handleAnonymousProfileUpdate,
@@ -545,8 +559,10 @@ export default function Home() {
       className="flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
     >
       <DataReset isAnonymous={!user} />
-      <main className={`app-main ${!user ? 'login-view' : ''}`}>
-        <div className="text-center">
+      {/* Poster: login-view only on empty anonymous first land. Portal: flex-start, no login-view. */}
+      <main className={isAnonymousPoster ? 'app-main login-view' : 'app-main'}>
+        {/* Band A — visual/identity/orbit (z-0). Empty in poster mode; portal after identity begins. */}
+        <div className="text-center relative z-0">
           {loggedInReady ? (
             <>
               <h1 
@@ -580,19 +596,12 @@ export default function Home() {
               </p>
               
               {/* Halo Container with Carousel ON it (Zeyoda pattern) */}
-              {/* overflow: visible allows peek cards to show above/below halo */}
-              {/* Container matches Zeyoda: relative, max-w-5xl constraint (Zeyoda pattern) */}
-              {/* Render stage when question is active OR when we have answered items */}
-              {/* CRITICAL: INIT is special - only render when typing has started (surprise moment) */}
-              {/* Gate by activeStepId (single source of truth) not carouselItems.length */}
               {showCarouselStage ? (
                 <div 
                   ref={haloContainerRef}
                   className="relative w-full max-w-5xl mx-auto"
                   style={{ marginTop: '24px', marginBottom: '16px', overflow: 'visible' }}
                 >
-                  {/* Halo effect - uses primary color, updates live */}
-                  {/* containerRef must point to the carousel element (featuredContentRef), not the wrapper */}
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
                     primaryColor={currentPrimaryColor}
@@ -600,20 +609,13 @@ export default function Home() {
                     zIndex={1}
                   />
                   
-                  {/* Carousel - renders directly, no wrapper (Zeyoda pattern) */}
                   <OrbitPeekCarousel
                     items={carouselItems}
                     index={carouselIndex}
                     onIndexChange={(idx) => {
-                      // Mark as user-initiated swipe
                       isUserSwipeRef.current = true
-                      
-                      // Update carousel index
                       setCarouselIndex(idx)
                       carouselIndexRef.current = idx
-                      
-                      // CRITICAL: Swiping is navigation, NOT editing
-                      // Dispatch cardNavigate event (not cardEdit) to update chat without entering edit mode
                       const swipedItem = carouselItems[idx]
                       if (swipedItem?.stepId) {
                         window.dispatchEvent(new CustomEvent('cardNavigate', {
@@ -629,7 +631,6 @@ export default function Home() {
                     }}
                   />
                   
-                  {/* Tokens orbiting around carousel */}
                   <ArtisTalksOrbitRenderer
                     featuredContentRef={featuredContentRef}
                     chatRef={chatRef}
@@ -644,32 +645,18 @@ export default function Home() {
               ) : null}
             </>
           ) : null}
-        </div>
-        
-        {/* Band C: Action section - OUTSIDE text-center, matches Zeyoda structure */}
-        <div
-          className="action-section text-center"
-          style={{
-            width: '100%',
-            maxWidth: '100%',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: !user ? '100vh' : 'auto',
-          }}
-        >
-          {!user && (
-            <div
-              id="anonymous-funnel"
-              className="w-full flex flex-col items-center justify-center"
-              style={{ width: '100%' }}
-            >
+
+          {!user && hydrated && !isAnonymousPoster ? (
+            <>
               {anonymousLiveName.length > 0 && (
                 <h1
-                  className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-4 transition-opacity"
+                  className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-1 transition-opacity"
                   style={{
                     fontFamily: chatProfile?.font_family || 'Geist Sans, sans-serif',
                     color: chatProfile?.accent_color || chatProfile?.brand_color || '#10b981',
+                    position: 'relative',
+                    zIndex: 100,
+                    pointerEvents: 'none',
                     maxWidth: '85%',
                     margin: '0 auto',
                     lineHeight: '1.1',
@@ -679,11 +666,26 @@ export default function Home() {
                 </h1>
               )}
 
-              {showCarouselStage && (
+              {anonymousGiftSubtitle.length > 0 && (
+                <p
+                  className="text-lg md:text-xl text-zinc-400 mt-1 mb-2 font-light transition-all duration-500"
+                  style={{
+                    fontFamily: chatProfile?.font_family || 'Geist Sans, sans-serif',
+                    color: chatProfile?.accent_color || chatProfile?.brand_color || '#a1a1aa',
+                    opacity: 1,
+                    position: 'relative',
+                    zIndex: 101,
+                  }}
+                >
+                  {anonymousGiftSubtitle}
+                </p>
+              )}
+
+              {showCarouselStage ? (
                 <div
                   ref={haloContainerRef}
                   className="relative w-full max-w-5xl mx-auto"
-                  style={{ marginTop: '8px', marginBottom: '16px', overflow: 'visible' }}
+                  style={{ marginTop: '24px', marginBottom: '16px', overflow: 'visible' }}
                 >
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
@@ -725,11 +727,26 @@ export default function Home() {
                     isAnonymous
                   />
                 </div>
-              )}
-
-              <div ref={chatRef} className="w-full flex justify-center">
-                <EmeraldChat {...emeraldChatProps} />
-              </div>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+        
+        {/* Band C — chat only. Poster: 100vh centered. Portal: auto height under Band A. */}
+        <div
+          className="action-section text-center relative z-10"
+          style={{
+            width: '100%',
+            maxWidth: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: isAnonymousPoster ? '100vh' : 'auto',
+          }}
+        >
+          {!user && hydrated && (
+            <div ref={chatRef} className="w-full flex justify-center">
+              <EmeraldChat {...emeraldChatProps} />
             </div>
           )}
         </div>
