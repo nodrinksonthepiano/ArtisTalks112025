@@ -9,11 +9,13 @@ import LogoPanel from "@/components/LogoPanel";
 import ColorPanel from "@/components/ColorPanel";
 import FontPanel from "@/components/FontPanel";
 import OvalGlowBackdrop from "@/components/OvalGlowBackdrop";
+import SanctuaryAccordion from "@/components/SanctuaryAccordion";
 import { createClient } from "@/utils/supabase/client";
 import { useProfile, type Profile } from "@/hooks/useProfile";
 import { useCurriculumProgress } from "@/hooks/useCurriculumProgress";
 import { useCarouselItems } from "@/hooks/useCarouselItems";
 import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
+import { useSanctuaryAnswers } from "@/hooks/useSanctuaryAnswers";
 import { applyLogoBackground } from "@/utils/themeBackground";
 import { loadDraft, getDraftAnsweredKeys, getDraftAnswerText, clearDraft } from '@/lib/draft'
 import { migrateAnonymousDraft } from '@/lib/migrateDraft'
@@ -41,6 +43,7 @@ export default function Home() {
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
   
   const [answeredKeys, setAnsweredKeys] = useAnsweredKeys(user?.id ?? null)
+  const sanctuaryAnswers = useSanctuaryAnswers(user?.id ?? null, draft)
   
   const handleDraftRefresh = () => {
     refreshDraft()
@@ -563,6 +566,9 @@ export default function Home() {
   }
 
   const loggedInReady = Boolean(user) && !migrating
+  // Portal-only: reuse existing poster/portal gates (do not invent a new portal test)
+  const showSanctuaryAccordion =
+    loggedInReady || (!user && hydrated && !isAnonymousPoster)
 
   return (
     <div 
@@ -741,6 +747,16 @@ export default function Home() {
             </>
           ) : null}
         </div>
+
+        {showSanctuaryAccordion ? (
+          <SanctuaryAccordion
+            answers={sanctuaryAnswers}
+            accentColor={
+              chatProfile?.accent_color || chatProfile?.brand_color || null
+            }
+            fontFamily={chatProfile?.font_family || null}
+          />
+        ) : null}
         
         {/* Band C — chat only. Poster: 100vh centered. Portal: auto height under Band A. */}
         <div
