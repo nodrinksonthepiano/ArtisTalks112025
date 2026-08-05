@@ -1,7 +1,8 @@
 # STEP_PLAN.md — ArtisTalks Launch Plan
 
-**Status:** Sprint 0 complete. Sprint 1 next. No application code has been changed.
-**Last updated:** 2026-08-01
+**Status:** Product ladder + pricing locked (2026-08-05). Sprint 1 next — deploy and prove identity.
+**Code baseline:** `feature/artist-accordion-hub` @ `e8d0ce8` (progressive sanctuary accordion). Working tree was clean at last audit.
+**Last updated:** 2026-08-05
 
 > ArtisTalks teaches. Artistocks launches. Zeyoda protects. GOSHBOT routes memory.
 > Read `ECOSYSTEM_MEMORY_MAP.md` before routing mixed concepts.
@@ -14,13 +15,19 @@
 
 Everything in this plan serves that one sentence. If a proposed feature does not make the page come alive for an artist answering the chat, it is not in this lane.
 
-The chargeable path:
+### Chargeable path (locked)
 
-```
-Emerald chat → artist page comes alive → save/apply → guided curriculum → paid ArtisTalks Orbit
+```text
+EmeraldChat
+→ page comes alive
+→ free email save and restore
+→ optional Orbit application
+→ $8/month ongoing ArtisTalks SaaS
+→ separate Orbit tuition after approval
+→ Venmo activation and manual review for private beta
 ```
 
-Parked for now: Final Cut, Blender, workshop automation.
+Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port, Stripe, LLM Guide (last), dreamboard/tesseract, Google working studio.
 
 ---
 
@@ -52,7 +59,7 @@ When an artist asks something bigger than the Guide's lane:
 
 ### "my champion" vs "Champions"
 
-- **lowercase "my champion"** — term of address for **every** artist using the SaaS. Already in the product at `components/AuthPanel.tsx:155`, `components/EmeraldChat.tsx:1021`, and `lib/curriculum.ts:99`. Anyone who lands on the page is greeted this way, including the Orbit Launch group.
+- **lowercase "my champion"** — term of address for **every** artist using the SaaS. Anyone who lands on the page is greeted this way, including the Orbit Launch group.
 - **capitalized "Champions"** — the named ArtisTalks Orbit Launch cohort.
 
 So every artist is addressed as *my champion*. Becoming a *Champion* is what the Orbit gives them.
@@ -68,9 +75,137 @@ Two reasons, and the second is the load-bearing one:
 
 **Audit result (2026-08-01):** zero occurrences of "founder" exist in this repository. Every occurrence anywhere in the ecosystem is in `zeyoda-nextjs-051126` and refers to Jai himself, which is correct usage. This is therefore a **rule to enforce going forward**, not a cleanup task. It is recorded in `.cursor/rules/constraints.mdc`.
 
+### Pay What You CANCakes vs `cancakes`
+
+- Customer-facing phrase: **Pay What You CANCakes**
+- Server-side access/payment-path code: **`cancakes`**
+- Never an OTP or login credential. Validated only after identity is verified.
+
 ---
 
-## 3. Access Model
+## 3. Product ladder and pricing
+
+### Final product ladder
+
+```text
+FREE TASTE
+→ build the beginning of the sanctuary
+→ free email save and restore
+
+STANDALONE ARTISTALKS
+→ $8/month
+→ ongoing playground, check-ins, versions, links and continued building
+
+ARTISTALKS ORBIT LAUNCH
+→ application is separate from saving
+→ approval is separate from payment
+→ $8/month ArtisTalks SaaS continues
+→ PLUS six-month Orbit tuition
+```
+
+### Free taste
+
+Artists may begin building their sanctuary, experience the Living Affirmation,
+and save and restore the free-taste result through verified email.
+
+Saving does not automatically:
+
+- start a subscription;
+- submit an Orbit application;
+- approve access;
+- create a payment obligation.
+
+### ArtisTalks SaaS
+
+Ongoing ArtisTalks access is **$8/month**.
+
+The subscription provides the limited saved playground, including approved
+features such as:
+
+- recurring action commitments;
+- deadlines;
+- return check-ins;
+- reporting what was implemented;
+- new asset versions;
+- progress history;
+- dinosaur/old-internet links;
+- continued sanctuary building.
+
+**Every active SaaS user pays $8/month, including Orbit participants.**
+
+Jai may issue a coupon or comp that reduces or waives the subscription for an
+individual artist. A discount is an **explicit exception**, not an included Orbit benefit.
+
+### ArtisTalks Orbit Launch
+
+Orbit is a separate six-month guided program.
+
+Pricing:
+
+- **$3,000** standard total;
+- **$500/month** for six months;
+- **$2,000** paid in full upfront, saving $1,000;
+- **Pay What You CANCakes** by approval.
+
+An Orbit artist therefore normally pays:
+
+```text
+$8/month SaaS
++
+their approved Orbit tuition arrangement
+```
+
+Applying, approval, SaaS subscription, and Orbit tuition are separate states.
+
+Artists may apply for Orbit **without** first subscribing to the $8/month SaaS.
+
+### Payment rails (private beta)
+
+- Venmo before Stripe.
+- Manual Venmo verification is acceptable.
+- Do not route ArtisTalks payments through Artistocks wallet/token rails.
+- SEC-001 stays in force: no agent touches wallet-signing code; `fundWallet` stays disabled.
+
+### Important data boundary
+
+Do **not** combine these into one status:
+
+```text
+SaaS subscription
+- inactive
+- trialing
+- active
+- past_due
+- canceled
+- comped
+
+Orbit application/access
+- not_applied
+- draft
+- submitted
+- interview_scheduled
+- approved
+- waitlisted
+- declined
+- orbit_member
+
+Orbit tuition
+- not_required
+- unpaid
+- payment_plan
+- paid_in_full
+- pay_what_you_cancakes
+- comped
+- completed
+```
+
+A coupon affects the SaaS price. It must **not** automatically approve an application, activate Orbit access, or mark Orbit tuition paid.
+
+Legacy note: older docs used a single `access_status` / `payment_status` pair. New work must use the three concepts above. Coin-granted / invite flags (when used) remain permission markers and still do not collapse SaaS vs Orbit tuition.
+
+---
+
+## 4. Entry, recognition, and claimed names
 
 ### First question is always artist name only
 
@@ -88,9 +223,10 @@ When an artist name is entered, the server checks its status. The artist list ne
 - artist name appears live at the top
 - local draft stores answers
 - the page comes alive through name, colors, carousel, and affirmation
-- email is asked **only** at the save/apply gate, after the living affirmation
+- email is asked **only** at the free-taste **save** gate, after the Living Affirmation
+- save does **not** submit an Orbit application
 
-### If the artist name is claimed / invited / coin_granted / active / paid / inner_circle
+### If the artist name is claimed
 
 - send the OTP/code to the email already on file
 - show only: **"Enter the code sent to [Artist Name]'s email."**
@@ -106,76 +242,14 @@ Before verification, the page may show the typed name at the top. Nothing else.
 
 A locked door reveals that a name is claimed. That is the chosen tradeoff: protecting an artist's page beats hiding that they exist.
 
-The mitigation is **not** the response copy. It is the rate limit. Requirements for the recognition endpoint:
+The mitigation is **not** the response copy. It is the rate limit. Requirements for the recognition / claim-challenge endpoint:
 
 - server-side only; no cohort or artist list in any client bundle
-- returns `{ claimed: boolean }` and nothing else, ever
+- returns `{ claimed: boolean }` (and send ack when claimed) — never email
 - no email in the response body, the UI, error messages, or logs
 - normalized artist name/slug with a unique index
 - rate-limited on recognition **and** on OTP attempts, shipped in the same commit as the endpoint
 - after too many wrong codes, a calm "ask Jai for help" state
-
-If that endpoint ships without throttling, someone scripts the whole cohort in an afternoon.
-
----
-
-## 4. Access and Payment Are Separate
-
-Two independent fields. Never collapse them into one.
-
-### Access statuses
-
-| Status | Meaning |
-|---|---|
-| `unclaimed` | free taste, then apply/save gate |
-| `applied` | submitted email/application, waiting |
-| `invited` | allowed to verify and enter |
-| `coin_granted` | bypasses apply; already granted access |
-| `active` | verified and inside |
-| `paid` | payment confirmed |
-| `inner_circle` | special access / flexible amount |
-
-### Payment statuses
-
-| Status | Meaning |
-|---|---|
-| `unpaid` | in, but has not contributed |
-| `paid` | contribution confirmed |
-| `already_paid` | previously settled outside the app |
-| `pay_what_you_can` | flexible amount path unlocked |
-| `comped` | no contribution expected |
-
-### Artist coin access bypasses apply
-
-A coin-granted artist has **already** been granted access. They do not apply. They may still need to pay, contribute, or be marked already-paid after login.
-
-Valid combination example:
-
-```
-access_status:  coin_granted
-payment_status: unpaid
-```
-
-Meaning: they can enter because of the coin, and still see the option to contribute.
-
-### "cancakes" is not a login code
-
-`cancakes` is an **access/payment-path code**, not an OTP and never a login credential.
-
-```
-Email OTP (e.g. 428193) = proves identity, unlocks the account
-Access code (cancakes)  = changes the payment path
-```
-
-It is checked **after** identity is verified, and it unlocks: pay what you can, leave a tip, continue if already paid, inner-circle handling.
-
-### v0 is manual
-
-- Jai marks an artist `coin_granted` or `inner_circle` by hand
-- Jai marks `payment_status` by hand
-- **No** wallet, NFC, or on-chain coin verification in v0
-
-Today the coin is a permission flag. Later it can become automatic proof. NFC/on-chain verification is a Zeyoda/Artistocks problem for later, not an ArtisTalks problem for now. SEC-001 rules stay in force: no agent touches wallet-signing code, and `fundWallet` stays disabled.
 
 ---
 
@@ -196,213 +270,289 @@ Step 2 is a panel, not a question, which is why the two numbers differ.
 | 7 | `GENRE_ASSOCIATIONS` | `genre_associations` | yes |
 | 8 | `BUSINESS_OFFERING` | `business_type_products_services` | yes |
 
-The living affirmation completes at **step 8**. The email save/apply gate follows.
+The Living Affirmation completes at **step 8**. The email **save** gate follows (not an automatic Orbit application).
 
-Step 9 (`CURRENT_FOCUS_PILLAR`) is the journey fork — see §7.
+Canonical gift language (do not paraphrase):
+
+> Acknowledge yourself. What makes your presence a gift to the world?
+
+Code authority for order and `FREE_TASTE_LAST_STEP_ID`: `lib/curriculum.ts`.
 
 ---
 
-## 6. The Living Affirmation Is Already Assemblable
+## 6. The Living Affirmation
 
-The conversion gate requires **zero new questions**. Every slot maps to a key that already exists and is already saved and carded.
+Gate-only. Do not move into the middle of free taste, the page subtitle, or a carousel card.
 
 Template:
 
 > I am so happy and grateful now that **[ARTIST]** is stepping fully into **[GENRE / WORLD]**, creating **[BUSINESS / OFFER]**, known for **[EXPRESSION]**, and celebrated for **[LEGACY]**.
 
-| Slot | Existing key | Defined at |
-|---|---|---|
-| ARTIST | `artist_name` | `lib/curriculum.ts:101` |
-| GENRE / WORLD | `genre_associations` | `lib/curriculum.ts:149` |
-| BUSINESS / OFFER | `business_type_products_services` | `lib/curriculum.ts:157` |
-| EXPRESSION | `known_for_expression` | `lib/curriculum.ts:133` |
-| LEGACY | `known_for_legacy` | `lib/curriculum.ts:125` |
-
-The affirmation is a **render** problem, not a data-collection problem. It should grow line by line as each key is answered. Jai may rewrite the sentence in his own voice; the slots stay the same.
-
----
-
-## 7. Verified Current Reality
-
-Facts confirmed by reading the code on 2026-08-01. This section is why the work is *reorganization*, not a rebuild.
-
-### The blocker — two lines
-
-```
-app/page.tsx:374   {user ? (      ← gates header, mission line, halo, carousel, orbit tokens
-app/page.tsx:602   {user && (     ← gates EmeraldChat
-```
-
-An anonymous visitor sees `AuthPanel` and nothing else. This is the single architectural decision blocking the entire funnel.
-
-### The auth field contradicts its own label
-
-`components/AuthPanel.tsx:162` reads `placeholder="Enter Artist Name or Email"`, but the value goes straight into `signInWithOtp({ email })` at lines 28–34. Typing an artist name today produces a Supabase invalid-email error. There is **no** artist-name lookup anywhere in the repo — no query, no endpoint, no table mapping name to email.
-
-`components/AuthPanel.tsx:94` currently prints the full, unmasked email back to the screen. There is no masking logic anywhere to remove, so we skip straight to the correct behavior.
-
-### Live typing already works, but writes to the database
-
-`components/EmeraldChat.tsx:460-474` debounces 50ms and calls `onProfileUpdate`, which updates React state optimistically — so the header **is** live for logged-in users. But every debounce tick also fires a Supabase upsert at `hooks/useProfile.ts:104-110`. Typing an artist name produces a database round trip roughly every 50ms.
-
-The local draft store fixes the anonymous problem and this performance problem in the same move.
-
-### No local storage exists
-
-One hit in the entire repo, and it is a wipe, not a write: `components/DataReset.tsx:31`. The draft store is net-new with nothing to untangle.
-
-### "Choose your own journey" does not exist yet
-
-`lib/curriculum.ts:164` hardcodes `nextStep: 'FAN_CONNECTION'` on `CURRENT_FOCUS_PILLAR`. The fork answer is collected and then discarded. Every artist gets the identical linear march.
-
-This is good news: we are adding a fork to a clean spine, not untangling a broken one.
-
-### The chat is 100% scripted — no AI in the repo
-
-`package.json` has no `openai`, no `anthropic`, no AI SDK. One API route exists in the whole app (`app/api/uploadLogo/route.ts`). `lib/curriculum.ts:94` says it plainly: `// The Deterministic "Script" for all phases`.
-
-The ArtisTalks Guide is the only genuinely net-new system in this plan. That is exactly why it goes last.
-
-### Security posture
-
-No `middleware.ts`, no rate limiting, no whitelist, no admin route in this repo. `signInWithOtp` is called with `shouldCreateUser: true` (`components/AuthPanel.tsx:31`), so any email can create an account today. Nothing leaks an artist list right now — but the recognition endpoint **creates** that surface, which is why §3 requires throttling in the same commit.
-
----
-
-## 8. Sprints
-
-Each sprint is one sitting with a test runnable in a private browser window. Nothing later gets touched early.
-
-### Sprint 0 — Docs and decisions. No code. ✓
-
-Write `STEP_PLAN.md`, `ARTISTALKS_GUIDE_VOICE.md`, the constraints/rules update, and fix the stale V1 flow order in `ARTISTALKS_KNOWLEDGE_BASE.md`.
-
-**Done when:** the docs describe the code that actually exists, and the decisions are frozen.
-
-### Sprint 1 — Anonymous free taste ← current
-
-Open the emerald chat without login. Local draft store. Live artist name at the top. Zero Supabase traffic while anonymous.
-
-**Touches:** `app/page.tsx` (auth gates at lines 374, 484, 602), new `lib/draft.ts`, new `hooks/useDraft.ts`, `components/EmeraldChat.tsx` (draft read/write; guard all Supabase paths when `!user`).
-
-**Done when:**
-
-- a private browser opens the emerald chat with no account
-- the first prompt is artist name only
-- the artist name appears live at the top as they type
-- anonymous answers write locally and survive refresh
-- the Network tab shows **zero** Supabase calls while typing or answering anonymously
-- no private saved artist data loads before verification
-- no auth, payment, phase-tag, enrichment, or accordion work in this sprint
-
-### Sprint 2 — Phase-tag fix (tiny, isolated)
-
-**Proposed, not yet applied.** `lib/curriculum.ts` only — `phase` values. The `nextStep` chain does **not** change.
-
-The run to the affirmation is currently tagged `pre, pre, pre, legacy, pre, post, pre, pre`. Two steps jump the orbit tokens out of the `pre` lane and back for a single step, which makes the token fill look random during the most important minute of the funnel:
-
-- `KNOWN_FOR_LEGACY` at `lib/curriculum.ts:127` is tagged `legacy` → flickers the LEGACY token early
-- `TARGET_REACH` at `lib/curriculum.ts:143` is tagged `post` → flickers the POST token early
-
-`ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.4 independently flagged scrambled phase tags. This sprint stays its own tiny commit so a token-fill regression is unambiguous.
-
-**Done when:** the orbit tokens fill in a pattern that reads as intentional.
-
-### Sprint 3 — The living affirmation
-
-New card assembling the five keys in §6. Grows line by line.
-
-**Done when:** after step 8, the artist reads a complete sentence built from their own words.
-
-### Sprint 4 — Email gate and draft migration
-
-Ask for email after the affirmation. `signInWithOtp`. On verify, migrate the local draft into `curriculum_answers` and `profiles`.
-
-**Done when:** the anonymous answers survive login as rows and cards, nothing duplicated, nothing lost.
-
-### Sprint 5 — Server-side recognition
-
-New `app/api/artist/recognize/route.ts`. Service role. Returns `{ claimed: boolean }` only. Needs a normalized `artist_name_slug` column with a unique index, plus rate limiting in the same commit. See §3 for the full requirement list.
-
-**Done when:** a curl loop gets throttled; no response body contains an email under any input; a production bundle grep finds no artist list.
-
-### Sprint 6 — The locked door
-
-Rewrite `AuthPanel`. Artist name only — delete "or Email" from line 162, delete the `{email}` render at line 94. Copy becomes "Enter the code sent to [Artist Name]'s email." No continue-anyway. Private data does not load until the code verifies.
-
-**Done when:** a returning artist types only their name, gets a code, and no email appears in the UI, the network response, or the console — and their private data is provably absent from the page before verification.
-
-### Sprint 7 — Access and payment as two columns
-
-`access_status` and `payment_status` on `profiles`, set by hand in the Supabase dashboard. `cancakes` checked after identity verification, changing only the payment path. No wallet code.
-
-**Done when:** flipping someone to `coin_granted` lets them skip apply; flipping `pay_what_you_can` shows the flexible amount.
-
-### Sprint 8 — Wire the fork ("choose your own journey")
-
-Prerequisite: the enriched step schema in `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §5, which lets `next` be a branch map instead of a hardcoded string. Then `CURRENT_FOCUS_PILLAR` actually routes.
-
-**Done when:** picking "promoting something finished" routes to the promo questions and not the creating-new ones.
-
-### Sprint 9 — Uploads
-
-Local object-URL preview before login; real storage upload only after verification. Permanent storage begins only once the artist saves/applies, so anonymous visitors cannot fill storage. The existing upload route already enforces `user.id` ownership, so this is mostly a client-side gate.
-
-### Sprint 10 — The ArtisTalks Guide
-
-Last. Boundaries per §1. The only net-new system in the plan.
-
----
-
-## 9. Launch Criticality
-
-| Sprints | Status |
+| Slot | Existing key |
 |---|---|
-| 1–7 | Launch-critical. Must ship for the Orbit Launch. |
-| 8–10 | Can land during the Orbit rather than before it. |
+| ARTIST | `artist_name` |
+| GENRE / WORLD | `genre_associations` |
+| BUSINESS / OFFER | `business_type_products_services` |
+| EXPRESSION | `known_for_expression` |
+| LEGACY | `known_for_legacy` |
+
+Assembler: `lib/livingAffirmation.ts`. Exact artist strings; no silent rewrite.
 
 ---
 
-## 10. Do Not Touch During the Funnel Sprints
+## 7. Limited saved playground (post-save boundary)
 
-**The chat/carousel drift bug.** `EmeraldChat.currentStepId` and `page.activeStepId` can drift apart. It is real, and it has a warning label: `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.3 documents a June 2026 regression where a partial focus/objective split made the app feel broken and had to be reverted.
+### The gap in current code
+
+After free-taste save, the code currently continues into the **full remaining curriculum spine** (`CURRENT_FOCUS_PILLAR` onward). That is incorrect for MVP. Bound the experience to the limited playground below. Stop before exposing unfinished mastermind curriculum.
+
+### Playground contents (approved)
+
+**Where are you in your journey?**
+
+- creating something new;
+- finishing something;
+- preparing to release or promote;
+- building the larger artist world;
+- not sure yet;
+- add my own.
+
+**Bring in the work**
+
+- upload a demo, song, photo, artwork, lyrics, or video;
+- mark one asset as featured;
+- later upload a newer version;
+- preserve earlier versions rather than replacing them invisibly.
+
+**Dinosaur links** (optional; supporting material, not the center)
+
+- website, Instagram, TikTok, YouTube, Bandcamp, Spotify/Apple, Facebook/X, add another.
+
+**Dream direction**
+
+- artists to collaborate with;
+- artists to be on tour with;
+- stages, venues, festivals, or communities they are moving toward.
+
+**Action commitment**
+
+> What will you do, and by when?
+
+Store: action; target date; optional proof or uploaded version; status: planned, in progress, implemented, revised.
+
+**Return check-in**
+
+> What did you implement?
+
+Then: acknowledge completed action; ask what changed; allow a new asset version; compare old and new; ask what comes next and by when.
+
+### Beta success loop
+
+```text
+Decide
+→ act
+→ return
+→ report
+→ upload the next version
+→ see progress
+→ choose the next action
+```
+
+That loop is the useful SaaS product before the full mastermind curriculum exists.
+
+### Post-save choice (UI intent)
+
+After the sanctuary is safely saved:
+
+```text
+[Keep building my sanctuary]
+
+[Apply for the ArtisTalks Orbit Launch]
+```
+
+`$8/month` unlocks ongoing playground activity. Free email save/restore of free-taste remains free.
+
+---
+
+## 8. Code reality snapshot (audit 2026-08-03; still authoritative until next audit)
+
+Do **not** trust the old 2026-08-01 “Verified Current Reality” claims (AuthPanel-only poster, no draft, no recognition). They are obsolete.
+
+### Already in the repo (prove on deploy)
+
+- Anonymous free taste + local draft (`lib/draft.ts`)
+- Poster → portal; live artist name
+- Living Affirmation at save gate
+- Email OTP save + draft migration
+- Returning claimed-name flow (`claim-challenge`, `verify-otp`, returning marker skips migrate)
+- Progressive sanctuary accordion
+- Rate-limited claim path
+
+### Known gaps / bugs to fix in upcoming sprints
+
+- Not deployed; custom SMTP (Resend) not proven externally
+- After save, spine continues past free taste (playground unbound)
+- Phase coins over-reveal (wrong tags + imperative opacity override)
+- Anonymous logo still triggers login alert after blob preview
+- Font picker lists fonts that are not loaded (only Geist via `next/font`)
+- Journey fork does not branch (`nextStep` hardcoded)
+- Native application, SaaS/Orbit status fields, Venmo, admin queue: **absent**
+- No LLM / Guide API yet (correct — last)
+
+Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
+
+---
+
+## 9. Private beta plan
+
+This is **not** the public launch of `artistalks.org`.
+
+### Phase 1 — warm private beta
+
+Invite via word of mouth, existing relationships, Rock N Roll Opry, personal outreach, QR/NFC as physical invitations (digital coin system later).
+
+Measure: name entered; free taste completed; save; OTP arrives; return/restore; playground use; action commitment; implementation report; apply; SaaS vs Orbit choice.
+
+### Phase 2 — controlled cold testing
+
+Only after warm artists prove understanding and return. Split-test invitation promise, not radically different products. Same proven core onboarding until evidence justifies change.
+
+Do not treat artistalks.org as a broad public launch until:
+
+- external OTP works;
+- return restoration works;
+- the limited playground boundary is intentional;
+- native application works;
+- Venmo review and activation work.
+
+---
+
+## 10. Surgical MVP sprint order
+
+Each sprint is one clear objective. Do not broaden. Do not touch chat/carousel drift during these sprints (see §11).
+
+### Sprint 1 — Deploy and prove identity ← current
+
+- configure Resend / custom SMTP;
+- deploy a private beta URL;
+- prove save, OTP, return, and restoration on real phones;
+- test an external email address.
+
+### Sprint 2 — First-impression truth
+
+- no coins before artist name;
+- PRE only during early onboarding;
+- fix opacity override and phase tags;
+- remove anonymous logo login alert;
+- show only fonts that truly load.
+
+### Sprint 3 — Bound the saved playground
+
+Implement only:
+
+- journey;
+- dinosaur links;
+- featured asset;
+- version upload;
+- dream collaborators / On Tour With;
+- “What will you do, and by when?”;
+- return check-in: “What did you implement?”;
+- intentional stop before unfinished curriculum.
+
+### Sprint 4 — SaaS access
+
+- free saved preview of free-taste restore;
+- `$8/month` status;
+- manually administered Venmo-first SaaS payment initially;
+- preserve application access without requiring SaaS purchase;
+- coupons/comps reduce or waive `$8` only — never auto-approve Orbit.
+
+### Sprint 5 — Native application
+
+- replace Tally;
+- prefill existing answers;
+- phone field;
+- separate optional SMS consent (unchecked by default; wording/version/timestamp/source);
+- application draft and submission;
+- simple Jai review queue;
+- interview request.
+
+### Sprint 6 — Orbit payment and activation
+
+- `$3,000` standard;
+- `$2,000` paid in full;
+- `$500/month`;
+- server-protected `cancakes`;
+- Pay What You CANCakes;
+- Venmo QR/reference;
+- pending-review state;
+- manual verification;
+- access activation;
+- keep SaaS subscription status independent of tuition.
+
+### After private-beta MVP (not blocking warm beta)
+
+- Wire journey routing for real (if still linear)
+- Extend undo/redo beyond chat steps
+- ArtisTalks Guide (last)
+- Enrichment, dreamboard/tesseract, social dinosaur polish, Google working studio
+- Stripe after Venmo is proven
+
+---
+
+## 11. Do Not Touch During the Funnel / Playground Sprints
+
+**The chat/carousel drift bug.** `EmeraldChat.currentStepId` and `page.activeStepId` can drift apart. `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.3 documents a June 2026 regression where a partial focus/objective split made the app feel broken and had to be reverted.
 
 If it is touched while the funnel is being rewired, we will not know which change broke what. It gets its own sprint, later, or it does not get touched.
 
-Also not yet: payments beyond manual flags, enrichment APIs, the accordion hub, broad carousel redesign, database migrations beyond the columns named above, and any wallet/NFC/on-chain work.
+Also not yet: NFC claim port from Zeyoda, wallets/tokens, Artistocks commerce, automated enrichment, Twilio-required marketing SMS, Stripe, LLM rewriting, unfinished accounting modules.
 
 ---
 
-## 11. Where New Curriculum Goes
+## 12. Where New Curriculum Goes
 
 Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY_MAP.md`:
 
 | Material | Destination |
 |---|---|
-| Curriculum questions, milestones, after-answer flavor | `CURRICULUM_V2.md` (canonical, already 659 lines) |
-| Release checklist — creative, distribution, marketing, legal, post-release | `CURRICULUM_V2.md` as a PROD/POST module. The Principle Card JSON format at `CURRICULUM_V2.md:590-602` exists for exactly this |
+| Curriculum questions, milestones, after-answer flavor | `CURRICULUM_V2.md` (canonical) |
+| Release checklist — creative, distribution, marketing, legal, post-release | `CURRICULUM_V2.md` as a PROD/POST module |
 | Tone of voice, signature phrases, how Jai greets and calls artists higher | `ARTISTALKS_GUIDE_VOICE.md` |
-| Mastermind facilitation — breakout rooms, declarations, flips, coherence teaching | `ARTISTALKS_GUIDE_VOICE.md`, "how I call them higher". Facilitation layer, not app curriculum |
-| Artist testimonials | `ARTISTALKS_GUIDE_VOICE.md`, voice evidence section. Not curriculum, not Jai's voice |
+| Mastermind facilitation — breakout rooms, declarations, flips, coherence teaching | `ARTISTALKS_GUIDE_VOICE.md` — facilitation layer, not app curriculum |
+| Artist testimonials | `ARTISTALKS_GUIDE_VOICE.md`, voice evidence — not curriculum, not Jai's voice |
 | Mastermind executive summary and authority statements | Marketing copy. Uses "Founder:" correctly — that is Jai |
+| Limited playground questions / action loop | This file §7; implement in product, keep unfinished mastermind spine out of post-save UX |
 
-**Outstanding:** ten Instagram reels are behind Instagram's login wall and cannot be fetched or transcribed by an agent. To use that material, the files need to be downloaded locally or transcribed to text first. It is likely the highest-value voice input available.
+**Outstanding:** ten Instagram reels are behind Instagram's login wall and cannot be fetched or transcribed by an agent. To use that material, the files need to be downloaded locally or transcribed to text first.
 
 ---
 
-## 12. Decisions Frozen in Sprint 0
+## 13. Locked decisions
+
+### From Sprint 0 (still in force)
 
 1. First question is always artist name only. Never "artist name or email."
 2. Artist name renders live at the top as they type.
-3. Unclaimed names continue the free taste; email is asked only at the save/apply gate.
+3. Unclaimed names continue the free taste; email is asked only at the **save** gate.
 4. Claimed names get a locked door: code to the email on file, no email shown, no mask, no continue-anyway.
-5. Artist coin access bypasses apply.
-6. Access and payment are separate fields.
-7. `cancakes` is a payment-path code, never a login code.
-8. The free taste is 8 steps / 7 questions to the affirmation.
-9. "Six-question free taste" is retired language.
-10. The phase-tag fix is documented as Sprint 2, not yet applied.
-11. lowercase "my champion" = every artist; capitalized "Champions" = the Orbit Launch cohort.
-12. Orbit Launch artists are never called founders. The cohort revolves.
-13. The ArtisTalks Guide is the emerald chat voice, is not GOSHBOT, and is built last.
-14. The product promise: the artist answers the emerald chat, and the page comes alive.
+5. `cancakes` is a payment-path code, never a login code.
+6. The free taste is 8 steps / 7 questions to the affirmation.
+7. "Six-question free taste" is retired language.
+8. lowercase "my champion" = every artist; capitalized "Champions" = the Orbit Launch cohort.
+9. Orbit Launch artists are never called founders. The cohort revolves.
+10. The ArtisTalks Guide is the emerald chat voice, is not GOSHBOT, and is built last.
+11. The product promise: the artist answers the emerald chat, and the page comes alive.
+
+### Locked 2026-08-05 — business + playground
+
+1. Saving and applying are **separate**. Never auto-submit an application on save.
+2. Free email save and restore of free-taste stay free.
+3. Ongoing SaaS is **$8/month for every active user**, including Orbit/mastermind artists.
+4. Orbit tuition is separate. SaaS is **not** included in Orbit tuition.
+5. Coupons/comps may reduce or waive `$8` for an individual — explicit exception only.
+6. Artists may apply for Orbit without first subscribing to SaaS.
+7. SaaS subscription status, Orbit application/access status, and Orbit tuition status stay separate.
+8. Limited playground contents and beta success loop are defined in §7.
+9. First launch is private beta; Venmo before Stripe; manual review OK.
+10. Sprint order in §10 is current; old Sprint 1–10 funnel list is retired.

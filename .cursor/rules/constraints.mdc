@@ -31,14 +31,53 @@ alwaysApply: true
 
 ## Product invariants
 
-- **Access and payment are separate fields.** Never collapse `access_status` and `payment_status` into one
-- The code **`cancakes`** is an access/payment-path code, never an OTP or login credential. It is checked only after identity is verified
+- **SaaS subscription, Orbit application/access, and Orbit tuition are separate concepts.** Never collapse them into one status field
+- The code **`cancakes`** is an access/payment-path code, never an OTP or login credential. It is checked only after identity is verified. Customer-facing phrase: **Pay What You CANCakes**
 - A claimed artist name is a locked door: send the code to the email on file, and offer no "continue anyway" path
 - The **ArtisTalks Guide** is the voice inside the emerald chat. It is not GOSHBOT and gets no tools, no GOSHBOT memory, no file system, no payments, and no external actions. It speaks as the **guide**, not as Jai
 - Ship **no business-outcome promises** in public ArtisTalks (streams, placements, income, industry results)
 - Rights, legal, tax, and accounting topics stay at **awareness** level, with a handoff to the artist's PRO or attorney
 - In voice/curriculum docs, never promote a `[NEEDS JAI]` gap into shipped copy by writing plausible-sounding replacement text
 
+## Product ladder (locked)
+
+- Saving the sanctuary and applying for ArtisTalks Orbit Launch are separate actions. Never auto-submit an application on save.
+
+- Free email save preserves and restores the artist's free-taste sanctuary.
+
+- After free-taste save, do not continue automatically into the unfinished full mastermind curriculum spine. Bound the experience to the limited saved playground defined in `STEP_PLAN.md`.
+
+- Ongoing ArtisTalks SaaS access is $8/month.
+
+- Every active SaaS user pays $8/month whether or not they are participating in the ArtisTalks Orbit Launch/mastermind.
+
+- Orbit tuition is separate from the $8/month SaaS subscription.
+
+- Jai may use a coupon or comp to reduce or waive the $8/month subscription for an individual artist. A discount is an explicit exception, not an included Orbit benefit.
+
+- Orbit six-month pricing:
+  - $3,000 standard
+  - $500/month for six months
+  - $2,000 paid in full upfront, saving $1,000
+  - Pay What You CANCakes by approval
+
+- SaaS subscription status, Orbit application/access status, and Orbit tuition status must remain separate concepts.
+
+- Artists may apply for Orbit without first subscribing to the $8/month SaaS.
+
+- Venmo comes before Stripe for the ArtisTalks private beta. Manual review is acceptable. Do not route ArtisTalks payments through Artistocks wallet/token rails.
+
+- The first launch is a private beta, not a broad `artistalks.org` public launch.
+
+- The access word remains `cancakes`, validated server-side after identity. "Pay What You CANCakes" is the approved customer-facing phrase.
+
+- Preserve the beta success loop:
+  commit to an action + date
+  → return
+  → report implementation
+  → upload a new version or proof
+  → choose the next action.
+
 ## Current plan
 
-`STEP_PLAN.md` holds the frozen decisions and sprint order. Read it before starting funnel, auth, or curriculum work. Do not touch the chat/carousel drift bug during funnel sprints — see `STEP_PLAN.md` §10.
+`STEP_PLAN.md` holds the product ladder, pricing, frozen decisions, and private-beta sprint order. Read it before starting funnel, auth, playground, application, or payment work. Do not touch the chat/carousel drift bug during funnel/playground sprints — see `STEP_PLAN.md` §11.

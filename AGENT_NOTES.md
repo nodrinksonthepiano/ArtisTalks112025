@@ -13,6 +13,8 @@
 
 Before routing mixed ArtisTalks / Artistocks / Zeyoda concepts, read `ECOSYSTEM_MEMORY_MAP.md`. Preserve useful ecosystem memory, but translate every suggestion through the active project's role.
 
+**ArtisTalks launch ladder, pricing, and private-beta sprint order:** `STEP_PLAN.md` (authoritative). Always-on product-ladder rules: `.cursor/rules/constraints.mdc`.
+
 ---
 
 ## 1. The Mission
