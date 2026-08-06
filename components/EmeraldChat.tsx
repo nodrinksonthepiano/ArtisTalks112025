@@ -126,6 +126,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     isAnonymous && currentStepId === 'INIT' && !answeredKeys.has('artist_name')
   const showNavToolbar = !hideAnonymousInitNav
   
+  const openColorsPickerForStep = useCallback((stepId: StepId) => {
+    if (isColorsPanelStep(getStep(stepId))) {
+      keepPickerOpenRef.current = true
+      setPickerOpenedExplicitly(true)
+    }
+  }, [])
+
   // Reset the explicit-open flag whenever the step changes, unless the step change
   // itself carried the intent to open the picker (pencil edit on the colors card).
   useEffect(() => {
@@ -356,6 +363,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         if (isAnonymous && isBeyondFreeTaste(stepId)) return
         setAnonymousGateView(false)
         const step = getStep(stepId)
+        openColorsPickerForStep(stepId)
         setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
         setInput('') // Token jumps target unanswered questions - leftover text from the previous step must not carry over
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
@@ -368,7 +376,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [onCurrentStepChange, isAnonymous])
+  }, [onCurrentStepChange, isAnonymous, openColorsPickerForStep])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -399,6 +407,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
         setAnonymousGateView(false)
         const step = getStep(stepId)
+        openColorsPickerForStep(stepId)
         setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
@@ -414,7 +423,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep, isAnonymous])
+  }, [loadAnswerForStep, isAnonymous, openColorsPickerForStep])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {

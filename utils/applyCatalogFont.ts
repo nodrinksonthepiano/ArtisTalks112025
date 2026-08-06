@@ -1,4 +1,8 @@
-import { getFontEntryByValue } from '@/lib/fontCatalog'
+import {
+  FEATURED_FONTS,
+  getFontEntryByValue,
+  normalizeFontFamilyValue,
+} from '@/lib/fontCatalog'
 import { applyFontToDocument, ensureFontLoaded } from '@/utils/loadWebFont'
 
 export type ApplyCatalogFontResult =
@@ -8,10 +12,24 @@ export type ApplyCatalogFontResult =
 /**
  * Load → wait → apply. On failure, document styles are unchanged.
  */
+export async function preloadFeaturedFonts(): Promise<Set<string>> {
+  const ready = new Set<string>()
+  for (const font of FEATURED_FONTS) {
+    try {
+      await ensureFontLoaded(font)
+      ready.add(font.value)
+    } catch {
+      // Preload failure is non-fatal; button falls back until user selects
+    }
+  }
+  return ready
+}
+
 export async function applyCatalogFont(
   fontValue: string
 ): Promise<ApplyCatalogFontResult> {
-  const entry = getFontEntryByValue(fontValue)
+  const normalized = normalizeFontFamilyValue(fontValue)
+  const entry = getFontEntryByValue(normalized)
   if (!entry) {
     return { ok: false, error: 'That font is not available.' }
   }

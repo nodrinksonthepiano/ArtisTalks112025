@@ -247,3 +247,38 @@ export function primaryFamilyName(value: string): string {
   const first = value.split(',')[0]?.trim() ?? value
   return first.replace(/^["']|["']$/g, '')
 }
+
+/** Map legacy saved profile values to current catalog entries */
+const LEGACY_FONT_ALIASES: Record<string, string> = {
+  'Geist Sans, sans-serif': GEIST_FONT_VALUE,
+  'Geist, sans-serif': GEIST_FONT_VALUE,
+  'Geist Sans': GEIST_FONT_VALUE,
+  'Inter, sans-serif': 'Inter, sans-serif',
+  'Source Sans Pro, sans-serif': '"Source Sans 3", sans-serif',
+  'Source Sans Pro': '"Source Sans 3", sans-serif',
+}
+
+export function normalizeFontFamilyValue(
+  value: string | null | undefined
+): string {
+  if (!value?.trim()) return DEFAULT_FONT_VALUE
+
+  const trimmed = value.trim()
+  if (byValue.has(trimmed)) return trimmed
+
+  const alias = LEGACY_FONT_ALIASES[trimmed]
+  if (alias) return alias
+
+  const primary = primaryFamilyName(trimmed).toLowerCase()
+  for (const entry of ALL_CATALOG_FONTS) {
+    if (primaryFamilyName(entry.value).toLowerCase() === primary) {
+      return entry.value
+    }
+  }
+
+  return trimmed
+}
+
+export function isSameCatalogFont(a: string, b: string): boolean {
+  return normalizeFontFamilyValue(a) === normalizeFontFamilyValue(b)
+}

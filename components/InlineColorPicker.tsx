@@ -7,9 +7,12 @@ import { applyLogoBackground } from '@/utils/themeBackground'
 import {
   DEFAULT_FONT_VALUE,
   FEATURED_FONTS,
+  type FontCatalogEntry,
+  isSameCatalogFont,
+  normalizeFontFamilyValue,
   searchCatalogFonts,
 } from '@/lib/fontCatalog'
-import { applyCatalogFont } from '@/utils/applyCatalogFont'
+import { applyCatalogFont, preloadFeaturedFonts } from '@/utils/applyCatalogFont'
 
 interface InlineColorPickerProps {
   profile: Profile | null
@@ -31,7 +34,9 @@ const COLOR_PRESETS = {
 export default function InlineColorPicker({ profile, onColorChange, onPreviewChange }: InlineColorPickerProps) {
   const [primaryColor, setPrimaryColor] = useState(profile?.primary_color || '#10b981')
   const [accentColor, setAccentColor] = useState(profile?.accent_color || '#fbbf24')
-  const [fontFamily, setFontFamily] = useState(profile?.font_family || DEFAULT_FONT_VALUE)
+  const [fontFamily, setFontFamily] = useState(
+    () => normalizeFontFamilyValue(profile?.font_family) || DEFAULT_FONT_VALUE
+  )
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(profile?.logo_url || null)
   const logoPreviewRef = useRef<string | null>(profile?.logo_url || null)
@@ -40,8 +45,28 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
   const [showFontDropdown, setShowFontDropdown] = useState(false)
   const [fontSearch, setFontSearch] = useState('')
   const [fontError, setFontError] = useState<string | null>(null)
+  const [fontLoading, setFontLoading] = useState(false)
+  const [featuredFontsReady, setFeaturedFontsReady] = useState<Set<string>>(new Set())
 
   const canUploadLogo = Boolean(profile?.id && profile.id !== 'anonymous')
+
+  const canShowFontFace = useCallback(
+    (entry: FontCatalogEntry) =>
+      entry.source === 'geist' ||
+      entry.source === 'system' ||
+      featuredFontsReady.has(entry.value),
+    [featuredFontsReady]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    void preloadFeaturedFonts().then((ready) => {
+      if (!cancelled) setFeaturedFontsReady(ready)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   
   // Update ref when preview changes
   useEffect(() => {
@@ -158,18 +183,23 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
   
   // CRITICAL: Update font immediately (matches Zeyoda's handleFieldChange for font_family, lines 307-313)
   const updateFontImmediately = useCallback(async (newFont: string) => {
-    if (typeof document === 'undefined') return
+    if (typeof document === 'undefined' || fontLoading) return
 
-    const result = await applyCatalogFont(newFont)
-    if (!result.ok) {
-      setFontError(result.error)
-      return
-    }
-
+    setFontLoading(true)
     setFontError(null)
-    setFontFamily(result.fontValue)
-    onColorChange({ font_family: result.fontValue })
-  }, [onColorChange])
+    try {
+      const result = await applyCatalogFont(newFont)
+      if (!result.ok) {
+        setFontError(result.error)
+        return
+      }
+
+      setFontFamily(result.fontValue)
+      onColorChange({ font_family: result.fontValue })
+    } finally {
+      setFontLoading(false)
+    }
+  }, [onColorChange, fontLoading])
   
   // Upload logo file to server - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 148-206
   const uploadLogoFile = async (file: File, userId: string) => {
@@ -235,7 +265,9 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
   useEffect(() => {
     if (profile?.primary_color) setPrimaryColor(profile.primary_color)
     if (profile?.accent_color) setAccentColor(profile.accent_color)
-    if (profile?.font_family) setFontFamily(profile.font_family)
+    if (profile?.font_family) {
+      setFontFamily(normalizeFontFamilyValue(profile.font_family))
+    }
     if (profile?.logo_url) {
       setLogoPreview(profile.logo_url)
       logoPreviewRef.current = profile.logo_url
@@ -537,20 +569,28 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
         
         {/* Standard Font Buttons */}
         <div className="grid grid-cols-3 gap-2 mb-3">
-          {FEATURED_FONTS.map((font) => (
+          {FEATURED_FONTS.map((font) => {
+            const selected = isSameCatalogFont(fontFamily, font.value)
+            return (
             <button
               key={font.value}
+              type="button"
               onClick={() => updateFontImmediately(font.value)}
+              disabled={fontLoading}
               className={`p-3 rounded-lg border-2 transition-all ${
-                fontFamily === font.value
-                  ? 'border-emerald-500 bg-emerald-500 bg-opacity-20'
+                selected
+                  ? 'border-emerald-500 bg-emerald-500 bg-opacity-20 ring-2 ring-emerald-400/60'
                   : 'border-gray-600 bg-gray-700 hover:border-gray-500'
               }`}
-              style={{ fontFamily: font.value }}
+              style={{
+                fontFamily: canShowFontFace(font) ? font.value : undefined,
+              }}
+              aria-pressed={selected}
             >
               <div className="text-white font-bold text-sm">{font.name}</div>
             </button>
-          ))}
+            )
+          })}
         </div>
 
         {/* Font Dropdown */}
@@ -570,23 +610,42 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
             {showFontDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded max-h-40 overflow-y-auto z-50">
                 {searchCatalogFonts(fontSearch)
-                  .map((font) => (
+                  .map((font) => {
+                    const selected = isSameCatalogFont(fontFamily, font.value)
+                    return (
                     <button
                       key={font.value}
+                      type="button"
                       onClick={() => {
                         updateFontImmediately(font.value)
                         setFontSearch('')
                         setShowFontDropdown(false)
                       }}
-                      className="w-full text-left p-2 hover:bg-gray-700 text-white text-sm transition-colors"
-                      style={{ fontFamily: font.value }}
+                      disabled={fontLoading}
+                      className={`w-full text-left p-2 text-white text-sm transition-colors flex items-center justify-between gap-2 ${
+                        selected
+                          ? 'bg-emerald-900/40 border-l-2 border-emerald-400'
+                          : 'hover:bg-gray-700'
+                      }`}
+                      style={{
+                        fontFamily: canShowFontFace(font) ? font.value : undefined,
+                      }}
+                      aria-pressed={selected}
                     >
-                      {font.name}
+                      <span>{font.name}</span>
+                      {selected ? (
+                        <span className="text-emerald-400 text-xs shrink-0">Selected</span>
+                      ) : null}
                     </button>
-                  ))}
+                    )
+                  })}
               </div>
             )}
           </div>
+
+          {fontLoading ? (
+            <p className="mt-2 text-sm text-zinc-400">Loading font…</p>
+          ) : null}
 
           {fontError ? (
             <p className="mt-2 text-sm text-red-400">{fontError}</p>
