@@ -3,6 +3,7 @@
 import { RotateCcw } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
 import { clearDraft } from '@/lib/draft'
+import { clearReturningClaimMarker } from '@/lib/returningClaim'
 
 interface DataResetProps {
   isAnonymous?: boolean
@@ -14,30 +15,17 @@ export default function DataReset({ isAnonymous = false }: DataResetProps) {
   async function handleReset() {
     try {
       if (isAnonymous) {
+        // Local unsaved free taste only — nothing durable exists yet.
         clearDraft()
+        clearReturningClaimMarker()
         window.location.href = '/'
         return
       }
 
-      const { data: { user } } = await supabase.auth.getUser()
-
-      if (user) {
-        const { error: deleteError } = await supabase
-          .from('curriculum_answers')
-          .delete()
-          .eq('user_id', user.id)
-
-        if (deleteError) {
-          console.error('Error deleting curriculum answers:', deleteError)
-        }
-      }
-
+      // Authenticated: Zeyoda-style exit — sign out and clear temporary
+      // session markers. Never delete profiles, curriculum_answers, or uploads.
+      clearReturningClaimMarker()
       await supabase.auth.signOut()
-
-      if (typeof window !== 'undefined') {
-        localStorage.clear()
-      }
-
       window.location.href = '/'
     } catch (error) {
       console.error('Error during data reset:', error)

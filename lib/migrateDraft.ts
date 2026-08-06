@@ -132,7 +132,8 @@ async function insertAnswerIfMissing(
 /**
  * Migrate anonymous local draft into Supabase after OTP login.
  * Existing Supabase profile fields and curriculum_answers rows always win.
- * Clears local draft only after all writes succeed.
+ * Clears local draft only after profile writes succeed and every draft answer
+ * is confirmed inserted or already present. Never clears on zero source answers.
  * Uses one browser client for getUser, profile upsert, and all answer ops.
  */
 export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraftResult> {
@@ -204,17 +205,41 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
     }
   }
 
+  // Never treat profile-only content as a completed sanctuary save.
+  // Clearing the draft with zero source answers was the silent-loss path.
+  if (draft.answers.length === 0) {
+    throw new Error(
+      'Cannot finish sanctuary save: draft has no curriculum answers to store. Your work is still in this browser.'
+    )
+  }
+
   const migratedAnswerKeys: string[] = []
+  const confirmedAnswerKeys: string[] = []
+
   for (const answer of draft.answers) {
+    if (!answer?.question_key) {
+      throw new Error('Cannot finish sanctuary save: draft contains an answer without a question key.')
+    }
     const inserted = await insertAnswerIfMissing(
       supabase,
       userId,
       answer.question_key,
-      answer.answer_data
+      answer.answer_data ?? {}
     )
     if (inserted) migratedAnswerKeys.push(answer.question_key)
+    confirmedAnswerKeys.push(answer.question_key)
   }
 
+  const expectedKeys = draft.answers.map((a) => a.question_key)
+  const confirmedSet = new Set(confirmedAnswerKeys)
+  const missingKeys = expectedKeys.filter((key) => !confirmedSet.has(key))
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `Cannot finish sanctuary save: missing confirmed answers for ${missingKeys.join(', ')}`
+    )
+  }
+
+  // Clear local draft only after profile writes and every draft answer is confirmed.
   clearDraft()
 
   return {
