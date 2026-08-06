@@ -17,6 +17,8 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
   const logoPreviewRef = useRef<string | null>(profile?.logo_url || null)
   const [logoUseBackground, setLogoUseBackground] = useState(profile?.logo_use_background || false)
   const [isUploading, setIsUploading] = useState(false)
+
+  const canUploadLogo = Boolean(profile?.id && profile.id !== 'anonymous')
   
   // Update ref when preview changes
   useEffect(() => {
@@ -143,8 +145,8 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
               onPreviewChange(preview, logoUseBackground);
             }
             
-            // Auto-upload immediately
-            if (profile?.id) {
+            // Auto-upload only when authenticated (not anonymous preview)
+            if (canUploadLogo && profile?.id) {
               uploadLogoFile(file, profile.id);
             }
           }}

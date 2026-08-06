@@ -19,6 +19,8 @@ interface ArtisTalksOrbitRendererProps {
   progress: CurriculumProgress; // ADD: Progress for reveal logic
   answeredKeys: Set<string>; // ADD: For finding unanswered steps
   isAnonymous?: boolean;
+  /** True while free taste is incomplete — only PRE coin is visible */
+  isEarlyOnboarding?: boolean;
 }
 
 const ORBIT_SPEED = 0.3; // natural radians/sec
@@ -38,6 +40,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   progress,
   answeredKeys,
   isAnonymous = false,
+  isEarlyOnboarding = false,
 }) => {
   // CRITICAL: Preview config for live token color updates during editing
   // This is set via event from ColorPanel/InlineColorPicker and cleared when profile changes
@@ -182,8 +185,6 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
         tokenElement.style.left = `${viewportX}px`;
         tokenElement.style.top = `${viewportY}px`;
         tokenElement.style.transform = `translate(-50%, -50%) translateZ(${z}px)`;
-        tokenElement.style.opacity = '1';
-        tokenElement.style.filter = 'blur(0px)';
       });
     };
 
@@ -432,7 +433,8 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
           
           // Progressive reveal logic
           const shouldReveal = (() => {
-            if (token.id === 'pre') return true; // Always show PRE
+            if (isEarlyOnboarding) return token.id === 'pre';
+            if (token.id === 'pre') return true;
             if (token.id === 'prod') return progress.preProgress > 0;
             if (token.id === 'post') return progress.proProgress > 0;
             if (token.id === 'legacy') return progress.postProgress > 0;

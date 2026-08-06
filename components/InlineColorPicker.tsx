@@ -4,6 +4,12 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Profile } from '@/hooks/useProfile'
 import { applyLogoBackground } from '@/utils/themeBackground'
+import {
+  DEFAULT_FONT_VALUE,
+  FEATURED_FONTS,
+  searchCatalogFonts,
+} from '@/lib/fontCatalog'
+import { applyCatalogFont } from '@/utils/applyCatalogFont'
 
 interface InlineColorPickerProps {
   profile: Profile | null
@@ -11,53 +17,6 @@ interface InlineColorPickerProps {
   onPreviewChange?: (preview: { primary_color?: string; accent_color?: string }) => void
 }
 
-// COPIED FROM ZEYODA ProfileEditPanel.tsx lines 23-30
-const FONT_OPTIONS = [
-  { name: "Bungee", value: "Bungee, cursive" },
-  { name: "Geist", value: "Geist, sans-serif" },
-  { name: "Inter", value: "Inter, sans-serif" },
-  { name: "DM Sans", value: "DM Sans, sans-serif" },
-  { name: "Space Grotesk", value: "Space Grotesk, sans-serif" },
-  { name: "Instrument Sans", value: "Instrument Sans, sans-serif" }
-];
-
-// COPIED FROM ZEYODA ProfileEditPanel.tsx lines 32-65
-const COMMON_FONTS = [
-  "Arial, sans-serif",
-  "Helvetica, sans-serif", 
-  "Times New Roman, serif",
-  "Georgia, serif",
-  "Verdana, sans-serif",
-  "Trebuchet MS, sans-serif",
-  "Palatino, serif",
-  "Garamond, serif",
-  "Bookman, serif",
-  "Comic Sans MS, cursive",
-  "Impact, sans-serif",
-  "Lucida Console, monospace",
-  "Monaco, monospace",
-  "Courier New, monospace",
-  "Roboto, sans-serif",
-  "Open Sans, sans-serif",
-  "Lato, sans-serif",
-  "Montserrat, sans-serif",
-  "Poppins, sans-serif",
-  "Nunito, sans-serif",
-  "Raleway, sans-serif",
-  "Source Sans Pro, sans-serif",
-  "Ubuntu, sans-serif",
-  "Merriweather, serif",
-  "Playfair Display, serif",
-  "Lora, serif",
-  "Crimson Text, serif",
-  "Oswald, sans-serif",
-  "Bebas Neue, cursive",
-  "Pacifico, cursive",
-  "Dancing Script, cursive",
-  "Lobster, cursive"
-];
-
-// COPIED FROM ZEYODA ProfileEditPanel.tsx lines 12-21
 const COLOR_PRESETS = {
   gold: { name: "Gold", primary: "#FFD700", accent: "#B8860B" },
   silver: { name: "Silver", primary: "#C0C0C0", accent: "#808080" },
@@ -72,7 +31,7 @@ const COLOR_PRESETS = {
 export default function InlineColorPicker({ profile, onColorChange, onPreviewChange }: InlineColorPickerProps) {
   const [primaryColor, setPrimaryColor] = useState(profile?.primary_color || '#10b981')
   const [accentColor, setAccentColor] = useState(profile?.accent_color || '#fbbf24')
-  const [fontFamily, setFontFamily] = useState(profile?.font_family || 'Inter, sans-serif')
+  const [fontFamily, setFontFamily] = useState(profile?.font_family || DEFAULT_FONT_VALUE)
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(profile?.logo_url || null)
   const logoPreviewRef = useRef<string | null>(profile?.logo_url || null)
@@ -80,6 +39,9 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
   const [isUploading, setIsUploading] = useState(false)
   const [showFontDropdown, setShowFontDropdown] = useState(false)
   const [fontSearch, setFontSearch] = useState('')
+  const [fontError, setFontError] = useState<string | null>(null)
+
+  const canUploadLogo = Boolean(profile?.id && profile.id !== 'anonymous')
   
   // Update ref when preview changes
   useEffect(() => {
@@ -197,19 +159,16 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
   // CRITICAL: Update font immediately (matches Zeyoda's handleFieldChange for font_family, lines 307-313)
   const updateFontImmediately = useCallback(async (newFont: string) => {
     if (typeof document === 'undefined') return
-    
-    // CRITICAL: Update body and h1 font family immediately (Zeyoda lines 308-312)
-    document.body.style.fontFamily = newFont
-    const headerElement = document.querySelector('h1')
-    if (headerElement) {
-      headerElement.style.fontFamily = newFont
+
+    const result = await applyCatalogFont(newFont)
+    if (!result.ok) {
+      setFontError(result.error)
+      return
     }
-    
-    // Update state
-    setFontFamily(newFont)
-    
-    // CRITICAL: Autosave immediately
-    onColorChange({ font_family: newFont })
+
+    setFontError(null)
+    setFontFamily(result.fontValue)
+    onColorChange({ font_family: result.fontValue })
   }, [onColorChange])
   
   // Upload logo file to server - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 148-206
@@ -519,8 +478,8 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
               } 
             }))
             
-            // Auto-upload immediately
-            if (profile?.id) {
+            // Auto-upload only when authenticated (not anonymous preview)
+            if (canUploadLogo && profile?.id) {
               uploadLogoFile(file, profile.id);
             }
           }}
@@ -578,7 +537,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
         
         {/* Standard Font Buttons */}
         <div className="grid grid-cols-3 gap-2 mb-3">
-          {FONT_OPTIONS.map((font) => (
+          {FEATURED_FONTS.map((font) => (
             <button
               key={font.value}
               onClick={() => updateFontImmediately(font.value)}
@@ -610,25 +569,28 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
             
             {showFontDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded max-h-40 overflow-y-auto z-50">
-                {COMMON_FONTS
-                  .filter(font => font.toLowerCase().includes(fontSearch.toLowerCase()))
+                {searchCatalogFonts(fontSearch)
                   .map((font) => (
                     <button
-                      key={font}
+                      key={font.value}
                       onClick={() => {
-                        updateFontImmediately(font)
+                        updateFontImmediately(font.value)
                         setFontSearch('')
                         setShowFontDropdown(false)
                       }}
                       className="w-full text-left p-2 hover:bg-gray-700 text-white text-sm transition-colors"
-                      style={{ fontFamily: font }}
+                      style={{ fontFamily: font.value }}
                     >
-                      {font}
+                      {font.name}
                     </button>
                   ))}
               </div>
             )}
           </div>
+
+          {fontError ? (
+            <p className="mt-2 text-sm text-red-400">{fontError}</p>
+          ) : null}
           
           {/* Close dropdown when clicking outside */}
           {showFontDropdown && (

@@ -30,6 +30,7 @@ import {
   findFirstUnansweredInFreeTaste,
   isBeyondFreeTaste,
   isFreeTasteGateReached,
+  withProfileSatisfiedArtistName,
 } from "@/lib/curriculum";
 
 export default function Home() {
@@ -470,6 +471,16 @@ export default function Home() {
     return activeStepId || (carouselItems && carouselItems.length >= 1)
   })()
 
+  const effectiveAnsweredKeys = useMemo(() => {
+    if (user) {
+      return withProfileSatisfiedArtistName(answeredKeys, mergedProfile?.artist_name)
+    }
+    return answeredKeys
+  }, [user, answeredKeys, mergedProfile?.artist_name])
+
+  const showPhaseCoins = effectiveAnsweredKeys.has('artist_name')
+  const isEarlyOnboarding = !isFreeTasteGateReached(effectiveAnsweredKeys)
+
   /** First land only: centered welcome card. Exits as soon as name typing/stage begins (answer B). */
   const isAnonymousPoster =
     !user && hydrated && anonymousLiveName.length === 0 && !showCarouselStage
@@ -735,16 +746,19 @@ export default function Home() {
                     }}
                   />
                   
-                  <ArtisTalksOrbitRenderer
-                    featuredContentRef={featuredContentRef}
-                    chatRef={chatRef}
-                    isOrbitAnimationPaused={isOrbitAnimationPaused}
-                    phaseTokens={phaseTokens}
-                    profile={profile}
-                    progress={progress}
-                    answeredKeys={answeredKeys}
-                    isAnonymous={false}
-                  />
+                  {showPhaseCoins ? (
+                    <ArtisTalksOrbitRenderer
+                      featuredContentRef={featuredContentRef}
+                      chatRef={chatRef}
+                      isOrbitAnimationPaused={isOrbitAnimationPaused}
+                      phaseTokens={phaseTokens}
+                      profile={profile}
+                      progress={progress}
+                      answeredKeys={effectiveAnsweredKeys}
+                      isAnonymous={false}
+                      isEarlyOnboarding={isEarlyOnboarding}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </>
@@ -820,16 +834,19 @@ export default function Home() {
                       accentColor: chatProfile?.accent_color || chatProfile?.brand_color || undefined,
                     }}
                   />
-                  <ArtisTalksOrbitRenderer
-                    featuredContentRef={featuredContentRef}
-                    chatRef={chatRef}
-                    isOrbitAnimationPaused={isOrbitAnimationPaused}
-                    phaseTokens={phaseTokens}
-                    profile={chatProfile}
-                    progress={progress}
-                    answeredKeys={answeredKeys}
-                    isAnonymous
-                  />
+                  {showPhaseCoins ? (
+                    <ArtisTalksOrbitRenderer
+                      featuredContentRef={featuredContentRef}
+                      chatRef={chatRef}
+                      isOrbitAnimationPaused={isOrbitAnimationPaused}
+                      phaseTokens={phaseTokens}
+                      profile={chatProfile}
+                      progress={progress}
+                      answeredKeys={effectiveAnsweredKeys}
+                      isAnonymous
+                      isEarlyOnboarding={isEarlyOnboarding}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </>
