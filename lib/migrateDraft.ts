@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/client'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Profile } from '@/hooks/useProfile'
 import {
   clearDraft,
@@ -30,6 +31,21 @@ function hasDraftContent(draft: AnonymousDraft): boolean {
 
 function isBlank(value: unknown): boolean {
   return value == null || (typeof value === 'string' && value.trim() === '')
+}
+
+function formatSupabaseError(
+  action: string,
+  questionKey: string | null,
+  err: { message?: string; code?: string; details?: string; hint?: string } | null
+): Error {
+  const parts = [
+    questionKey ? `${action} for ${questionKey}` : action,
+    err?.code ? `code=${err.code}` : null,
+    err?.message ? `message=${err.message}` : null,
+    err?.details ? `details=${err.details}` : null,
+    err?.hint ? `hint=${err.hint}` : null,
+  ].filter(Boolean)
+  return new Error(parts.join(' | '))
 }
 
 function buildProfileFill(
@@ -81,12 +97,11 @@ function buildProfileFill(
 }
 
 async function insertAnswerIfMissing(
+  supabase: SupabaseClient,
   userId: string,
   question_key: string,
   answer_data: Record<string, unknown>
 ): Promise<boolean> {
-  const supabase = createClient()
-
   const { data: existing, error: checkError } = await supabase
     .from('curriculum_answers')
     .select('id')
@@ -95,7 +110,7 @@ async function insertAnswerIfMissing(
     .maybeSingle()
 
   if (checkError) {
-    throw new Error(`Failed checking answer ${question_key}: ${checkError.message}`)
+    throw formatSupabaseError('Failed checking answer', question_key, checkError)
   }
 
   if (existing) return false
@@ -108,7 +123,7 @@ async function insertAnswerIfMissing(
   })
 
   if (insertError) {
-    throw new Error(`Failed inserting answer ${question_key}: ${insertError.message}`)
+    throw formatSupabaseError('Failed inserting answer', question_key, insertError)
   }
 
   return true
@@ -118,6 +133,7 @@ async function insertAnswerIfMissing(
  * Migrate anonymous local draft into Supabase after OTP login.
  * Existing Supabase profile fields and curriculum_answers rows always win.
  * Clears local draft only after all writes succeed.
+ * Uses one browser client for getUser, profile upsert, and all answer ops.
  */
 export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraftResult> {
   const draft = loadDraft()
@@ -142,7 +158,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
     .maybeSingle()
 
   if (profileError) {
-    throw new Error(`Failed loading profile: ${profileError.message}`)
+    throw formatSupabaseError('Failed loading profile', null, profileError)
   }
 
   const profileFill = buildProfileFill(
@@ -172,7 +188,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
 
     const { error: upsertError } = await supabase.from('profiles').upsert(row)
     if (upsertError) {
-      throw new Error(`Failed upserting profile: ${upsertError.message}`)
+      throw formatSupabaseError('Failed upserting profile', null, upsertError)
     }
 
     profileFieldsWritten.push(...Object.keys(fieldsToWrite))
@@ -184,13 +200,14 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
       mission_statement: null,
     })
     if (insertError) {
-      throw new Error(`Failed creating profile row: ${insertError.message}`)
+      throw formatSupabaseError('Failed creating profile row', null, insertError)
     }
   }
 
   const migratedAnswerKeys: string[] = []
   for (const answer of draft.answers) {
     const inserted = await insertAnswerIfMissing(
+      supabase,
       userId,
       answer.question_key,
       answer.answer_data

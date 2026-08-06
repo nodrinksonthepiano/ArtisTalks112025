@@ -434,6 +434,21 @@ export function findFirstUnansweredInFreeTaste(answeredKeys: Set<string>): StepI
   return FREE_TASTE_LAST_STEP_ID
 }
 
+/**
+ * Authenticated durable identity: profile.artist_name satisfies INIT even when
+ * curriculum_answers has no duplicate artist_name row.
+ */
+export function withProfileSatisfiedArtistName(
+  answeredKeys: Set<string>,
+  artistName: string | null | undefined
+): Set<string> {
+  if (!artistName?.trim()) return answeredKeys
+  if (answeredKeys.has('artist_name')) return answeredKeys
+  const next = new Set(answeredKeys)
+  next.add('artist_name')
+  return next
+}
+
 const PHASE_TOKEN_SKIP_STEP_IDS = new Set<StepId>([
   'INIT',
   'COMPLETE',

@@ -36,13 +36,17 @@ export default function Home() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [migrating, setMigrating] = useState(false)
+  /** Account connected but sanctuary draft not fully stored — draft kept for retry. */
+  const [sanctuarySaveError, setSanctuarySaveError] = useState<string | null>(null)
+  const [sanctuarySaveRetrying, setSanctuarySaveRetrying] = useState(false)
   
   // Lifted State: Profile Data
-  const { profile, updateProfile, loading: profileLoading } = useProfile(user?.id ?? null)
+  const { profile, updateProfile, loading: profileLoading, reloadProfile } = useProfile(user?.id ?? null)
   
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
   
-  const [answeredKeys, setAnsweredKeys] = useAnsweredKeys(user?.id ?? null)
+  const [answeredKeys, setAnsweredKeys, reloadAnsweredKeys, answeredKeysReady] =
+    useAnsweredKeys(user?.id ?? null)
   const sanctuaryAnswers = useSanctuaryAnswers(user?.id ?? null, draft)
   
   const handleDraftRefresh = () => {
@@ -340,8 +344,10 @@ export default function Home() {
         clearDraft()
         clearReturningClaimMarker()
         refreshDraft()
+        setSanctuarySaveError(null)
       } else if (needsMigration) {
         setMigrating(true)
+        setSanctuarySaveError(null)
         try {
           if (!migrationPromiseRef.current) {
             migrationPromiseRef.current = migrateAnonymousDraft(nextUser.id)
@@ -353,11 +359,16 @@ export default function Home() {
               })
           }
           await migrationPromiseRef.current
+          setSanctuarySaveError(null)
           if (continueAfterFreeTaste) {
             setActiveStepId('CURRENT_FOCUS_PILLAR')
           }
         } catch (err) {
           console.error('Draft migration failed:', err)
+          // Keep local draft; account may be connected but sanctuary is not fully saved.
+          setSanctuarySaveError(
+            'Your account is connected, but your sanctuary has not finished saving yet. Your work is still safe in this browser. Try saving again.'
+          )
         } finally {
           setMigrating(false)
         }
@@ -487,6 +498,7 @@ export default function Home() {
     profile: chatProfile,
     answeredKeys,
     setAnsweredKeys,
+    answeredKeysReady,
     isAnonymous: !user,
     onDraftRefresh: handleDraftRefresh,
   }
@@ -520,32 +532,53 @@ export default function Home() {
     // Debounce rapid changes (e.g., during typing)
     if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     logoBgTimeoutRef.current = setTimeout(() => {
-      // CRITICAL: If user has set primary color (via previewOverrides), don't apply default logo
-      // User's color choice takes precedence over default logo
+      // Authenticated: never force marketing logo. Zeyoda rule — saved config only.
+      // Anonymous landing preset is applied in the !user mount effect above.
+      if (user) {
+        if (previewOverrides?.primary_color && previewOverrides?.logo_url === null) {
+          const colorProfile = {
+            ...mergedProfile,
+            primary_color: previewOverrides.primary_color,
+            brand_color: previewOverrides.brand_color || previewOverrides.primary_color,
+            logo_url: null,
+            logo_use_background: false,
+          } as Profile
+          applyLogoBackground(colorProfile, null, false)
+          lastLogoBgRef.current = bgSignature
+          return
+        }
+
+        const previewUrl =
+          previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
+        const previewUseBg =
+          previewOverrides?.logo_use_background !== undefined
+            ? previewOverrides.logo_use_background
+            : undefined
+        applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
+        lastLogoBgRef.current = bgSignature
+        return
+      }
+
+      // Anonymous portal (has progress): honor draft/preview via merged path
       if (previewOverrides?.primary_color && previewOverrides?.logo_url === null) {
-        // User explicitly chose background color - use it, not logo
         const colorProfile = {
           ...mergedProfile,
           primary_color: previewOverrides.primary_color,
           brand_color: previewOverrides.brand_color || previewOverrides.primary_color,
           logo_url: null,
-          logo_use_background: false
+          logo_use_background: false,
         } as Profile
         applyLogoBackground(colorProfile, null, false)
         lastLogoBgRef.current = bgSignature
         return
       }
-      
-      // Keep preset logo background if user hasn't uploaded one AND hasn't set a color
-      if (!mergedProfile?.logo_url && user && !previewOverrides?.primary_color) {
-        applyLogoBackground(null, encodeURI('/CreationCreator_Logo_Color copy.png'), true)
-        lastLogoBgRef.current = bgSignature
-        return
-      }
-      
-      // Use mergedProfile which includes preview overrides
-      const previewUrl = previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
-      const previewUseBg = previewOverrides?.logo_use_background !== undefined ? previewOverrides.logo_use_background : undefined
+
+      const previewUrl =
+        previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
+      const previewUseBg =
+        previewOverrides?.logo_use_background !== undefined
+          ? previewOverrides.logo_use_background
+          : undefined
       applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
       lastLogoBgRef.current = bgSignature
     }, 200) // Debounce background updates
@@ -570,11 +603,66 @@ export default function Home() {
   const showSanctuaryAccordion =
     loggedInReady || (!user && hydrated && !isAnonymousPoster)
 
+  const handleRetrySanctuarySave = async () => {
+    if (!user?.id || sanctuarySaveRetrying) return
+    setSanctuarySaveRetrying(true)
+    setSanctuarySaveError(null)
+    try {
+      const draftKeys = getDraftAnsweredKeys()
+      const continueAfterFreeTaste = isFreeTasteGateReached(draftKeys)
+      await migrateAnonymousDraft(user.id)
+      refreshDraft()
+      await reloadAnsweredKeys()
+      await reloadProfile()
+      setSanctuarySaveError(null)
+      if (continueAfterFreeTaste) {
+        setActiveStepId('CURRENT_FOCUS_PILLAR')
+      }
+    } catch (err) {
+      console.error('Draft migration retry failed:', err)
+      setSanctuarySaveError(
+        'Your account is connected, but your sanctuary has not finished saving yet. Your work is still safe in this browser. Try saving again.'
+      )
+    } finally {
+      setSanctuarySaveRetrying(false)
+    }
+  }
+
   return (
     <div 
       className="flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
     >
       <DataReset isAnonymous={!user} />
+      {user && sanctuarySaveError ? (
+        <div
+          role="alert"
+          className="w-full max-w-lg mx-auto mb-4 px-4 py-3 rounded-lg text-sm text-center"
+          style={{
+            background: 'rgba(6, 78, 59, 0.92)',
+            border: '1px solid rgba(16, 185, 129, 0.5)',
+            color: '#ecfdf5',
+            lineHeight: 1.5,
+          }}
+        >
+          <p style={{ margin: '0 0 12px' }}>{sanctuarySaveError}</p>
+          <button
+            type="button"
+            onClick={() => void handleRetrySanctuarySave()}
+            disabled={sanctuarySaveRetrying}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#047857',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: sanctuarySaveRetrying ? 'wait' : 'pointer',
+              boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+            }}
+          >
+            {sanctuarySaveRetrying ? 'Saving...' : 'Try saving again'}
+          </button>
+        </div>
+      ) : null}
       {/* Poster: login-view only on empty anonymous first land. Portal: flex-start, no login-view. */}
       <main className={isAnonymousPoster ? 'app-main login-view' : 'app-main'}>
         {/* Band A — visual/identity/orbit (z-0). Empty in poster mode; portal after identity begins. */}

@@ -12,8 +12,10 @@ export function useAnsweredKeys(
   Set<string>,
   (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void,
   () => Promise<Set<string>>,
+  boolean,
 ] {
   const [answeredKeys, setAnsweredKeysState] = useState<Set<string>>(new Set())
+  const [ready, setReady] = useState(!userId)
   const supabase = createClient()
 
   const setAnsweredKeys = useCallback(
@@ -29,6 +31,7 @@ export function useAnsweredKeys(
     if (!userId) {
       const draftKeys = getDraftAnsweredKeys()
       setAnsweredKeysState(draftKeys)
+      setReady(true)
       return draftKeys
     }
 
@@ -39,6 +42,7 @@ export function useAnsweredKeys(
       if (!user) {
         const empty = new Set<string>()
         setAnsweredKeysState(empty)
+        setReady(true)
         return empty
       }
 
@@ -49,14 +53,17 @@ export function useAnsweredKeys(
 
       if (error) {
         console.error('Error loading answered keys:', error)
+        setReady(true)
         return new Set()
       }
 
       const keys = new Set(answers?.map((a) => a.question_key) || [])
       setAnsweredKeysState(keys)
+      setReady(true)
       return keys
     } catch (err) {
       console.error('Error in reloadAnsweredKeys:', err)
+      setReady(true)
       return new Set()
     }
   }, [userId, supabase])
@@ -64,9 +71,11 @@ export function useAnsweredKeys(
   useEffect(() => {
     if (!userId) {
       setAnsweredKeysState(getDraftAnsweredKeys())
+      setReady(true)
       return
     }
 
+    setReady(false)
     void reloadAnsweredKeys()
 
     const channel = supabase
@@ -89,5 +98,5 @@ export function useAnsweredKeys(
     }
   }, [userId, supabase, reloadAnsweredKeys])
 
-  return [answeredKeys, setAnsweredKeys, reloadAnsweredKeys]
+  return [answeredKeys, setAnsweredKeys, reloadAnsweredKeys, ready]
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, withProfileSatisfiedArtistName } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import {
   getDraftAnswerText,
@@ -36,17 +36,20 @@ interface EmeraldChatProps {
   profile?: Profile | null // CRITICAL: Profile prop for inline pickers
   answeredKeys: Set<string> // ADD: Shared answered keys state
   setAnsweredKeys: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void // ADD: Setter for optimistic updates
+  /** Authenticated: true after first curriculum_answers fetch (may be empty). Anonymous: always true. */
+  answeredKeysReady?: boolean
   isAnonymous?: boolean
   onDraftRefresh?: () => void
 }
 
 const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, isAnonymous = false, onDraftRefresh }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([])
   const [fullHistory, setFullHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([]) // Full history for history button
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
@@ -158,7 +161,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // Helper: Find first unanswered question in curriculum flow
   // CRITICAL: Accept optional answeredKeysOverride to use updated keys immediately after state update
   const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT', answeredKeysOverride?: Set<string>): StepId => {
-    const keysToCheck = answeredKeysOverride || answeredKeys
+    let keysToCheck = answeredKeysOverride || answeredKeys
+    if (!isAnonymous) {
+      keysToCheck = withProfileSatisfiedArtistName(keysToCheck, profile?.artist_name)
+    }
 
     if (isAnonymous && isFreeTasteGateReached(keysToCheck)) {
       return FREE_TASTE_LAST_STEP_ID
@@ -224,7 +230,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     
     return 'COMPLETE'
-  }, [answeredKeys, isAnonymous])
+  }, [answeredKeys, isAnonymous, profile?.artist_name])
   
   // Helper: Load answer from fullHistory or database
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
@@ -507,23 +513,34 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       hasInitializedRef.current = true
       return
     }
+
+    // Authenticated: wait until first curriculum_answers fetch completes (may be empty)
+    if (!isAnonymous && !answeredKeysReady) return
     
     // CRITICAL: Only sync on initial load (0 -> N), not when new answers are saved (N -> N+1)
     const currentSize = answeredKeys.size
     const prevSize = prevAnsweredKeysSizeRef.current
     const isInitialLoad = prevSize === 0 && currentSize > 0
+    const profileName = !isAnonymous ? profile?.artist_name?.trim() : ''
+    const effectiveKeys = withProfileSatisfiedArtistName(answeredKeys, profileName)
+    // Resume when keys arrive, or when durable profile name satisfies INIT with empty/partial keys
+    const shouldResumeAuthenticated =
+      !isAnonymous &&
+      !!profileName &&
+      answeredKeysReady &&
+      currentStepId === 'INIT'
     
     // Update ref for next check
     prevAnsweredKeysSizeRef.current = currentSize
     
-    // Skip if not initial load (prevents reset when new answers are saved)
-    if (!isInitialLoad) return
+    // Skip if not initial load and not authenticated profile-resume
+    if (!isInitialLoad && !shouldResumeAuthenticated) return
     
     // CRITICAL: Skip if on PRE_COMPLETE or any completion step (celebration step - don't interfere)
     if (currentStepId === 'PRE_COMPLETE' || currentStepId.includes('_COMPLETE')) return
     
-    // Skip if already on INIT and no answers exist (shouldn't happen with isInitialLoad check, but safety)
-    if (currentStepId === 'INIT' && currentSize === 0) return
+    // Skip if already on INIT and no answers exist and no profile name (shouldn't happen with isInitialLoad check, but safety)
+    if (currentStepId === 'INIT' && currentSize === 0 && !profileName) return
     
     // CRITICAL: Skip if we're past INIT (user has progressed manually)
     // This prevents resetting to INIT when user is actively answering questions
@@ -533,22 +550,23 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       return
     }
     
-    // Only update if we have answers and need to find first unanswered (initial load only)
-    if (currentSize > 0) {
-      const firstUnanswered = findFirstUnansweredStep('INIT')
-      // Update if different from current step (including completion steps - they're valid)
-      if (firstUnanswered !== currentStepId && firstUnanswered !== 'COMPLETE') {
+    // Resume from first unanswered (profile.artist_name counts as artist_name for authenticated)
+    if (currentSize > 0 || profileName) {
+      const firstUnanswered = findFirstUnansweredStep('INIT', effectiveKeys)
+      if (firstUnanswered !== currentStepId) {
         const step = getStep(firstUnanswered)
-        setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
-        const stepMessage = { role: 'assistant' as const, content: step.question, stepId: firstUnanswered }
+        setCurrentStepId(firstUnanswered)
+        const stepMessage = {
+          role: 'assistant' as const,
+          content: step.question,
+          stepId: firstUnanswered,
+        }
         setHistory([stepMessage])
-        setFullHistory([stepMessage]) // Add to full history too
+        setFullHistory([stepMessage])
       }
-      // Mark as initialized so this effect doesn't run again
-      // This prevents it from overriding manual step advancement
       hasInitializedRef.current = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys])
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -784,7 +802,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         const fontFamily = currentPickerState.font?.font_family || profile?.font_family
         
         if (user) {
-          await supabase.from('curriculum_answers').upsert({
+          const { error: colorsError } = await supabase.from('curriculum_answers').upsert({
             user_id: user.id,
             question_key: 'colors_set',
             answer_data: {
@@ -796,9 +814,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             },
             project_id: null
           })
+          if (colorsError) {
+            console.error('Error saving colors_set:', colorsError.message)
+            setSaveError('Your brand choices could not be saved. Try Send again.')
+            setIsSubmitting(false)
+            return
+          }
           
           if (logoUrl) {
-            await supabase.from('curriculum_answers').upsert({
+            const { error: logoError } = await supabase.from('curriculum_answers').upsert({
               user_id: user.id,
               question_key: 'logo_uploaded',
               answer_data: {
@@ -809,10 +833,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               },
               project_id: null
             })
+            if (logoError) {
+              console.error('Error saving logo_uploaded:', logoError.message)
+              setSaveError('Your brand choices could not be saved. Try Send again.')
+              setIsSubmitting(false)
+              return
+            }
           }
           
           if (fontFamily) {
-            await supabase.from('curriculum_answers').upsert({
+            const { error: fontError } = await supabase.from('curriculum_answers').upsert({
               user_id: user.id,
               question_key: 'font_set',
               answer_data: {
@@ -822,7 +852,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               },
               project_id: null
             })
+            if (fontError) {
+              console.error('Error saving font_set:', fontError.message)
+              setSaveError('Your brand choices could not be saved. Try Send again.')
+              setIsSubmitting(false)
+              return
+            }
           }
+          setSaveError('')
         } else {
           upsertDraftAnswer('colors_set', {
             text: 'Colors set',
@@ -1019,6 +1056,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     // Keep the current question visible until the next one is ready.
     // Clearing history here creates an empty render gap where INIT can flash.
     setInput('')
+    setSaveError('')
 
     try {
       // 2. Save to Supabase (The Log)
@@ -1034,8 +1072,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           .eq('user_id', user.id)
           .eq('question_key', currentStep.key)
           .maybeSingle() // Use maybeSingle() instead of single() to avoid error when no row exists
+
+        if (checkError) {
+          console.error('Error checking answer:', checkError.message)
+          setInput(answer)
+          setSaveError('Your answer could not be saved. It is still in the box — try again.')
+          setIsSubmitting(false)
+          return
+        }
         
-        if (existingAnswer && !checkError) {
+        if (existingAnswer) {
           // Update existing answer
           const { error: updateError } = await supabase
             .from('curriculum_answers')
@@ -1055,6 +1101,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           
           if (updateError) {
             console.error('Error updating answer:', updateError.message)
+            setInput(answer)
+            setSaveError('Your answer could not be saved. It is still in the box — try again.')
+            setIsSubmitting(false)
+            return
           }
         } else {
           // Insert new answer
@@ -1076,9 +1126,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           
           if (insertError) {
             console.error('Error inserting answer:', insertError.message)
+            setInput(answer)
+            setSaveError('Your answer could not be saved. It is still in the box — try again.')
+            setIsSubmitting(false)
+            return
           }
         }
-        // Note: answeredKeys is updated below BEFORE checking completion steps
         
         // Force a final "Hard Save" of the profile to ensure consistency
         // This calls useProfile's updateProfile which handles the DB save for profile
@@ -1113,8 +1166,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Clear redo stack when user makes a new action (can't redo after new action)
       setRedoStack([])
 
-      // CRITICAL: Update answeredKeys optimistically BEFORE checking completion steps
-      // This ensures PRE_COMPLETE check uses the updated Set including the current answer
+      // CRITICAL: Update answeredKeys only after durable save succeeded
       const updatedAnsweredKeys = new Set([...answeredKeys, currentStep.key])
       setAnsweredKeys(updatedAnsweredKeys)
 
@@ -1576,6 +1628,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
             {claimError && (
               <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
                 {claimError}
+              </p>
+            )}
+            {saveError && (
+              <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
+                {saveError}
               </p>
             )}
             {isSelectInputStep && currentStep.input?.kind === 'select' && (
