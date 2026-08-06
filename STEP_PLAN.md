@@ -1,7 +1,21 @@
 # STEP_PLAN.md — ArtisTalks Launch Plan
 
-**Status:** Product ladder + pricing locked (2026-08-05). Sprint 1 next — deploy and prove identity.
-**Code baseline:** `feature/artist-accordion-hub` @ `e8d0ce8` (progressive sanctuary accordion). Working tree was clean at last audit.
+**Status:** Private-beta deployment and external OTP are proven at `artistalks8526.vercel.app`.
+
+Restore fix `a4d4dfa` partially passed:
+- claimed-name return works;
+- authenticated artist name satisfies INIT;
+- saved color background restores;
+- curriculum_answers persistence is still broken;
+- fresh test artist `JT` saved zero answer rows;
+- returning artists therefore restart at COLORS_PANEL.
+
+Sprint 1 remains open until durable curriculum answers are proven and returning artists resume at the first genuinely unanswered step.
+
+Planning checkpoint: `6319649`.
+Current deployed restore checkpoint: `a4d4dfa`.
+
+**Code baseline:** `feature/artist-accordion-hub` @ `a4d4dfa` (restore/save reliability — partially verified). Do not merge to main.
 **Last updated:** 2026-08-05
 
 > ArtisTalks teaches. Artistocks launches. Zeyoda protects. GOSHBOT routes memory.
@@ -378,7 +392,7 @@ After the sanctuary is safely saved:
 
 Do **not** trust the old 2026-08-01 “Verified Current Reality” claims (AuthPanel-only poster, no draft, no recognition). They are obsolete.
 
-### Already in the repo (prove on deploy)
+### Already in the repo
 
 - Anonymous free taste + local draft (`lib/draft.ts`)
 - Poster → portal; live artist name
@@ -388,9 +402,51 @@ Do **not** trust the old 2026-08-01 “Verified Current Reality” claims (AuthP
 - Progressive sanctuary accordion
 - Rate-limited claim path
 
+### Proven on private beta
+
+- Resend SMTP and external six-digit OTP
+- First-time and returning OTP
+- Claimed-name recognition
+- No email returned in the public claim/verify JSON
+- Profiles can save artist name and brand colors
+- Authenticated artist name satisfies INIT
+- Color-only authenticated profiles restore saved primary/brand color
+
+### Restore/save reliability — deployed at `a4d4dfa`, partially verified
+
+Proven working:
+- first-time external six-digit OTP;
+- returning claimed-name OTP;
+- profile artist-name restoration;
+- authenticated profile artist name satisfies INIT;
+- saved color background restores instead of forcing the CreationCreator logo.
+
+Still unresolved:
+- fresh artist `JT` saved zero curriculum_answers rows;
+- returning artists consequently restart at COLORS_PANEL;
+- exact first-save failure mode remains unproven;
+- the prior dual-client theory was not sufficient as the sole root cause;
+- Network and Console evidence must distinguish:
+  - no answer request;
+  - failed answer request;
+  - empty draft at migration time;
+  - migration skipped;
+  - another precise failure.
+
+Approved invariants:
+- never report sanctuary save success if curriculum_answers failed;
+- never clear the anonymous draft until profile and answers are stored;
+- profile.artist_name satisfies INIT;
+- every other completed free-taste answer persists in curriculum_answers;
+- returning artists resume after all durably answered questions;
+- color-only authenticated profiles use saved primary/brand color;
+- the CreationCreator marketing logo is only for untouched anonymous landing;
+- no current_step database column;
+- no backfill;
+- verify with fresh artists.
+
 ### Known gaps / bugs to fix in upcoming sprints
 
-- Not deployed; custom SMTP (Resend) not proven externally
 - After save, spine continues past free taste (playground unbound)
 - Phase coins over-reveal (wrong tags + imperative opacity override)
 - Anonymous logo still triggers login alert after blob preview
@@ -431,12 +487,24 @@ Do not treat artistalks.org as a broad public launch until:
 
 Each sprint is one clear objective. Do not broaden. Do not touch chat/carousel drift during these sprints (see §11).
 
-### Sprint 1 — Deploy and prove identity ← current
+### Sprint 1 — Deploy and prove identity ⚠️ partially complete
 
-- configure Resend / custom SMTP;
-- deploy a private beta URL;
-- prove save, OTP, return, and restoration on real phones;
-- test an external email address.
+Completed:
+- private beta deployed;
+- Resend custom SMTP;
+- external first-time OTP;
+- returning claimed-name OTP;
+- claimed-name privacy;
+- saved artist-name restoration;
+- authenticated artist name satisfies INIT;
+- saved color-background restoration.
+
+Exit still required:
+- prove expected curriculum_answers rows save for a fresh artist;
+- refresh and claimed return must not replay answered questions;
+- return must resume at the first genuinely unanswered allowed step;
+- migration failure must retain the browser draft and provide retry;
+- exact first-save failure mode must be captured and corrected.
 
 ### Sprint 2 — First-impression truth
 
@@ -556,3 +624,26 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 8. Limited playground contents and beta success loop are defined in §7.
 9. First launch is private beta; Venmo before Stripe; manual review OK.
 10. Sprint order in §10 is current; old Sprint 1–10 funnel list is retired.
+
+### Locked 2026-08-05 — restore / first-save reliability
+
+1. Never report successful sanctuary save if curriculum_answers migration failed.
+2. Never clear the anonymous draft until profile and curriculum answers are both
+   stored.
+3. Authenticated profile.artist_name satisfies INIT; all other completed
+   free-taste answers must persist in curriculum_answers.
+4. Color-only authenticated profiles restore saved primary/brand color; do not
+   force the CreationCreator marketing logo merely because logo_url is null.
+5. Logo background applies only when logo_url exists and
+   logo_use_background === true.
+6. No current_step database column and no test-account backfill.
+7. Save-failure recovery copy:
+   “Your account is connected, but your sanctuary has not finished saving yet.
+   Your work is still safe in this browser. Try saving again.”
+8. Returning artists must never replay a durably answered question. Resume waits
+   until profile and curriculum-answer hydration are ready, then selects the
+   first genuinely unanswered allowed step.
+9. Fresh test artist `JT` proved that checkpoint `a4d4dfa` fixed INIT and
+   background restoration but did not persist curriculum_answers.
+10. Do not change RLS, grants, schema, or migration architecture again until the
+    actual request failure or absence of request is captured.
