@@ -11,7 +11,12 @@ type Props = {
   onIndexChange: (next: number) => void;
   containerRef?: React.RefObject<HTMLDivElement | null>;
   peekPercent?: number; // 10 by default
-  theme?: { fontFamily?: string; primaryColor?: string; accentColor?: string };
+  theme?: {
+    fontFamily?: string
+    bodyFontFamily?: string
+    primaryColor?: string
+    accentColor?: string
+  };
   disabled?: boolean;
   onShakeRequest?: () => void;
 };
@@ -910,6 +915,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     if (!item) return null;
     const base: React.CSSProperties = { width: '100%', height: '100%', objectFit: 'contain', borderRadius: 14, background: 'transparent' };
     const overlayFont = theme?.fontFamily || 'inherit';
+    const bodyFont = theme?.bodyFontFamily || overlayFont;
     // CRITICAL: Use primary color for card background (so accent color text is visible)
     const cardBg = theme?.primaryColor || '#047857'; // Primary color for card background
     // Use accent color for text (visible on primary color background)
@@ -1280,9 +1286,19 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
             // Parse title format "Label: Answer" to separate label and answer
             const titleParts = (item.title || 'Untitled').split(':');
             const label = titleParts[0]?.trim() || '';
-            const answerFromTitle = titleParts[1]?.trim() || '';
-            const hasAnswer = !!answerFromTitle || (item.content && item.content.trim());
-            const answer = answerFromTitle || (item.content && item.content.trim() ? item.content.trim() : '');
+            const answerFromTitle = titleParts.slice(1).join(':').trim() || '';
+            const contentText = item.content?.trim() || '';
+            const hasAnswer =
+              !!answerFromTitle ||
+              !!contentText ||
+              !!item.imageUrl ||
+              ['logo_uploaded', 'colors_set', 'font_set'].includes(item.questionKey);
+            const answer = answerFromTitle || contentText;
+            const isColorsCard = item.questionKey === 'colors_set';
+            const isFontCard = item.questionKey === 'font_set';
+            const colorParts = isColorsCard
+              ? contentText.split('·').map((s) => s.trim()).filter((s) => s.startsWith('#'))
+              : [];
             
             return (
               <>
@@ -1324,12 +1340,29 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                 }}>
                   {label || item.title || 'Untitled'}
                 </h3>
-                {hasAnswer && (
+                {isColorsCard && colorParts.length > 0 && (
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 8 }}>
+                    {colorParts.map((hex) => (
+                      <span
+                        key={hex}
+                        title={hex}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 8,
+                          backgroundColor: hex,
+                          border: '1px solid rgba(255,255,255,0.45)',
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+                {hasAnswer && answer && (
                   <p style={{ 
                     fontSize: 'clamp(0.75rem, 1.5vw, 1rem)', // Responsive text sizing
                     lineHeight: 1.6,
                     color: cardText, // Artist's accent color or gold etching color
-                    fontFamily: overlayFont,
+                    fontFamily: isFontCard ? overlayFont : bodyFont,
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                     textShadow: cardText === '#fffacd' ? '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)' : 'none', // Gold etching effect if using fallback

@@ -13,7 +13,7 @@
 
 Before routing mixed ArtisTalks / Artistocks / Zeyoda concepts, read `ECOSYSTEM_MEMORY_MAP.md`. Preserve useful ecosystem memory, but translate every suggestion through the active project's role.
 
-**ArtisTalks launch ladder, pricing, and private-beta sprint order:** `STEP_PLAN.md` (authoritative). Always-on product-ladder rules: `.cursor/rules/constraints.mdc`. ArtisTalks private-beta identity, restore, and first-save invariants are governed by `STEP_PLAN.md` §8, §10 Sprint 1 exit criteria, and §13.
+**ArtisTalks launch ladder, pricing, and private-beta sprint order:** `STEP_PLAN.md` (authoritative). Always-on product-ladder rules: `.cursor/rules/constraints.mdc`. ArtisTalks private-beta identity, restore, first-save, and Data Reset invariants are governed by `STEP_PLAN.md` §8, §10 (Sprint 1 complete), and §13.
 
 ---
 

@@ -17,7 +17,7 @@ import { useCarouselItems } from "@/hooks/useCarouselItems";
 import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
 import { useSanctuaryAnswers } from "@/hooks/useSanctuaryAnswers";
 import { applyLogoBackground } from "@/utils/themeBackground";
-import { loadDraft, getDraftAnsweredKeys, getDraftAnswerText, clearDraft } from '@/lib/draft'
+import { loadDraft, getDraftAnsweredKeys, getDraftAnswerData, getDraftAnswerText, clearDraft } from '@/lib/draft'
 import { migrateAnonymousDraft } from '@/lib/migrateDraft'
 import {
   clearReturningClaimMarker,
@@ -30,7 +30,7 @@ import {
   findFirstUnansweredInFreeTaste,
   isBeyondFreeTaste,
   isFreeTasteGateReached,
-  withProfileSatisfiedArtistName,
+  withResumeSatisfiedKeys,
 } from "@/lib/curriculum";
 
 export default function Home() {
@@ -40,27 +40,72 @@ export default function Home() {
   /** Account connected but sanctuary draft not fully stored — draft kept for retry. */
   const [sanctuarySaveError, setSanctuarySaveError] = useState<string | null>(null)
   const [sanctuarySaveRetrying, setSanctuarySaveRetrying] = useState(false)
-  
+
   // Lifted State: Profile Data
   const { profile, updateProfile, loading: profileLoading, reloadProfile } = useProfile(user?.id ?? null)
-  
+
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
-  
+
   const [answeredKeys, setAnsweredKeys, reloadAnsweredKeys, answeredKeysReady] =
     useAnsweredKeys(user?.id ?? null)
   const sanctuaryAnswers = useSanctuaryAnswers(user?.id ?? null, draft)
-  
+
+  /**
+   * Hydration-time colors_set payload for legacy brand bridge only.
+   * undefined = not loaded yet (do not bridge); null = no row; object = saved data.
+   * Mid-journey v2 colors_set must not be mistaken for legacy combined-brand.
+   */
+  const [resumeColorsAnswerData, setResumeColorsAnswerData] = useState<
+    unknown | undefined
+  >(undefined)
+
+  useEffect(() => {
+    if (!answeredKeys.has('colors_set')) {
+      setResumeColorsAnswerData(null)
+      return
+    }
+
+    if (!user) {
+      setResumeColorsAnswerData(getDraftAnswerData('colors_set'))
+      return
+    }
+
+    if (!answeredKeysReady) return
+
+    let cancelled = false
+    const supabase = createClient()
+    ;(async () => {
+      const { data } = await supabase
+        .from('curriculum_answers')
+        .select('answer_data')
+        .eq('user_id', user.id)
+        .eq('question_key', 'colors_set')
+        .is('project_id', null)
+        .maybeSingle()
+      if (!cancelled) {
+        setResumeColorsAnswerData(data?.answer_data ?? null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user, answeredKeys, answeredKeysReady, draft])
+
   const handleDraftRefresh = () => {
     refreshDraft()
     if (!user) {
-      setAnsweredKeys(getDraftAnsweredKeys())
+      const draftKeys = getDraftAnsweredKeys()
+      setAnsweredKeys(draftKeys)
+      setResumeColorsAnswerData(
+        draftKeys.has('colors_set') ? getDraftAnswerData('colors_set') : null
+      )
     }
   }
-  
+
   // Curriculum Progress (single source of truth)
   // CRITICAL: Pass answeredKeys for immediate progress updates (coins fill as user progresses)
   const progress = useCurriculumProgress(user?.id ?? null, answeredKeys)
-  
+
   // Apply background immediately on mount (before profile loads) to prevent black flash
   useEffect(() => {
     if (typeof document !== 'undefined' && !user) {
@@ -86,13 +131,13 @@ export default function Home() {
       }
     }
   }, [user])
-  
+
   // Active Module State (which phase we're working on)
   const [activeModule, setActiveModule] = useState<'pre' | 'prod' | 'post' | 'legacy'>('pre')
-  
+
   // Panel state (like Zeyoda's appMode)
   const [activePanel, setActivePanel] = useState<'logo' | 'colors' | 'font' | 'asset' | null>(null)
-  
+
   // Carousel state: current typing input for live card updates
   const [currentTypingInput, setCurrentTypingInput] = useState<string>('')
   const [activeStepId, setActiveStepId] = useState<StepId | null>(null) // Single source of truth for both chat and carousel
@@ -101,10 +146,10 @@ export default function Home() {
   const carouselIndexRef = useRef<number>(0)
   const prevQuestionRef = useRef<StepId | null>(null)
   const isUserSwipeRef = useRef<boolean>(false)
-  
+
   // Carousel items from curriculum answers + current question card
   const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode, answeredKeys)
-  
+
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
     { id: 'pre' as const, label: 'PRE', progress: progress.preProgress },
@@ -112,25 +157,25 @@ export default function Home() {
     { id: 'post' as const, label: 'POST', progress: progress.postProgress },
     { id: 'legacy' as const, label: 'LEGACY', progress: progress.loopProgress },
   ], [progress.preProgress, progress.proProgress, progress.postProgress, progress.loopProgress])
-  
+
   // Reset carousel index when user changes
   useEffect(() => {
     setCarouselIndex(0)
     prevQuestionRef.current = null
   }, [user?.id])
-  
+
   // Auto-advance to current question card (always at index 0)
   // CRITICAL: Respect edit mode and user swipes
   // Navigation (cardNavigate) updates activeStepId without edit mode, so auto-center can work
   // Editing (cardEdit) sets edit mode, so auto-center is blocked
   useEffect(() => {
     if (!activeStepId) return
-    
+
     // CRITICAL: In edit mode, NEVER auto-center - stay on the edited card
     if (isEditMode) {
       return // Exit early - don't touch carousel at all
     }
-    
+
     // CRITICAL: A step change can be USER-initiated (swipe/pencil dispatch cardNavigate/cardEdit,
     // which set isUserSwipeRef before updating activeStepId) or APP-initiated (submit/resume).
     // If the user caused it, consume the flag and do NOT auto-center - snapping to index 0
@@ -140,7 +185,7 @@ export default function Home() {
       prevQuestionRef.current = activeStepId
       return
     }
-    
+
     // App-initiated transition (submit advance, resume): center on current question card (index 0)
     if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== activeStepId) {
       setCarouselIndex(0)
@@ -158,30 +203,30 @@ export default function Home() {
       if (!stepId) return
 
       if (!user && isBeyondFreeTaste(stepId)) return
-      
+
       // CRITICAL: Enter edit mode - set activeStepId to the card being edited
       setActiveStepId(stepId)
       setIsEditMode(true)
-      
+
       // Mark as user-initiated navigation to prevent auto-center
       isUserSwipeRef.current = true
-      
+
       // Navigate carousel to the card being edited
-      const cardIndex = customEvent.detail?.cardIndex !== undefined 
-        ? customEvent.detail.cardIndex 
+      const cardIndex = customEvent.detail?.cardIndex !== undefined
+        ? customEvent.detail.cardIndex
         : carouselItems.findIndex(item => item.stepId === stepId)
-      
+
       if (cardIndex !== -1) {
         setCarouselIndex(cardIndex)
         carouselIndexRef.current = cardIndex
       }
-      
+
       // Clear swipe flag after delay (but stay in edit mode until submit)
       setTimeout(() => {
         isUserSwipeRef.current = false
       }, 100)
     }
-    
+
     window.addEventListener('cardEdit', handleCardEdit as EventListener)
     return () => {
       window.removeEventListener('cardEdit', handleCardEdit as EventListener)
@@ -197,32 +242,32 @@ export default function Home() {
       if (!stepId) return
 
       if (!user && isBeyondFreeTaste(stepId)) return
-      
+
       // CRITICAL: Navigation is NOT editing - swiping away abandons any in-progress edit.
       // Without this, edit mode stuck ON after pencil+swipe and the carousel froze
       // (edit mode suppresses the current question card and blocks auto-center forever).
       setIsEditMode(false)
       setActiveStepId(stepId)
-      
+
       // Mark as user-initiated to prevent auto-center during navigation
       isUserSwipeRef.current = true
-      
+
       // Navigate carousel to the swiped card
-      const cardIndex = customEvent.detail?.cardIndex !== undefined 
-        ? customEvent.detail.cardIndex 
+      const cardIndex = customEvent.detail?.cardIndex !== undefined
+        ? customEvent.detail.cardIndex
         : carouselItems.findIndex(item => item.stepId === stepId)
-      
+
       if (cardIndex !== -1) {
         setCarouselIndex(cardIndex)
         carouselIndexRef.current = cardIndex
       }
-      
+
       // Clear swipe flag after delay (allows auto-center for next step change)
       setTimeout(() => {
         isUserSwipeRef.current = false
       }, 100)
     }
-    
+
     window.addEventListener('cardNavigate', handleCardNavigate as EventListener)
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
@@ -258,7 +303,7 @@ export default function Home() {
       }
     }
   }, [user, hydrated])
-  
+
   // Temporary preview state for live background updates (unified for logo + colors)
   const [previewOverrides, setPreviewOverrides] = useState<{
     primary_color?: string
@@ -266,8 +311,10 @@ export default function Home() {
     brand_color?: string
     logo_url?: string
     logo_use_background?: boolean
+    font_family?: string
+    body_font_family?: string
   } | null>(null)
-  
+
   // CRITICAL: Listen for profile preview changes from InlineColorPicker (matches Zeyoda's artistConfigPreview)
   // This ensures page.tsx knows about color changes and updates previewOverrides for halo
   useEffect(() => {
@@ -285,7 +332,7 @@ export default function Home() {
         }))
       }
     }
-    
+
     const handleLogoPreview = (e: Event) => {
       const customEvent = e as CustomEvent<{ logo_url?: string | null; logo_use_background?: boolean }>
       if (customEvent.detail) {
@@ -296,7 +343,7 @@ export default function Home() {
         }))
       }
     }
-    
+
     window.addEventListener('profilePreview', handleProfilePreview as EventListener)
     window.addEventListener('logoPreviewChange', handleLogoPreview as EventListener)
     return () => {
@@ -304,11 +351,11 @@ export default function Home() {
       window.removeEventListener('logoPreviewChange', handleLogoPreview as EventListener)
     }
   }, [])
-  
+
   // Legacy logo preview state (keep for backward compatibility with LogoPanel)
   const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null)
   const [logoPreviewUseBackground, setLogoPreviewUseBackground] = useState(false)
-  
+
   // Refs for orbit positioning (like Zeyoda's videoContainerRef pattern)
   const featuredContentRef = useRef<HTMLDivElement>(null)
   const haloContainerRef = useRef<HTMLDivElement>(null) // Separate container for halo (below mission, above FeaturedContent)
@@ -414,6 +461,7 @@ export default function Home() {
       accent_color: preview.accent_color ?? null,
       brand_color: preview.brand_color ?? null,
       font_family: preview.font_family ?? null,
+      body_font_family: preview.body_font_family ?? null,
       logo_url: preview.logo_url ?? null,
       logo_use_background: preview.logo_use_background ?? null,
     }
@@ -433,6 +481,7 @@ export default function Home() {
       accent_color: updates.accent_color,
       brand_color: updates.brand_color,
       font_family: updates.font_family,
+      body_font_family: updates.body_font_family,
       logo_url: updates.logo_url,
       logo_use_background: updates.logo_use_background,
     })
@@ -443,6 +492,8 @@ export default function Home() {
       brand_color: updates.brand_color ?? prev?.brand_color,
       logo_url: updates.logo_url ?? prev?.logo_url,
       logo_use_background: updates.logo_use_background ?? prev?.logo_use_background,
+      font_family: updates.font_family ?? prev?.font_family,
+      body_font_family: updates.body_font_family ?? prev?.body_font_family,
     }))
     handleDraftRefresh()
   }
@@ -472,11 +523,13 @@ export default function Home() {
   })()
 
   const effectiveAnsweredKeys = useMemo(() => {
-    if (user) {
-      return withProfileSatisfiedArtistName(answeredKeys, mergedProfile?.artist_name)
-    }
-    return answeredKeys
-  }, [user, answeredKeys, mergedProfile?.artist_name])
+    // Only bridge when hydration colors payload is known. undefined → no brand bridge.
+    return withResumeSatisfiedKeys(
+      answeredKeys,
+      user ? mergedProfile?.artist_name : null,
+      resumeColorsAnswerData
+    )
+  }, [user, answeredKeys, mergedProfile?.artist_name, resumeColorsAnswerData])
 
   const showPhaseCoins = effectiveAnsweredKeys.has('artist_name')
   const isEarlyOnboarding = !isFreeTasteGateReached(effectiveAnsweredKeys)
@@ -534,12 +587,12 @@ export default function Home() {
       primary_color: mergedProfile?.primary_color, // Include primary color in signature
       user: !!user
     })
-    
+
     // Only apply if signature changed (prevents reapplying same background)
     if (bgSignature === lastLogoBgRef.current) {
       return
     }
-    
+
     // Debounce rapid changes (e.g., during typing)
     if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     logoBgTimeoutRef.current = setTimeout(() => {
@@ -593,7 +646,7 @@ export default function Home() {
       applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
       lastLogoBgRef.current = bgSignature
     }, 200) // Debounce background updates
-    
+
     return () => {
       if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     }
@@ -640,7 +693,7 @@ export default function Home() {
   }
 
   return (
-    <div 
+    <div
       className="flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
     >
       <DataReset isAnonymous={!user} />
@@ -680,10 +733,10 @@ export default function Home() {
         <div className="text-center relative z-0">
           {loggedInReady ? (
             <>
-              <h1 
-                className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-1 cursor-pointer hover:opacity-80 transition-opacity" 
-                style={{ 
-                  fontFamily: mergedProfile?.font_family || 'Geist Sans, sans-serif', 
+              <h1
+                className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-1 cursor-pointer hover:opacity-80 transition-opacity"
+                style={{
+                  fontFamily: mergedProfile?.font_family || 'var(--font-geist-sans), sans-serif',
                   color: mergedProfile?.accent_color || mergedProfile?.brand_color || '#10b981',
                   position: 'relative',
                   zIndex: 100,
@@ -695,12 +748,12 @@ export default function Home() {
               >
                 {profile?.artist_name || "ArtisTalks"}
               </h1>
-              
-              {/* Mission Statement - Display under artist name */}
-              <p 
+
+              {/* Mission Statement - body font */}
+              <p
                 className="text-lg md:text-xl text-zinc-400 mt-1 mb-2 font-light transition-all duration-500"
-                style={{ 
-                  fontFamily: mergedProfile?.font_family || 'Geist Sans, sans-serif',
+                style={{
+                  fontFamily: mergedProfile?.body_font_family || 'var(--font-geist-sans), sans-serif',
                   color: mergedProfile?.accent_color || mergedProfile?.brand_color || '#a1a1aa',
                   opacity: profile?.mission_statement ? 1 : 0.5,
                   position: 'relative',
@@ -709,10 +762,10 @@ export default function Home() {
               >
                 {profile?.mission_statement || "The Champion is ready for you."}
               </p>
-              
+
               {/* Halo Container with Carousel ON it (Zeyoda pattern) */}
               {showCarouselStage ? (
-                <div 
+                <div
                   ref={haloContainerRef}
                   className="relative w-full max-w-5xl mx-auto"
                   style={{ marginTop: '24px', marginBottom: '16px', overflow: 'visible' }}
@@ -723,7 +776,7 @@ export default function Home() {
                     intensity={0.95}
                     zIndex={1}
                   />
-                  
+
                   <OrbitPeekCarousel
                     items={carouselItems}
                     index={carouselIndex}
@@ -741,11 +794,12 @@ export default function Home() {
                     containerRef={featuredContentRef}
                     theme={{
                       fontFamily: mergedProfile?.font_family || undefined,
+                      bodyFontFamily: mergedProfile?.body_font_family || undefined,
                       primaryColor: mergedProfile?.primary_color || mergedProfile?.brand_color || undefined,
                       accentColor: mergedProfile?.accent_color || mergedProfile?.brand_color || undefined
                     }}
                   />
-                  
+
                   {showPhaseCoins ? (
                     <ArtisTalksOrbitRenderer
                       featuredContentRef={featuredContentRef}
@@ -770,7 +824,7 @@ export default function Home() {
                 <h1
                   className="text-4xl md:text-5xl font-bold tracking-wider mt-0 mb-1 transition-opacity"
                   style={{
-                    fontFamily: chatProfile?.font_family || 'Geist Sans, sans-serif',
+                    fontFamily: chatProfile?.font_family || 'var(--font-geist-sans), sans-serif',
                     color: chatProfile?.accent_color || chatProfile?.brand_color || '#10b981',
                     position: 'relative',
                     zIndex: 100,
@@ -788,7 +842,7 @@ export default function Home() {
                 <p
                   className="text-lg md:text-xl text-zinc-400 mt-1 mb-2 font-light transition-all duration-500"
                   style={{
-                    fontFamily: chatProfile?.font_family || 'Geist Sans, sans-serif',
+                    fontFamily: chatProfile?.body_font_family || 'var(--font-geist-sans), sans-serif',
                     color: chatProfile?.accent_color || chatProfile?.brand_color || '#a1a1aa',
                     opacity: 1,
                     position: 'relative',
@@ -830,6 +884,7 @@ export default function Home() {
                     containerRef={featuredContentRef}
                     theme={{
                       fontFamily: chatProfile?.font_family || undefined,
+                      bodyFontFamily: chatProfile?.body_font_family || undefined,
                       primaryColor: chatProfile?.primary_color || chatProfile?.brand_color || undefined,
                       accentColor: chatProfile?.accent_color || chatProfile?.brand_color || undefined,
                     }}
@@ -862,7 +917,7 @@ export default function Home() {
             fontFamily={chatProfile?.font_family || null}
           />
         ) : null}
-        
+
         {/* Band C — chat only. Poster: 100vh centered. Portal: auto height under Band A. */}
         <div
           className="action-section text-center relative z-10"
@@ -881,7 +936,7 @@ export default function Home() {
             </div>
           )}
         </div>
-        
+
         {/* Panels - Appear above chat, matches Zeyoda pattern (OnboardingPanel positioning) */}
         {activePanel === 'logo' && (
           <div className="onboarding-panel bg-gray-800 bg-opacity-90 rounded-lg p-6 mt-8 max-w-2xl mx-auto backdrop-blur-sm border border-gray-600" style={{
@@ -933,7 +988,7 @@ export default function Home() {
             />
           </div>
         )}
-        
+
         {activePanel === 'colors' && (
           <div className="onboarding-panel bg-gray-800 bg-opacity-90 rounded-lg p-6 mt-8 max-w-2xl mx-auto backdrop-blur-sm border border-gray-600" style={{
             background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(51, 65, 85, 0.95) 100%)',
@@ -950,8 +1005,8 @@ export default function Home() {
                   delete updated.accent_color
                   return Object.keys(updated).length > 0 ? updated : null
                 })
-                window.dispatchEvent(new CustomEvent('panelComplete', { 
-                  detail: { stepId: 'COLORS_PANEL' } 
+                window.dispatchEvent(new CustomEvent('panelComplete', {
+                  detail: { stepId: 'COLORS_PANEL' }
                 }))
                 setActivePanel(null)
               }}
@@ -971,7 +1026,7 @@ export default function Home() {
             />
           </div>
         )}
-        
+
         {activePanel === 'font' && (
           <div className="onboarding-panel bg-gray-800 bg-opacity-90 rounded-lg p-6 mt-8 max-w-2xl mx-auto backdrop-blur-sm border border-gray-600" style={{
             background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(51, 65, 85, 0.95) 100%)',
@@ -981,8 +1036,8 @@ export default function Home() {
               profile={profile}
               onSave={(updates) => {
                 updateProfile(updates)
-                window.dispatchEvent(new CustomEvent('panelComplete', { 
-                  detail: { stepId: 'FONT_PANEL' } 
+                window.dispatchEvent(new CustomEvent('panelComplete', {
+                  detail: { stepId: 'FONT_PANEL' }
                 }))
                 setActivePanel(null)
               }}
@@ -990,7 +1045,7 @@ export default function Home() {
             />
           </div>
         )}
-        
+
         {/* Chat input container - Minimal spacing, seamless from landing page (Zeyoda pattern: 16px margin) */}
         <div className="flex justify-center" style={{ marginTop: '16px', marginBottom: '16px' }}>
           {loggedInReady && (

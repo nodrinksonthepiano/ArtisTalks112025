@@ -1,21 +1,19 @@
 # STEP_PLAN.md — ArtisTalks Launch Plan
 
-**Status:** Private-beta deployment and external OTP are proven at `artistalks8526.vercel.app`.
+**Status:** Private beta at `artistalks8526.vercel.app`.
 
-Restore fix `a4d4dfa` partially passed:
-- claimed-name return works;
-- authenticated artist name satisfies INIT;
-- saved color background restores;
-- curriculum_answers persistence is still broken;
-- fresh test artist `JT` saved zero answer rows;
-- returning artists therefore restart at COLORS_PANEL.
-
-Sprint 1 remains open until durable curriculum answers are proven and returning artists resume at the first genuinely unanswered step.
+Sprint 1 save-and-restore proven:
+- first OTP saves profile + free-taste `curriculum_answers`;
+- authenticated Data Reset signs out without deleting DB memory;
+- claimed-name return restores progress;
+- resume at the first genuinely unanswered step;
+- new answers after login persist across Data Reset and return.
 
 Planning checkpoint: `6319649`.
-Current deployed restore checkpoint: `a4d4dfa`.
+Prior restore checkpoint: `a4d4dfa` (partial — INIT/color only).
+Current checkpoint: `cd2dd56` (non-destructive Data Reset + first-save confirm-before-clear).
 
-**Code baseline:** `feature/artist-accordion-hub` @ `a4d4dfa` (restore/save reliability — partially verified). Do not merge to main.
+**Code baseline:** `feature/artist-accordion-hub` @ `cd2dd56`. Do not merge to main.
 **Last updated:** 2026-08-05
 
 > ArtisTalks teaches. Artistocks launches. Zeyoda protects. GOSHBOT routes memory.
@@ -267,28 +265,48 @@ The mitigation is **not** the response copy. It is the rate limit. Requirements 
 
 ---
 
-## 5. The Free Taste — 8 Steps, 7 Questions
+## 5. The Free Taste — 10 Steps / 7 Questions / 3 Visual Brand Steps
 
-**Do not call this the six-question free taste.** That phrase is retired. Colors stay at position 2 and `TARGET_REACH` stays in, which makes the accurate count 8 steps / 7 questions.
+**Do not call this the six-question free taste.** That phrase is retired.
 
-Step 2 is a panel, not a question, which is why the two numbers differ.
+Accurate count:
+
+```text
+10 total steps
+7 written questions
+3 visual brand steps (Logo → Colors → Font)
+```
+
+Brand steps are panels, not written questions. The free-taste end remains `BUSINESS_OFFERING` / `business_type_products_services`.
 
 | # | Step ID | Key | Question? |
 |---|---|---|---|
 | 1 | `INIT` | `artist_name` | yes |
-| 2 | `COLORS_PANEL` | `colors_set` | no — panel |
-| 3 | `GIFT_PRESENCE` | `gift_to_world` | yes |
-| 4 | `KNOWN_FOR_LEGACY` | `known_for_legacy` | yes |
-| 5 | `KNOWN_FOR_EXPRESSION` | `known_for_expression` | yes |
-| 6 | `TARGET_REACH` | `target_reach` | yes |
-| 7 | `GENRE_ASSOCIATIONS` | `genre_associations` | yes |
-| 8 | `BUSINESS_OFFERING` | `business_type_products_services` | yes |
+| 2 | `LOGO_PANEL` | `logo_uploaded` | no — panel (upload, describe, or skip) |
+| 3 | `COLORS_PANEL` | `colors_set` | no — panel |
+| 4 | `FONT_PANEL` | `font_set` | no — panel (headline + optional body) |
+| 5 | `GIFT_PRESENCE` | `gift_to_world` | yes |
+| 6 | `KNOWN_FOR_LEGACY` | `known_for_legacy` | yes |
+| 7 | `KNOWN_FOR_EXPRESSION` | `known_for_expression` | yes |
+| 8 | `TARGET_REACH` | `target_reach` | yes |
+| 9 | `GENRE_ASSOCIATIONS` | `genre_associations` | yes |
+| 10 | `BUSINESS_OFFERING` | `business_type_products_services` | yes |
 
-The Living Affirmation completes at **step 8**. The email **save** gate follows (not an automatic Orbit application).
+The Living Affirmation completes at **step 10**. The email **save** gate follows (not an automatic Orbit application).
 
 Canonical gift language (do not paraphrase):
 
 > Acknowledge yourself. What makes your presence a gift to the world?
+
+Logo panel wording (do not paraphrase):
+
+> Upload your logo—or describe the logo you imagine.
+
+Skip counts as answered (`skipped: true`). Each brand step writes **one** curriculum answer row and creates **one** useful card — never three hidden rows from one Save, and never status phrases (`"Colors set"`, `"Font set"`, `"Logo uploaded"`) as answer text.
+
+Fonts A (minimal): `profiles.font_family` = headline; nullable `profiles.body_font_family` = body (Geist until chosen). One Font step / one Font card / two optional choices.
+
+Returning artists who completed the old combined brand panel (`colors_set`) are bridged so Logo + Colors + Font count as satisfied — do not force them backward through brand onboarding.
 
 Code authority for order and `FREE_TASTE_LAST_STEP_ID`: `lib/curriculum.ts`.
 
@@ -412,26 +430,23 @@ Do **not** trust the old 2026-08-01 “Verified Current Reality” claims (AuthP
 - Authenticated artist name satisfies INIT
 - Color-only authenticated profiles restore saved primary/brand color
 
-### Restore/save reliability — deployed at `a4d4dfa`, partially verified
+### Restore/save reliability — proven at `cd2dd56`
 
 Proven working:
 - first-time external six-digit OTP;
 - returning claimed-name OTP;
 - profile artist-name restoration;
 - authenticated profile artist name satisfies INIT;
-- saved color background restores instead of forcing the CreationCreator logo.
+- saved color background restores instead of forcing the CreationCreator logo;
+- first OTP persists free-taste answers into `curriculum_answers`;
+- migrate clears the anonymous draft only after profile and every draft answer are confirmed stored;
+- zero source answers at migrate is failure (draft kept + sanctuary banner), not success;
+- authenticated Data Reset signs out without deleting `profiles` or `curriculum_answers` (no `localStorage.clear()`);
+- anonymous Data Reset clears local unsaved draft only;
+- claimed-name return restores progress; resume at first genuinely unanswered step;
+- answers saved after login persist across Data Reset and return.
 
-Still unresolved:
-- fresh artist `JT` saved zero curriculum_answers rows;
-- returning artists consequently restart at COLORS_PANEL;
-- exact first-save failure mode remains unproven;
-- the prior dual-client theory was not sufficient as the sole root cause;
-- Network and Console evidence must distinguish:
-  - no answer request;
-  - failed answer request;
-  - empty draft at migration time;
-  - migration skipped;
-  - another precise failure.
+Historical note: earlier zero-row results for test artist `JT` / `a4d4dfa` were contaminated by destructive authenticated Data Reset and/or pre-guard silent clear on empty migrate — not the current behavior.
 
 Approved invariants:
 - never report sanctuary save success if curriculum_answers failed;
@@ -441,6 +456,7 @@ Approved invariants:
 - returning artists resume after all durably answered questions;
 - color-only authenticated profiles use saved primary/brand color;
 - the CreationCreator marketing logo is only for untouched anonymous landing;
+- one Data Reset button: Zeyoda-like exit when authenticated; local draft clear when anonymous;
 - no current_step database column;
 - no backfill;
 - verify with fresh artists.
@@ -487,7 +503,7 @@ Do not treat artistalks.org as a broad public launch until:
 
 Each sprint is one clear objective. Do not broaden. Do not touch chat/carousel drift during these sprints (see §11).
 
-### Sprint 1 — Deploy and prove identity ⚠️ partially complete
+### Sprint 1 — Deploy and prove identity ✓ complete
 
 Completed:
 - private beta deployed;
@@ -497,16 +513,17 @@ Completed:
 - claimed-name privacy;
 - saved artist-name restoration;
 - authenticated artist name satisfies INIT;
-- saved color-background restoration.
+- saved color-background restoration;
+- free-taste `curriculum_answers` persist on first OTP save;
+- migrate clears draft only after profile + all draft answers confirmed;
+- authenticated Data Reset is non-destructive (sign out; DB memory kept);
+- return restores progress without replaying answered questions;
+- resume at the first genuinely unanswered allowed step;
+- post-login answers persist across Data Reset and return.
 
-Exit still required:
-- prove expected curriculum_answers rows save for a fresh artist;
-- refresh and claimed return must not replay answered questions;
-- return must resume at the first genuinely unanswered allowed step;
-- migration failure must retain the browser draft and provide retry;
-- exact first-save failure mode must be captured and corrected.
+Next: Sprint 2.
 
-### Sprint 2 — First-impression truth
+### Sprint 2 — First-impression truth ← current
 
 - no coins before artist name;
 - PRE only during early onboarding;
@@ -605,7 +622,7 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 3. Unclaimed names continue the free taste; email is asked only at the **save** gate.
 4. Claimed names get a locked door: code to the email on file, no email shown, no mask, no continue-anyway.
 5. `cancakes` is a payment-path code, never a login code.
-6. The free taste is 8 steps / 7 questions to the affirmation.
+6. The free taste is 10 steps / 7 written questions / 3 visual brand steps to the affirmation (supersedes older “8 steps / 7 questions” count).
 7. "Six-question free taste" is retired language.
 8. lowercase "my champion" = every artist; capitalized "Champions" = the Orbit Launch cohort.
 9. Orbit Launch artists are never called founders. The cohort revolves.
@@ -643,7 +660,42 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 8. Returning artists must never replay a durably answered question. Resume waits
    until profile and curriculum-answer hydration are ready, then selects the
    first genuinely unanswered allowed step.
-9. Fresh test artist `JT` proved that checkpoint `a4d4dfa` fixed INIT and
-   background restoration but did not persist curriculum_answers.
-10. Do not change RLS, grants, schema, or migration architecture again until the
-    actual request failure or absence of request is captured.
+9. Fresh test artist `JT` under `a4d4dfa` showed INIT/color restore while
+   `curriculum_answers` appeared empty — historical. Later proven causes included
+   destructive authenticated Data Reset and/or silent clear on empty migrate;
+   current behavior is governed by items below and checkpoint `cd2dd56`.
+10. Do not change RLS, grants, or schema without a precise error proving the need.
+
+### Locked 2026-08-05 — Data Reset + first-save confirm
+
+1. One Data Reset button (Zeyoda-like when authenticated): sign out; clear
+   temporary returning-claim marker; preserve `profiles` and `curriculum_answers`.
+2. Anonymous Data Reset clears the local unsaved draft only.
+3. Never clear the anonymous draft until profile and every draft answer are
+   confirmed stored (inserted or already existed).
+4. Zero source answers at migrate is failure — keep the draft and show the
+   sanctuary-not-finished-saving banner; never treat it as success.
+5. Authenticated Data Reset must never delete database rows and must never call
+   `localStorage.clear()`.
+6. Post-login answers auto-save to `curriculum_answers` and must survive Data
+   Reset and claimed-name return.
+
+### Locked 2026-08-06 — brand spine (Logo → Colors → Font)
+
+1. Free taste order: Name → Logo → Colors → Font → Gift → rest; end stays
+   `business_type_products_services`.
+2. Three real curriculum steps with keys `logo_uploaded`, `colors_set`,
+   `font_set` — one answer row and one purposeful card per step.
+3. No mega brand panel; no mini-wizard; no three orphan rows from one Save.
+4. Logo: upload, describe, or skip. Skip saves `{ skipped: true, step_id: "LOGO_PANEL" }`
+   and counts as answered.
+5. Fonts A minimal: `font_family` = headline; add nullable `body_font_family`;
+   one Font step / one Font card; body defaults to Geist; artist sanctuary
+   content uses those fonts; app chrome stays readable.
+6. Panel saves use select-then-update-or-insert (`user_id` + `question_key` +
+   `project_id IS NULL`). Partial unique index is a race backstop, not the
+   update mechanism. Disable Save while submitting.
+7. Old combined-brand artists (`colors_set` present) are bridged across Logo,
+   Colors, and Font for resume.
+8. No status phrases stored as normal answer text. No carousel-motion work in
+   this change.

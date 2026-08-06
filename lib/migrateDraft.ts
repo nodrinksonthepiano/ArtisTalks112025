@@ -79,6 +79,9 @@ function buildProfileFill(
   if (isBlank(existing?.font_family) && preview.font_family) {
     fill.font_family = preview.font_family
   }
+  if (isBlank(existing?.body_font_family) && preview.body_font_family) {
+    fill.body_font_family = preview.body_font_family
+  }
   if (isBlank(existing?.logo_url) && preview.logo_url) {
     fill.logo_url = preview.logo_url
   }
@@ -107,6 +110,7 @@ async function insertAnswerIfMissing(
     .select('id')
     .eq('user_id', userId)
     .eq('question_key', question_key)
+    .is('project_id', null)
     .maybeSingle()
 
   if (checkError) {

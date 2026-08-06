@@ -4,10 +4,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep, isSelectStep, isColorsPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, withProfileSatisfiedArtistName } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isBrandPanelStep, isLogoPanelStep, isColorsPanelStep, isFontPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, getCurriculumSpineOrder, withProfileSatisfiedArtistName, legacyBrandBridgeKeys, BRAND_FLOW_VERSION } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import {
   getDraftAnswerText,
+  getDraftAnswerData,
   getDraftAnsweredKeys,
   loadDraft,
   setDraftCurrentStepId,
@@ -15,8 +16,22 @@ import {
   upsertDraftAnswer,
   clearDraftArtistNameAttempt,
 } from '@/lib/draft'
+import { upsertCurriculumAnswer } from '@/lib/upsertCurriculumAnswer'
 import InlineColorPicker from '@/components/InlineColorPicker'
+import InlineLogoPicker from '@/components/InlineLogoPicker'
+import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
+
+/** Legacy status strings — never hydrate into a text question input. */
+const STATUS_ANSWER_TEXTS = new Set([
+  'colors set',
+  'font set',
+  'logo uploaded',
+])
+
+function isStatusAnswerText(value: string): boolean {
+  return STATUS_ANSWER_TEXTS.has(value.trim().toLowerCase())
+}
 import LivingAffirmation from '@/components/LivingAffirmation'
 import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
@@ -54,14 +69,18 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const [fullHistory, setFullHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([]) // Full history for history button
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
   
-  // CRITICAL: Track current picker state to know what to save when Send is clicked
-  // This ensures we save the actual current state, not stale profile values
+  // Live panel drafts (profile still updates on each change for preview)
   const [currentPickerState, setCurrentPickerState] = useState<{
-    colors?: { primary_color?: string | null; accent_color?: string | null }
+    colors?: {
+      primary_color?: string | null
+      accent_color?: string | null
+      brand_color?: string | null
+    }
     logo?: { logo_url?: string | null; logo_use_background?: boolean | null }
-    font?: { font_family?: string | null }
+    font?: { font_family?: string | null; body_font_family?: string | null }
   }>({})
-  
+  const [logoDescription, setLogoDescription] = useState('')
+
   // Redo stack: track undone states so user can redo
   const [redoStack, setRedoStack] = useState<Array<{
     stepId: StepId
@@ -69,10 +88,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     history: Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>
   }>>([])
   
-  // CRITICAL: The full color picker should only render when the artist is actively
-  // answering the colors step (unanswered) or explicitly chose to edit their brand.
-  // Swiping/navigating onto an ANSWERED colors card shows a compact summary instead -
-  // the full picker hijacking the chat on a casual swipe was a tested pain point.
+  // Brand panel editors open when the step is unanswered or explicitly edited.
+  // Casual swipe onto an answered brand card shows a compact summary instead.
   const [pickerOpenedExplicitly, setPickerOpenedExplicitly] = useState(false)
   const keepPickerOpenRef = useRef(false)
   const currentStepIdRef = useRef<StepId>(currentStepId)
@@ -84,6 +101,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
+
+  const setCurrentStepIdSync = useCallback((stepId: StepId) => {
+    currentStepIdRef.current = stepId
+    setCurrentStepId(stepId)
+  }, [])
 
   useEffect(() => {
     currentStepIdRef.current = currentStepId
@@ -150,9 +172,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setHistory([nextMessage])
     setFullHistory((prev) => [...prev, nextMessage])
     setPreviousStepId(fromStepId)
-    setCurrentStepId(nextStepId)
+    setCurrentStepIdSync(nextStepId)
     setInput('')
-  }, [cancelPendingStepAdvance])
+    if (isBrandPanelStep(finalStep)) {
+      keepPickerOpenRef.current = true
+      setPickerOpenedExplicitly(true)
+      setLogoDescription('')
+      setSaveError('')
+    }
+  }, [cancelPendingStepAdvance, setCurrentStepIdSync])
 
   const scheduleStepAdvance = useCallback(
     (nextStepId: StepId, fromStepId: StepId) => {
@@ -162,10 +190,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     [cancelPendingStepAdvance, advanceToStep]
   )
 
-  /** Enter brand panel: clear text input, open picker, cancel any pending advance. */
-  const enterColorsPanel = useCallback(
+  /** Enter a brand panel editor: clear text input, open picker, cancel pending advance. */
+  const enterBrandPanel = useCallback(
     (stepId: StepId) => {
-      if (!isColorsPanelStep(getStep(stepId))) return
+      if (!isBrandPanelStep(getStep(stepId))) return
       cancelPendingStepAdvance()
       keepPickerOpenRef.current = true
       setPickerOpenedExplicitly(true)
@@ -189,10 +217,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setPickerOpenedExplicitly(false)
   }, [currentStepId])
   
+  const isBrandStep = isBrandPanelStep(getStep(currentStepId))
+  const isLogoStep = isLogoPanelStep(getStep(currentStepId))
   const isColorsStep = isColorsPanelStep(getStep(currentStepId))
+  const isFontStep = isFontPanelStep(getStep(currentStepId))
   const isSelectInputStep = isSelectStep(getStep(currentStepId))
-  const showColorsPicker = isColorsStep && (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
-  const showColorsSummary = isColorsStep && !showColorsPicker
+  const showBrandPicker =
+    isBrandStep &&
+    (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
+  const showBrandSummary = isBrandStep && !showBrandPicker
   
   // Notify parent of current step change (for carousel)
   // CRITICAL: Always notify parent when currentStepId changes
@@ -211,13 +244,20 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }, [currentStepId, onCurrentStepChange, input])
   
+  // Resume-only legacy brand keys (unversioned colors_set at hydration). Never recalculated mid-journey.
+  const resumeLegacyBrandKeysRef = useRef<Set<string>>(new Set())
+
   // Helper: Find first unanswered question in curriculum flow
   // CRITICAL: Accept optional answeredKeysOverride to use updated keys immediately after state update
+  // Brand bridge: only the resume-captured legacy keys — never re-derive from a fresh colors_set.
   const findFirstUnansweredStep = useCallback((startFrom: StepId = 'INIT', answeredKeysOverride?: Set<string>): StepId => {
-    let keysToCheck = answeredKeysOverride || answeredKeys
-    if (!isAnonymous) {
-      keysToCheck = withProfileSatisfiedArtistName(keysToCheck, profile?.artist_name)
-    }
+    const keysToCheck = withProfileSatisfiedArtistName(
+      new Set([
+        ...(answeredKeysOverride || answeredKeys),
+        ...resumeLegacyBrandKeysRef.current,
+      ]),
+      isAnonymous ? null : profile?.artist_name
+    )
 
     if (isAnonymous && isFreeTasteGateReached(keysToCheck)) {
       return FREE_TASTE_LAST_STEP_ID
@@ -289,14 +329,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
     const step = getStep(stepId)
 
-    // Panel steps store status labels, not chat input text
-    if (isColorsPanelStep(step)) return ''
+    // Brand panels are not text answers
+    if (isBrandPanelStep(step)) return ''
     
     // Try 1: Check fullHistory first (fast, no DB query)
     const fullHistoryAnswer = fullHistory.find(
       msg => msg.stepId === stepId && msg.role === 'user'
     )
     if (fullHistoryAnswer) {
+      if (isStatusAnswerText(fullHistoryAnswer.content)) return ''
       if (isSelectStep(step)) {
         return resolveSelectValue(step, fullHistoryAnswer.content)
       }
@@ -309,6 +350,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (isAnonymous) {
       const draftText = getDraftAnswerText(step.key)
       if (draftText) {
+        if (isStatusAnswerText(draftText)) return ''
         if (isSelectStep(step)) {
           return resolveSelectValue(step, draftText)
         }
@@ -326,17 +368,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         .select('answer_data')
         .eq('user_id', user.id)
         .eq('question_key', step.key)
+        .is('project_id', null)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
       
       if (answer?.answer_data) {
         const answerData = answer.answer_data as { text?: string; content?: string; label?: string }
-        const raw = answerData?.text || answerData?.content || ''
+        const raw = answerData?.label || answerData?.text || answerData?.content || ''
+        if (isStatusAnswerText(raw)) return ''
         if (isSelectStep(step)) {
           return resolveSelectValue(step, raw)
         }
-        return answerData?.label || raw
+        return raw
       }
     } catch (err) {
       console.error('Error loading answer:', err)
@@ -356,9 +400,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const step = getStep(stepId)
     const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
     
-    // Pencil-editing the colors card is an EXPLICIT request to open the brand picker
-    if (isColorsPanelStep(step)) {
-      enterColorsPanel(stepId)
+    // Pencil-editing a brand card is an EXPLICIT request to open that step's editor
+    if (isBrandPanelStep(step)) {
+      enterBrandPanel(stepId)
     }
     
     // Find assistant question in history
@@ -380,8 +424,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       setHistory(prev => prev.slice(0, assistantQuestionIndex + 1))
     }
     
-    // Update currentStepId immediately (effect at line 55-59 will notify parent automatically)
-    setCurrentStepId(stepId)
+    setCurrentStepIdSync(stepId)
     
     // Find previous step immediately
     const allSteps = Object.values(CURRICULUM)
@@ -389,7 +432,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setPreviousStepId(prevStep?.id || null)
     
     // CRITICAL: Load answer asynchronously AFTER question is shown (text/select steps only)
-    if (!isColorsPanelStep(step)) {
+    if (!isBrandPanelStep(step)) {
       const userAnswer = await loadAnswerForStep(stepId)
       if (currentStepIdRef.current === stepId) {
         setInput(userAnswer)
@@ -404,7 +447,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         inputRef.current?.focus()
       }, 50)
     }
-  }, [history, loadAnswerForStep, isAnonymous, enterColorsPanel])
+  }, [history, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync])
   
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
@@ -415,18 +458,20 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         if (isAnonymous && isBeyondFreeTaste(stepId)) return
         setAnonymousGateView(false)
         const step = getStep(stepId)
-        enterColorsPanel(stepId)
-        setCurrentStepId(stepId)
+        enterBrandPanel(stepId)
+        setCurrentStepIdSync(stepId)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
         setFullHistory(prev => [...prev, stepMessage])
 
-        if (!isColorsPanelStep(step)) {
+        if (!isBrandPanelStep(step)) {
           void loadAnswerForStep(stepId).then((userAnswer) => {
             if (currentStepIdRef.current === stepId) {
               setInput(userAnswer)
             }
           })
+        } else {
+          setInput('')
         }
       }
     }
@@ -435,7 +480,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [isAnonymous, enterColorsPanel, loadAnswerForStep])
+  }, [isAnonymous, enterBrandPanel, loadAnswerForStep, setCurrentStepIdSync])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -466,17 +511,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
         setAnonymousGateView(false)
         const step = getStep(stepId)
-        enterColorsPanel(stepId)
-        setCurrentStepId(stepId)
+        enterBrandPanel(stepId)
+        setCurrentStepIdSync(stepId)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
 
-        if (!isColorsPanelStep(step)) {
+        if (!isBrandPanelStep(step)) {
           void loadAnswerForStep(stepId).then((userAnswer) => {
             if (currentStepIdRef.current === stepId) {
               setInput(userAnswer)
             }
           })
+        } else {
+          setInput('')
         }
       }
     }
@@ -485,7 +532,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep, isAnonymous, enterColorsPanel])
+  }, [loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -502,6 +549,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       if (hasDraftProgress && draft) {
         hasInitializedRef.current = true
         const draftKeys = getDraftAnsweredKeys()
+        // Capture resume-only legacy bridge from draft colors_set (unversioned only).
+        resumeLegacyBrandKeysRef.current = legacyBrandBridgeKeys(
+          draftKeys,
+          getDraftAnswerData('colors_set')
+        )
 
         if (isFreeTasteGateReached(draftKeys)) {
           setAnonymousGateView(true)
@@ -523,6 +575,17 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         if (isBeyondFreeTaste(draft.currentStepId)) {
           stepId = findFirstUnansweredInFreeTaste(draftKeys)
           setDraftCurrentStepId(stepId)
+        } else {
+          // If draft pointer skipped an unanswered step (e.g. pre-fix Font skip), snap back.
+          // Legacy unversioned colors_set may advance past brand via resumeLegacyBrandKeysRef.
+          const firstUnanswered = findFirstUnansweredStep('INIT', draftKeys)
+          const spine = getCurriculumSpineOrder()
+          const firstIdx = spine.indexOf(firstUnanswered)
+          const draftIdx = spine.indexOf(stepId)
+          if (firstIdx !== -1 && (draftIdx === -1 || firstIdx < draftIdx)) {
+            stepId = firstUnanswered
+            setDraftCurrentStepId(stepId)
+          }
         }
         const step = getStep(stepId)
         setCurrentStepId(stepId)
@@ -540,11 +603,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           if (onTypingUpdate) {
             onTypingUpdate(draft.profilePreview.artist_name, 'INIT')
           }
-        } else if (isColorsPanelStep(step)) {
-          enterColorsPanel(stepId)
+        } else if (isBrandPanelStep(step)) {
+          enterBrandPanel(stepId)
         } else if (step.key) {
           const saved = getDraftAnswerText(step.key)
-          if (saved) setInput(saved)
+          if (saved && !isStatusAnswerText(saved)) setInput(saved)
         }
         return
       }
@@ -559,7 +622,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     setHistory([initMessage])
     setFullHistory([initMessage])
-  }, [onCurrentStepChange, isAnonymous, onTypingUpdate, enterColorsPanel])
+  }, [onCurrentStepChange, isAnonymous, onTypingUpdate, enterBrandPanel])
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -570,11 +633,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       // Data was reset - reset initialization state
       hasInitializedRef.current = false
       prevAnsweredKeysSizeRef.current = 0
+      resumeLegacyBrandKeysRef.current = new Set()
     }
   }, [answeredKeys.size])
   
   // Update to first unanswered step once answeredKeys loads (if answers exist)
   // CRITICAL: Only run ONCE when answeredKeys first loads from database (0 -> N), not when new answers are saved (N -> N+1)
+  // Legacy brand bridge is computed here from saved colors_set answer_data, then frozen in resumeLegacyBrandKeysRef.
   useEffect(() => {
     // Skip if history is empty (initialization effect hasn't run yet)
     if (history.length === 0) return
@@ -595,7 +660,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const prevSize = prevAnsweredKeysSizeRef.current
     const isInitialLoad = prevSize === 0 && currentSize > 0
     const profileName = !isAnonymous ? profile?.artist_name?.trim() : ''
-    const effectiveKeys = withProfileSatisfiedArtistName(answeredKeys, profileName)
     // Resume when keys arrive, or when durable profile name satisfies INIT with empty/partial keys
     const shouldResumeAuthenticated =
       !isAnonymous &&
@@ -622,24 +686,66 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       hasInitializedRef.current = true
       return
     }
-    
-    // Resume from first unanswered (profile.artist_name counts as artist_name for authenticated)
-    if (currentSize > 0 || profileName) {
-      const firstUnanswered = findFirstUnansweredStep('INIT', effectiveKeys)
-      if (firstUnanswered !== currentStepId) {
-        const step = getStep(firstUnanswered)
-        setCurrentStepId(firstUnanswered)
-        const stepMessage = {
-          role: 'assistant' as const,
-          content: step.question,
-          stepId: firstUnanswered,
+
+    let cancelled = false
+
+    const resumeFromKeys = async () => {
+      let colorsAnswerData: unknown = undefined
+      if (answeredKeys.has('colors_set')) {
+        if (isAnonymous) {
+          colorsAnswerData = getDraftAnswerData('colors_set')
+        } else {
+          const {
+            data: { user },
+          } = await supabase.auth.getUser()
+          if (user) {
+            const { data } = await supabase
+              .from('curriculum_answers')
+              .select('answer_data')
+              .eq('user_id', user.id)
+              .eq('question_key', 'colors_set')
+              .is('project_id', null)
+              .maybeSingle()
+            colorsAnswerData = data?.answer_data ?? null
+          } else {
+            colorsAnswerData = null
+          }
         }
-        setHistory([stepMessage])
-        setFullHistory([stepMessage])
       }
-      hasInitializedRef.current = true
+
+      if (cancelled) return
+
+      // Freeze legacy bridge from hydration answers only (unversioned colors_set).
+      resumeLegacyBrandKeysRef.current = legacyBrandBridgeKeys(
+        answeredKeys,
+        colorsAnswerData
+      )
+
+      if (currentSize > 0 || profileName) {
+        const firstUnanswered = findFirstUnansweredStep('INIT', answeredKeys)
+        if (firstUnanswered !== currentStepId) {
+          const step = getStep(firstUnanswered)
+          setCurrentStepIdSync(firstUnanswered)
+          const stepMessage = {
+            role: 'assistant' as const,
+            content: step.question,
+            stepId: firstUnanswered,
+          }
+          setHistory([stepMessage])
+          setFullHistory([stepMessage])
+          if (isBrandPanelStep(step)) {
+            enterBrandPanel(firstUnanswered)
+          }
+        }
+        hasInitializedRef.current = true
+      }
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name])
+
+    void resumeFromKeys()
+    return () => {
+      cancelled = true
+    }
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -647,26 +753,75 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }
 
-  /** Single brand-panel save path: first completion advances once; re-edit saves and stays. */
-  async function completeBrandPanel() {
-    if (!isColorsPanelStep(currentStep) || isSubmitting) return
+  async function persistPanelAnswer(
+    questionKey: string,
+    answerData: Record<string, unknown>
+  ): Promise<boolean> {
+    if (isAnonymous) {
+      upsertDraftAnswer(questionKey, answerData)
+      onDraftRefresh?.()
+      return true
+    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      setSaveError('Your brand choices could not be saved. Try again.')
+      return false
+    }
+    const { error } = await upsertCurriculumAnswer(
+      supabase,
+      user.id,
+      questionKey,
+      answerData
+    )
+    if (error) {
+      console.error(`Error saving ${questionKey}:`, error.message)
+      const isDup = /duplicate|unique/i.test(error.message)
+      setSaveError(
+        isDup
+          ? 'That was already saving — try once more.'
+          : 'Your brand choices could not be saved. Try again.'
+      )
+      return false
+    }
+    return true
+  }
 
+  function finishPanelStep(
+    questionKey: string,
+    stepIdAtStart: StepId,
+    isFirstCompletion: boolean
+  ) {
+    const updatedAnsweredKeys = new Set(answeredKeys)
+    updatedAnsweredKeys.add(questionKey)
+    setAnsweredKeys(updatedAnsweredKeys)
+    setCurrentPickerState({})
+    setPickerOpenedExplicitly(false)
+
+    if (!isFirstCompletion) return
+
+    let nextStepId = findFirstUnansweredStep(currentStep.nextStep, updatedAnsweredKeys)
+    if (isAnonymous) {
+      if (isBeyondFreeTaste(nextStepId)) {
+        nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
+      }
+      setDraftCurrentStepId(nextStepId)
+    }
+    if (currentStepIdRef.current === stepIdAtStart) {
+      scheduleStepAdvance(nextStepId, stepIdAtStart)
+    }
+  }
+
+  /** Logo: upload, describe, or skip — one row, first completion advances once. */
+  async function completeLogoPanel(mode: 'save' | 'skip') {
+    if (!isLogoPanelStep(currentStep) || isSubmitting) return
     cancelPendingStepAdvance()
-    const isFirstCompletion = !answeredKeys.has('colors_set')
+    const isFirstCompletion = !answeredKeys.has('logo_uploaded')
     const stepIdAtStart = currentStepId
     setIsSubmitting(true)
     setSaveError('')
 
-    const { data: { user } } = isAnonymous
-      ? { data: { user: null } }
-      : await supabase.auth.getUser()
-
-    const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
-    const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
-    const brandColor =
-      (currentPickerState.colors as { brand_color?: string | null } | undefined)?.brand_color ||
-      profile?.brand_color ||
-      primaryColor
     const logoUrl =
       currentPickerState.logo?.logo_url !== undefined
         ? currentPickerState.logo.logo_url
@@ -675,147 +830,137 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       currentPickerState.logo?.logo_use_background !== undefined
         ? currentPickerState.logo.logo_use_background
         : profile?.logo_use_background || false
-    const fontFamily = currentPickerState.font?.font_family || profile?.font_family
+    const description = logoDescription.trim()
 
-    if ((user || isAnonymous) && currentStep.key) {
-      if (user) {
-        const { error: colorsError } = await supabase.from('curriculum_answers').upsert({
-          user_id: user.id,
-          question_key: 'colors_set',
-          answer_data: {
-            text: 'Colors set',
-            primary: primaryColor,
-            accent: accentColor,
-            brand_color: brandColor,
-            step_id: stepIdAtStart,
-          },
-          project_id: null,
-        })
-        if (colorsError) {
-          console.error('Error saving colors_set:', colorsError.message)
-          setSaveError('Your brand choices could not be saved. Try again.')
-          setIsSubmitting(false)
-          return
-        }
-
-        if (logoUrl) {
-          const { error: logoError } = await supabase.from('curriculum_answers').upsert({
-            user_id: user.id,
-            question_key: 'logo_uploaded',
-            answer_data: {
-              text: 'Logo uploaded',
-              url: logoUrl,
-              logo_use_background: logoUseBackground,
-              step_id: stepIdAtStart,
-            },
-            project_id: null,
-          })
-          if (logoError) {
-            console.error('Error saving logo_uploaded:', logoError.message)
-            setSaveError('Your brand choices could not be saved. Try again.')
-            setIsSubmitting(false)
-            return
-          }
-        }
-
-        if (fontFamily) {
-          const { error: fontError } = await supabase.from('curriculum_answers').upsert({
-            user_id: user.id,
-            question_key: 'font_set',
-            answer_data: {
-              text: 'Font set',
-              font: fontFamily,
-              step_id: stepIdAtStart,
-            },
-            project_id: null,
-          })
-          if (fontError) {
-            console.error('Error saving font_set:', fontError.message)
-            setSaveError('Your brand choices could not be saved. Try again.')
-            setIsSubmitting(false)
-            return
-          }
-        }
-      } else {
-        upsertDraftAnswer('colors_set', {
-          text: 'Colors set',
-          primary: primaryColor,
-          accent: accentColor,
-          brand_color: brandColor,
-          step_id: stepIdAtStart,
-        })
-        if (logoUrl) {
-          upsertDraftAnswer('logo_uploaded', {
-            text: 'Logo uploaded',
-            url: logoUrl,
-            logo_use_background: logoUseBackground,
-            step_id: stepIdAtStart,
-          })
-        }
-        if (fontFamily) {
-          upsertDraftAnswer('font_set', {
-            text: 'Font set',
-            font: fontFamily,
-            step_id: stepIdAtStart,
-          })
-        }
-        setDraftProfilePreview({
-          primary_color: primaryColor ?? undefined,
-          accent_color: accentColor ?? undefined,
-          brand_color: brandColor ?? undefined,
-          logo_url: logoUrl ?? undefined,
-          logo_use_background: logoUseBackground,
-          font_family: fontFamily ?? undefined,
-        })
-        onDraftRefresh?.()
+    let answerData: Record<string, unknown>
+    if (mode === 'skip') {
+      answerData = {
+        skipped: true,
+        step_id: 'LOGO_PANEL',
+        brand_flow_version: BRAND_FLOW_VERSION,
       }
-
-      const updatedAnsweredKeys = new Set(answeredKeys)
-      updatedAnsweredKeys.add('colors_set')
-      if (logoUrl) updatedAnsweredKeys.add('logo_uploaded')
-      if (fontFamily) updatedAnsweredKeys.add('font_set')
-      setAnsweredKeys(updatedAnsweredKeys)
-      setCurrentPickerState({})
-
-      if (isFirstCompletion) {
-        let nextStepId = currentStep.nextStep
-        let finalStep = getStep(nextStepId)
-
-        if (finalStep.id.includes('_COMPLETE')) {
-          const phase = finalStep.phase
-          if (phase) {
-            const phaseSteps = Object.values(CURRICULUM).filter(
-              (s) =>
-                s.phase === phase &&
-                !s.id.includes('_COMPLETE') &&
-                s.key &&
-                s.key.length > 0
-            )
-            const allPhaseAnswered = phaseSteps.every((s) => updatedAnsweredKeys.has(s.key))
-            if (!allPhaseAnswered) {
-              nextStepId = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
-              finalStep = getStep(nextStepId)
-            }
-          }
-        } else {
-          nextStepId = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
-          finalStep = getStep(nextStepId)
-        }
-
-        if (isAnonymous) {
-          if (isBeyondFreeTaste(nextStepId)) {
-            nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
-            finalStep = getStep(nextStepId)
-          }
-          setDraftCurrentStepId(nextStepId)
-        }
-
-        if (currentStepIdRef.current === stepIdAtStart) {
-          scheduleStepAdvance(nextStepId, stepIdAtStart)
-        }
+    } else if (logoUrl) {
+      answerData = {
+        step_id: 'LOGO_PANEL',
+        brand_flow_version: BRAND_FLOW_VERSION,
+        url: logoUrl,
+        logo_use_background: logoUseBackground,
+        ...(description ? { text: description } : {}),
       }
+    } else if (description) {
+      answerData = {
+        step_id: 'LOGO_PANEL',
+        brand_flow_version: BRAND_FLOW_VERSION,
+        text: description,
+      }
+    } else {
+      setSaveError('Upload a logo, describe one, or skip for now.')
+      setIsSubmitting(false)
+      return
     }
 
+    const ok = await persistPanelAnswer('logo_uploaded', answerData)
+    if (!ok) {
+      setIsSubmitting(false)
+      return
+    }
+
+    if (isAnonymous) {
+      setDraftProfilePreview({
+        logo_url: logoUrl ?? undefined,
+        logo_use_background: logoUseBackground,
+      })
+      onDraftRefresh?.()
+    }
+
+    finishPanelStep('logo_uploaded', stepIdAtStart, isFirstCompletion)
+    setLogoDescription('')
+    setIsSubmitting(false)
+  }
+
+  /** Colors: one row — no status phrase text. */
+  async function completeColorsPanel() {
+    if (!isColorsPanelStep(currentStep) || isSubmitting) return
+    cancelPendingStepAdvance()
+    const isFirstCompletion = !answeredKeys.has('colors_set')
+    const stepIdAtStart = currentStepId
+    setIsSubmitting(true)
+    setSaveError('')
+
+    const primaryColor =
+      currentPickerState.colors?.primary_color || profile?.primary_color
+    const accentColor =
+      currentPickerState.colors?.accent_color || profile?.accent_color
+    const brandColor =
+      currentPickerState.colors?.brand_color ||
+      profile?.brand_color ||
+      primaryColor
+
+    const answerData = {
+      step_id: 'COLORS_PANEL',
+      brand_flow_version: BRAND_FLOW_VERSION,
+      primary: primaryColor,
+      accent: accentColor,
+      brand_color: brandColor,
+    }
+
+    const ok = await persistPanelAnswer('colors_set', answerData)
+    if (!ok) {
+      setIsSubmitting(false)
+      return
+    }
+
+    if (isAnonymous) {
+      setDraftProfilePreview({
+        primary_color: primaryColor ?? undefined,
+        accent_color: accentColor ?? undefined,
+        brand_color: brandColor ?? undefined,
+      })
+      onDraftRefresh?.()
+    }
+
+    finishPanelStep('colors_set', stepIdAtStart, isFirstCompletion)
+    setIsSubmitting(false)
+  }
+
+  /** Font: headline + optional body — one row. */
+  async function completeFontPanel() {
+    if (!isFontPanelStep(currentStep) || isSubmitting) return
+    cancelPendingStepAdvance()
+    const isFirstCompletion = !answeredKeys.has('font_set')
+    const stepIdAtStart = currentStepId
+    setIsSubmitting(true)
+    setSaveError('')
+
+    const headlineFont =
+      currentPickerState.font?.font_family || profile?.font_family || undefined
+    const bodyFont =
+      currentPickerState.font?.body_font_family ||
+      profile?.body_font_family ||
+      undefined
+
+    const answerData = {
+      step_id: 'FONT_PANEL',
+      brand_flow_version: BRAND_FLOW_VERSION,
+      headline_font: headlineFont,
+      body_font: bodyFont,
+    }
+
+    const ok = await persistPanelAnswer('font_set', answerData)
+    if (!ok) {
+      setIsSubmitting(false)
+      return
+    }
+
+    if (isAnonymous) {
+      setDraftProfilePreview({
+        font_family: headlineFont,
+        body_font_family: bodyFont,
+      })
+      onDraftRefresh?.()
+    }
+
+    finishPanelStep('font_set', stepIdAtStart, isFirstCompletion)
     setIsSubmitting(false)
   }
 
@@ -828,7 +973,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   // Live Typing Effect
   useEffect(() => {
-    if (isSelectInputStep || isColorsStep) return
+    if (isSelectInputStep || isBrandStep) return
     if (claimedGateView) return
     
     if (!input.trim() || isSubmitting) {
@@ -868,7 +1013,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, isColorsStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh, claimedGateView])
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, isBrandStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh, claimedGateView])
 
   // Keep portal headline on the claimed name while the sanctuary gate is open
   useEffect(() => {
@@ -993,8 +1138,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
-    // Brand panel has its own completion path — never treat it as a text question
-    if (isColorsPanelStep(currentStep)) {
+    // Brand panels have their own completion paths — never treat as text questions
+    if (isBrandPanelStep(currentStep)) {
       return
     }
     
@@ -1289,16 +1434,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setHistory([nextMessage])
         setFullHistory(prev => [...prev, nextMessage]) // Add to full history
         setPreviousStepId(currentStepId)
-        setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
-        if (isColorsPanelStep(finalStep)) {
-          enterColorsPanel(nextStepId)
+        setCurrentStepIdSync(nextStepId)
+        if (isBrandPanelStep(finalStep)) {
+          enterBrandPanel(nextStepId)
         }
       } else {
         const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
         setHistory([completeMessage])
         setFullHistory(prev => [...prev, completeMessage]) // Add to full history
         setPreviousStepId(currentStepId)
-        setCurrentStepId('COMPLETE') // Effect at line 55-59 handles notification automatically
+        setCurrentStepIdSync('COMPLETE')
       }
       setIsSubmitting(false)
       // Refocus input after submit (Zeyoda pattern)
@@ -1332,8 +1477,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         textAlign: 'center', /* EXACT from nodrinks */
         color: 'white', /* EXACT from nodrinks */
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
-        // CRITICAL: Expand height only when the full picker is shown (not the compact summary)
-        minHeight: showColorsPicker ? '500px' : 'auto'
+        minHeight: showBrandPicker ? '500px' : 'auto'
       }}
     >
       <div>
@@ -1355,49 +1499,57 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </>
         ) : currentStep && currentStep.question && (
           <>
-            {/* Show inline picker if this step triggers a panel AND the artist is actively answering/editing it */}
-            {showColorsPicker ? (
+            {showBrandPicker && isLogoStep ? (
               <div className="mb-4">
                 <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
                   {currentStep.question}
                 </h2>
-                <InlineColorPicker
+                <InlineLogoPicker
                   profile={profile || null}
-                  onColorChange={async (updates) => {
-                    // CRITICAL: Track current state for saving when Send is clicked
-                    // Now handles colors, logo, and font together
-                    setCurrentPickerState(prev => ({
+                  onLogoChange={async (updates) => {
+                    setCurrentPickerState((prev) => ({
                       ...prev,
-                      colors: {
-                        primary_color: updates.primary_color,
-                        accent_color: updates.accent_color,
-                        brand_color: updates.brand_color
-                      },
                       logo: {
-                        logo_url: updates.logo_url !== undefined ? updates.logo_url : prev.logo?.logo_url,
-                        logo_use_background: updates.logo_use_background !== undefined ? updates.logo_use_background : prev.logo?.logo_use_background
+                        logo_url:
+                          updates.logo_url !== undefined
+                            ? updates.logo_url
+                            : prev.logo?.logo_url,
+                        logo_use_background:
+                          updates.logo_use_background !== undefined
+                            ? updates.logo_use_background
+                            : prev.logo?.logo_use_background,
                       },
-                      font: {
-                        font_family: updates.font_family
-                      }
                     }))
-                    
-                    // Update profile for live preview
-                    if (onProfileUpdate) {
-                      await onProfileUpdate(updates)
-                    }
+                    if (onProfileUpdate) await onProfileUpdate(updates)
                   }}
-                  onPreviewChange={(preview) => {
-                    // Preview updates handled internally by InlineColorPicker
-                    // No need to dispatch events - InlineColorPicker handles everything
+                  onPreviewChange={(previewUrl, useBackground) => {
+                    // previewUrl is null when background is unchecked — keep the logo choice.
+                    setCurrentPickerState((prev) => ({
+                      ...prev,
+                      logo: {
+                        logo_url:
+                          previewUrl != null
+                            ? previewUrl
+                            : prev.logo?.logo_url,
+                        logo_use_background: useBackground,
+                      },
+                    }))
                   }}
+                />
+                <textarea
+                  value={logoDescription}
+                  onChange={(e) => setLogoDescription(e.target.value)}
+                  placeholder="Or describe the logo you imagine…"
+                  rows={3}
+                  className="w-full mt-3 p-3 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm"
+                  disabled={isSubmitting}
                 />
                 {saveError && (
                   <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
                 )}
                 <button
                   type="button"
-                  onClick={() => void completeBrandPanel()}
+                  onClick={() => void completeLogoPanel('save')}
                   disabled={isSubmitting}
                   style={{
                     marginTop: '10px',
@@ -1411,52 +1563,167 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                     width: '100%',
                   }}
                 >
-                  {isSubmitting ? 'Saving...' : 'Save brand'}
+                  {isSubmitting ? 'Saving...' : 'Save logo'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void completeLogoPanel('skip')}
+                  disabled={isSubmitting}
+                  className="mt-2 w-full px-4 py-2 rounded-lg border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/10 transition-colors text-sm"
+                >
+                  Skip for now
                 </button>
               </div>
-            ) : showColorsSummary ? (
-              /* Browsing an already-answered colors card: compact summary, no picker hijack */
+            ) : showBrandPicker && isColorsStep ? (
               <div className="mb-4">
                 <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
-                  Your brand is set.
+                  {currentStep.question}
                 </h2>
-                <div className="flex items-center justify-center gap-3 mb-4">
-                  <span
-                    title="Primary color"
-                    style={{
-                      width: 22, height: 22, borderRadius: 6, display: 'inline-block',
-                      backgroundColor: profile?.primary_color || '#10b981',
-                      border: '1px solid rgba(255,255,255,0.4)'
-                    }}
-                  />
-                  <span
-                    title="Accent color"
-                    style={{
-                      width: 22, height: 22, borderRadius: 6, display: 'inline-block',
-                      backgroundColor: profile?.accent_color || '#fbbf24',
-                      border: '1px solid rgba(255,255,255,0.4)'
-                    }}
-                  />
-                  {profile?.logo_url && (
+                <InlineColorPicker
+                  variant="colors"
+                  profile={profile || null}
+                  onColorChange={async (updates) => {
+                    setCurrentPickerState((prev) => ({
+                      ...prev,
+                      colors: {
+                        primary_color: updates.primary_color ?? prev.colors?.primary_color,
+                        accent_color: updates.accent_color ?? prev.colors?.accent_color,
+                        brand_color: updates.brand_color ?? prev.colors?.brand_color,
+                      },
+                    }))
+                    if (onProfileUpdate) await onProfileUpdate(updates)
+                  }}
+                />
+                {saveError && (
+                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void completeColorsPanel()}
+                  disabled={isSubmitting}
+                  style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    backgroundColor: '#047857',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    width: '100%',
+                  }}
+                >
+                  {isSubmitting ? 'Saving...' : 'Save colors'}
+                </button>
+              </div>
+            ) : showBrandPicker && isFontStep ? (
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  {currentStep.question}
+                </h2>
+                <InlineFontPicker
+                  profile={profile || null}
+                  onFontChange={async (updates) => {
+                    setCurrentPickerState((prev) => ({
+                      ...prev,
+                      font: {
+                        font_family:
+                          updates.font_family !== undefined
+                            ? updates.font_family
+                            : prev.font?.font_family,
+                        body_font_family:
+                          updates.body_font_family !== undefined
+                            ? updates.body_font_family
+                            : prev.font?.body_font_family,
+                      },
+                    }))
+                    if (onProfileUpdate) await onProfileUpdate(updates)
+                  }}
+                />
+                {saveError && (
+                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void completeFontPanel()}
+                  disabled={isSubmitting}
+                  style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    backgroundColor: '#047857',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    width: '100%',
+                  }}
+                >
+                  {isSubmitting ? 'Saving...' : 'Save fonts'}
+                </button>
+              </div>
+            ) : showBrandSummary ? (
+              <div className="mb-4">
+                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+                  {isLogoStep
+                    ? 'Your logo choice is set.'
+                    : isColorsStep
+                      ? 'Your colors are set.'
+                      : 'Your lettering is set.'}
+                </h2>
+                <div className="flex items-center justify-center gap-3 mb-4 flex-wrap">
+                  {isLogoStep && profile?.logo_url ? (
                     <img
                       src={profile.logo_url}
                       alt="Logo"
-                      style={{ height: 22, width: 'auto', borderRadius: 4 }}
+                      style={{ height: 40, width: 'auto', borderRadius: 4 }}
                     />
-                  )}
-                  <span
-                    className="text-sm text-zinc-200"
-                    style={{ fontFamily: profile?.font_family || undefined }}
-                  >
-                    {(profile?.font_family || 'Default').split(',')[0]}
-                  </span>
+                  ) : null}
+                  {isColorsStep ? (
+                    <>
+                      <span
+                        title="Primary color"
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 6,
+                          display: 'inline-block',
+                          backgroundColor: profile?.primary_color || '#10b981',
+                          border: '1px solid rgba(255,255,255,0.4)',
+                        }}
+                      />
+                      <span
+                        title="Accent color"
+                        style={{
+                          width: 22,
+                          height: 22,
+                          borderRadius: 6,
+                          display: 'inline-block',
+                          backgroundColor: profile?.accent_color || '#fbbf24',
+                          border: '1px solid rgba(255,255,255,0.4)',
+                        }}
+                      />
+                    </>
+                  ) : null}
+                  {isFontStep ? (
+                    <span
+                      className="text-sm text-zinc-200"
+                      style={{ fontFamily: profile?.font_family || undefined }}
+                    >
+                      {(profile?.font_family || 'Headline').split(',')[0]}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
-                  onClick={() => enterColorsPanel(currentStepId)}
+                  onClick={() => enterBrandPanel(currentStepId)}
                   className="px-4 py-2 rounded-lg border border-emerald-400/50 text-emerald-200 hover:bg-emerald-500/10 transition-colors text-sm"
                 >
-                  Open brand settings
+                  {isLogoStep
+                    ? 'Edit logo'
+                    : isColorsStep
+                      ? 'Edit colors'
+                      : 'Edit fonts'}
                 </button>
               </div>
             ) : (
@@ -1687,7 +1954,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         ) : (
           <>
             {/* Hide text input when picker or select is active */}
-            {!isColorsStep && !isSelectInputStep && (
+            {!isBrandStep && !isSelectInputStep && (
               <input
                 ref={inputRef}
                 type="text"
@@ -1723,7 +1990,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 }}
               />
             )}
-            {!isColorsStep && (
+            {!isBrandStep && (
             <button
               type="submit"
               disabled={

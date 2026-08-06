@@ -104,9 +104,50 @@ export function useCarouselItems(
         stepId = step?.id || (answer.question_key as StepId)
       }
 
-      const content = answerData?.label || answerData?.text || answerData?.content || ''
-      const label = keyToLabel(answer.question_key)
-      const cardTitle = content ? `${label}: ${content}` : `${label}: `
+      const statusTexts = new Set(['colors set', 'font set', 'logo uploaded'])
+      const rawText = String(
+        answerData?.label || answerData?.text || answerData?.content || ''
+      ).trim()
+      const isStatusText = statusTexts.has(rawText.toLowerCase())
+
+      let cardTitle: string
+      let cardContent = ''
+      let imageUrl =
+        answerData?.imageUrl || answerData?.image_url || answerData?.url || undefined
+
+      if (answer.question_key === 'logo_uploaded') {
+        if (answerData?.skipped) {
+          cardTitle = 'Logo'
+          cardContent = 'Skipped for now'
+        } else if (imageUrl) {
+          cardTitle = 'Logo'
+          cardContent = !isStatusText && rawText ? rawText : ''
+        } else if (rawText && !isStatusText) {
+          cardTitle = 'Logo'
+          cardContent = rawText
+        } else {
+          cardTitle = 'Logo'
+        }
+      } else if (answer.question_key === 'colors_set') {
+        const primary = answerData?.primary || answerData?.brand_color || ''
+        const accent = answerData?.accent || ''
+        cardTitle = 'Colors'
+        cardContent = [primary, accent].filter(Boolean).join(' · ')
+      } else if (answer.question_key === 'font_set') {
+        const headline = answerData?.headline_font || answerData?.font || ''
+        const body = answerData?.body_font || ''
+        const headlineName = String(headline).split(',')[0] || 'Headline'
+        const bodyName = body ? String(body).split(',')[0] : ''
+        cardTitle = 'Font'
+        cardContent = bodyName
+          ? `${headlineName} · ${bodyName}`
+          : headlineName
+      } else {
+        const label = keyToLabel(answer.question_key)
+        cardTitle =
+          rawText && !isStatusText ? `${label}: ${rawText}` : `${label}: `
+      }
+
       const itemType: CarouselItem['type'] =
         step?.phase === 'prod'
           ? 'pro'
@@ -121,8 +162,8 @@ export function useCarouselItems(
         stepId,
         questionKey: answer.question_key,
         title: cardTitle,
-        content: '',
-        imageUrl: answerData?.imageUrl || answerData?.image_url || answerData?.url,
+        content: cardContent,
+        imageUrl,
         videoUrl: answerData?.videoUrl || answerData?.video_url,
         audioUrl: answerData?.audioUrl || answerData?.audio_url,
         type: itemType,

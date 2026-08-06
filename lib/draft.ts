@@ -15,6 +15,7 @@ export interface DraftProfilePreview {
   accent_color?: string | null
   brand_color?: string | null
   font_family?: string | null
+  body_font_family?: string | null
   logo_url?: string | null
   logo_use_background?: boolean | null
 }
@@ -95,11 +96,18 @@ export function getDraftAnsweredKeys(): Set<string> {
   return new Set(draft.answers.map((a) => a.question_key))
 }
 
-export function getDraftAnswerText(question_key: string): string {
+export function getDraftAnswerData(
+  question_key: string
+): Record<string, unknown> | null {
   const draft = loadDraft()
   const answer = draft?.answers.find((a) => a.question_key === question_key)
-  if (!answer?.answer_data) return ''
-  const data = answer.answer_data
+  if (!answer?.answer_data || typeof answer.answer_data !== 'object') return null
+  return answer.answer_data
+}
+
+export function getDraftAnswerText(question_key: string): string {
+  const data = getDraftAnswerData(question_key)
+  if (!data) return ''
   const label = typeof data.label === 'string' ? data.label : ''
   const text = typeof data.text === 'string' ? data.text : ''
   return label || text

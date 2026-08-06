@@ -9,7 +9,10 @@ export interface Profile {
   logo_url?: string | null
   primary_color?: string | null
   accent_color?: string | null
+  /** Headline font (artist name, titles, card titles). */
   font_family?: string | null
+  /** Body font (mission, answers, longer copy). Falls back to Geist when null. */
+  body_font_family?: string | null
   logo_use_background?: boolean | null
   brand_color?: string | null
 }

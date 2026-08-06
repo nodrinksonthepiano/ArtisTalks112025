@@ -39,7 +39,8 @@ export function applyLogoBackground(
       ? document.documentElement.style.getPropertyValue('--accent-color') || '#10b981'
       : '#10b981');
   
-  const fontFamily = profile?.font_family || 'Geist Sans, sans-serif';
+  const headlineFont = profile?.font_family || 'var(--font-geist-sans), sans-serif'
+  const bodyFont = profile?.body_font_family || 'var(--font-geist-sans), sans-serif'
 
   // SSR guard
   if (typeof document === 'undefined') return;
@@ -67,8 +68,10 @@ export function applyLogoBackground(
   document.documentElement.style.setProperty("--gradient-middle", primary);
   document.documentElement.style.setProperty("--gradient-end", primary);
 
-  // Zeyoda line 45: Set font family
-  document.body.style.fontFamily = fontFamily;
+  // Headline/body are sanctuary content fonts — not every control on the page.
+  document.documentElement.style.setProperty('--headline-font-family', headlineFont)
+  document.documentElement.style.setProperty('--body-font-family', bodyFont)
+  // Keep app chrome readable; do not force artist fonts onto document.body.
 
   // Zeyoda line 47: Clear legacy background var
   document.documentElement.style.setProperty("--background", "transparent");

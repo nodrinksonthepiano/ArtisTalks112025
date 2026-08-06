@@ -18,6 +18,8 @@ interface InlineColorPickerProps {
   profile: Profile | null
   onColorChange: (updates: Partial<Profile>) => void // Autosave callback for colors, logo, font
   onPreviewChange?: (preview: { primary_color?: string; accent_color?: string }) => void
+  /** `colors` = palette only (V2 brand spine). `full` = legacy combined panel. */
+  variant?: 'colors' | 'full'
 }
 
 const COLOR_PRESETS = {
@@ -31,7 +33,13 @@ const COLOR_PRESETS = {
   white: { name: "White", primary: "#F8F8FF", accent: "#4A4A4A" }
 }
 
-export default function InlineColorPicker({ profile, onColorChange, onPreviewChange }: InlineColorPickerProps) {
+export default function InlineColorPicker({
+  profile,
+  onColorChange,
+  onPreviewChange,
+  variant = 'colors',
+}: InlineColorPickerProps) {
+  const showExtras = variant === 'full'
   const [primaryColor, setPrimaryColor] = useState(profile?.primary_color || '#10b981')
   const [accentColor, setAccentColor] = useState(profile?.accent_color || '#fbbf24')
   const [fontFamily, setFontFamily] = useState(
@@ -415,7 +423,8 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
         </div>
       </div>
 
-      {/* Logo Upload Section - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 525-726 */}
+      {/* Logo Upload Section — only in legacy full variant */}
+      {showExtras ? (
       <div>
         <h3 className="text-sm font-semibold text-white mb-2">Logo Upload</h3>
         
@@ -567,8 +576,10 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
           </span>
         </label>
       </div>
+      ) : null}
 
-      {/* Typography Section - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 926-993 */}
+      {/* Typography Section — only in legacy full variant */}
+      {showExtras ? (
       <div>
         <h3 className="text-sm font-semibold text-white mb-2">Typography</h3>
         
@@ -665,6 +676,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
           )}
         </div>
       </div>
+      ) : null}
     </div>
   )
 }

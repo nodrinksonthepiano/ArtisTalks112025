@@ -148,6 +148,10 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
             // Auto-upload only when authenticated (not anonymous preview)
             if (canUploadLogo && profile?.id) {
               uploadLogoFile(file, profile.id);
+            } else {
+              // Anonymous free-taste: keep the local preview as the chosen logo so
+              // Save logo can persist draft answer_data / profilePreview without login.
+              onLogoChange({ logo_url: preview });
             }
           }}
           className="w-full p-3 bg-gray-700 text-white rounded-lg border border-gray-600 mb-3 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-yellow-500 file:text-white hover:file:bg-yellow-600"

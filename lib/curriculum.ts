@@ -1,7 +1,9 @@
 export type StepId = 
   // Curriculum V2 spine
   | 'INIT'
+  | 'LOGO_PANEL'
   | 'COLORS_PANEL'
+  | 'FONT_PANEL'
   | 'GIFT_PRESENCE'
   | 'KNOWN_FOR_LEGACY'
   | 'KNOWN_FOR_EXPRESSION'
@@ -39,10 +41,12 @@ export type StepId =
 
 export type PillarChoice = 'creating_new' | 'finishing' | 'promoting' | 'not_sure'
 
+export type BrandPanelKind = 'logo' | 'colors' | 'font'
+
 export type StepInput =
   | { kind: 'text'; placeholder?: string }
   | { kind: 'select'; options: { label: string; value: PillarChoice }[] }
-  | { kind: 'panel'; panel: 'colors' | 'asset' }
+  | { kind: 'panel'; panel: BrandPanelKind | 'asset' }
 
 export const PILLAR_SELECT_OPTIONS: { label: string; value: PillarChoice }[] = [
   { label: 'Creating something new', value: 'creating_new' },
@@ -57,7 +61,7 @@ export interface CurriculumStep {
   nextStep: StepId;
   key: string; // The key used in the database (curriculum_answers table)
   placeholder?: string;
-  triggersPanel?: 'colors' | 'asset'; // Panel to trigger after this step
+  triggersPanel?: BrandPanelKind | 'asset'; // Panel to trigger after this step
   input?: StepInput;
   phase?: 'pre' | 'prod' | 'post' | 'legacy';
 }
@@ -66,9 +70,28 @@ export function isSelectStep(step: CurriculumStep): boolean {
   return step.input?.kind === 'select'
 }
 
+function panelKind(step: CurriculumStep): BrandPanelKind | 'asset' | null {
+  if (step.input?.kind === 'panel') return step.input.panel
+  if (step.triggersPanel) return step.triggersPanel
+  return null
+}
+
+export function isLogoPanelStep(step: CurriculumStep): boolean {
+  return panelKind(step) === 'logo'
+}
+
 export function isColorsPanelStep(step: CurriculumStep): boolean {
-  if (step.input?.kind === 'panel') return step.input.panel === 'colors'
-  return step.triggersPanel === 'colors'
+  return panelKind(step) === 'colors'
+}
+
+export function isFontPanelStep(step: CurriculumStep): boolean {
+  return panelKind(step) === 'font'
+}
+
+/** Logo, Colors, or Font — visual brand steps (not text hydration). */
+export function isBrandPanelStep(step: CurriculumStep): boolean {
+  const kind = panelKind(step)
+  return kind === 'logo' || kind === 'colors' || kind === 'font'
 }
 
 export function getStepPlaceholder(step: CurriculumStep): string {
@@ -97,17 +120,36 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   INIT: {
     id: 'INIT',
     question: "What is your artist name?",
-    nextStep: 'COLORS_PANEL',
+    nextStep: 'LOGO_PANEL',
     key: 'artist_name',
     placeholder: "What is your artist name?",
     phase: 'pre'
   },
+  LOGO_PANEL: {
+    id: 'LOGO_PANEL',
+    question: "Upload your logo—or describe the logo you imagine.",
+    nextStep: 'COLORS_PANEL',
+    key: 'logo_uploaded',
+    triggersPanel: 'logo',
+    input: { kind: 'panel', panel: 'logo' },
+    phase: 'pre'
+  },
   COLORS_PANEL: {
     id: 'COLORS_PANEL',
-    question: "Great! Now choose your brand colors, logo, and font.",
-    nextStep: 'GIFT_PRESENCE',
+    question: "What colors feel like your world?",
+    nextStep: 'FONT_PANEL',
     key: 'colors_set',
     triggersPanel: 'colors',
+    input: { kind: 'panel', panel: 'colors' },
+    phase: 'pre'
+  },
+  FONT_PANEL: {
+    id: 'FONT_PANEL',
+    question: "What kind of lettering sounds like you?",
+    nextStep: 'GIFT_PRESENCE',
+    key: 'font_set',
+    triggersPanel: 'font',
+    input: { kind: 'panel', panel: 'font' },
     phase: 'pre'
   },
   GIFT_PRESENCE: {
@@ -447,6 +489,81 @@ export function withProfileSatisfiedArtistName(
   const next = new Set(answeredKeys)
   next.add('artist_name')
   return next
+}
+
+/** Focused Logo → Colors → Font spine (not the old combined brand panel). */
+export const BRAND_FLOW_VERSION = 2
+
+/** True when answer_data was written by the focused three-step brand flow. */
+export function isFocusedBrandFlowAnswer(answerData: unknown): boolean {
+  if (!answerData || typeof answerData !== 'object') return false
+  return (answerData as { brand_flow_version?: unknown }).brand_flow_version === BRAND_FLOW_VERSION
+}
+
+/**
+ * Old combined brand panel wrote an unversioned colors_set (and sometimes orphan
+ * logo/font rows). Only unversioned colors_set is eligible for legacy bridging.
+ * Version-2 colors_set is a focused Colors step and must never satisfy Font.
+ */
+export function isLegacyCombinedColorsAnswer(answerData: unknown): boolean {
+  if (answerData == null) return false
+  if (!answerData || typeof answerData !== 'object') return false
+  return !isFocusedBrandFlowAnswer(answerData)
+}
+
+/**
+ * Resume-only: keys satisfied by an initially loaded unversioned legacy colors_set.
+ * Empty when colors_set is missing, focused (v2), or answer_data was not supplied.
+ */
+export function legacyBrandBridgeKeys(
+  answeredKeys: Set<string>,
+  colorsAnswerData: unknown | undefined
+): Set<string> {
+  if (!answeredKeys.has('colors_set')) return new Set()
+  if (colorsAnswerData === undefined) return new Set()
+  if (!isLegacyCombinedColorsAnswer(colorsAnswerData)) return new Set()
+  return new Set(['logo_uploaded', 'colors_set', 'font_set'])
+}
+
+/**
+ * Old combined brand panel wrote colors_set (and sometimes orphan logo/font rows).
+ * Treat an unversioned colors_set as satisfying Logo + Colors + Font so returning
+ * artists are not marched backward through the new three-step brand spine.
+ *
+ * Requires colors answer_data. Without it, no brand bridge is applied (safe default
+ * for mid-journey lookups that must not treat a fresh colors_set as legacy).
+ */
+export function withLegacyBrandBridge(
+  answeredKeys: Set<string>,
+  colorsAnswerData?: unknown
+): Set<string> {
+  const bridge = legacyBrandBridgeKeys(answeredKeys, colorsAnswerData)
+  if (bridge.size === 0) return answeredKeys
+  if (
+    answeredKeys.has('logo_uploaded') &&
+    answeredKeys.has('font_set')
+  ) {
+    return answeredKeys
+  }
+  const next = new Set(answeredKeys)
+  for (const key of bridge) next.add(key)
+  return next
+}
+
+/**
+ * Apply resume satisfaction bridges (profile name + legacy brand).
+ * Pass colorsAnswerData only from hydration/resume inspection of saved colors_set.
+ * Omitting it skips the brand bridge.
+ */
+export function withResumeSatisfiedKeys(
+  answeredKeys: Set<string>,
+  artistName?: string | null,
+  colorsAnswerData?: unknown
+): Set<string> {
+  return withLegacyBrandBridge(
+    withProfileSatisfiedArtistName(answeredKeys, artistName),
+    colorsAnswerData
+  )
 }
 
 const PHASE_TOKEN_SKIP_STEP_IDS = new Set<StepId>([
