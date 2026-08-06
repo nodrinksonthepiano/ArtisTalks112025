@@ -75,6 +75,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // the full picker hijacking the chat on a casual swipe was a tested pain point.
   const [pickerOpenedExplicitly, setPickerOpenedExplicitly] = useState(false)
   const keepPickerOpenRef = useRef(false)
+  const currentStepIdRef = useRef<StepId>(currentStepId)
+  const stepAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
   const currentStep = getStep(currentStepId)
   const supabase = createClient()
@@ -82,6 +84,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
+
+  useEffect(() => {
+    currentStepIdRef.current = currentStepId
+  }, [currentStepId])
   const [anonymousGateView, setAnonymousGateView] = useState(false)
   const [claimedGateView, setClaimedGateView] = useState(false)
   const [claimedArtistName, setClaimedArtistName] = useState('')
@@ -126,12 +132,52 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     isAnonymous && currentStepId === 'INIT' && !answeredKeys.has('artist_name')
   const showNavToolbar = !hideAnonymousInitNav
   
-  const openColorsPickerForStep = useCallback((stepId: StepId) => {
-    if (isColorsPanelStep(getStep(stepId))) {
-      keepPickerOpenRef.current = true
-      setPickerOpenedExplicitly(true)
+  const cancelPendingStepAdvance = useCallback(() => {
+    if (stepAdvanceTimeoutRef.current !== null) {
+      clearTimeout(stepAdvanceTimeoutRef.current)
+      stepAdvanceTimeoutRef.current = null
     }
   }, [])
+
+  const advanceToStep = useCallback((nextStepId: StepId, fromStepId: StepId) => {
+    cancelPendingStepAdvance()
+    const finalStep = getStep(nextStepId)
+    const nextMessage = {
+      role: 'assistant' as const,
+      content: finalStep.question,
+      stepId: nextStepId,
+    }
+    setHistory([nextMessage])
+    setFullHistory((prev) => [...prev, nextMessage])
+    setPreviousStepId(fromStepId)
+    setCurrentStepId(nextStepId)
+    setInput('')
+  }, [cancelPendingStepAdvance])
+
+  const scheduleStepAdvance = useCallback(
+    (nextStepId: StepId, fromStepId: StepId) => {
+      cancelPendingStepAdvance()
+      advanceToStep(nextStepId, fromStepId)
+    },
+    [cancelPendingStepAdvance, advanceToStep]
+  )
+
+  /** Enter brand panel: clear text input, open picker, cancel any pending advance. */
+  const enterColorsPanel = useCallback(
+    (stepId: StepId) => {
+      if (!isColorsPanelStep(getStep(stepId))) return
+      cancelPendingStepAdvance()
+      keepPickerOpenRef.current = true
+      setPickerOpenedExplicitly(true)
+      setInput('')
+      setSaveError('')
+    },
+    [cancelPendingStepAdvance]
+  )
+
+  useEffect(() => {
+    return () => cancelPendingStepAdvance()
+  }, [cancelPendingStepAdvance])
 
   // Reset the explicit-open flag whenever the step changes, unless the step change
   // itself carried the intent to open the picker (pencil edit on the colors card).
@@ -242,6 +288,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // Helper: Load answer from fullHistory or database
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
     const step = getStep(stepId)
+
+    // Panel steps store status labels, not chat input text
+    if (isColorsPanelStep(step)) return ''
     
     // Try 1: Check fullHistory first (fast, no DB query)
     const fullHistoryAnswer = fullHistory.find(
@@ -308,10 +357,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
     
     // Pencil-editing the colors card is an EXPLICIT request to open the brand picker
-    // (survives the reset-on-step-change effect via keepPickerOpenRef)
     if (isColorsPanelStep(step)) {
-      keepPickerOpenRef.current = true
-      setPickerOpenedExplicitly(true)
+      enterColorsPanel(stepId)
     }
     
     // Find assistant question in history
@@ -341,10 +388,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const prevStep = allSteps.find(s => s.nextStep === stepId)
     setPreviousStepId(prevStep?.id || null)
     
-    // CRITICAL: Load answer asynchronously AFTER question is shown
-    // This ensures question appears instantly, answer loads in background
-    const userAnswer = await loadAnswerForStep(stepId)
-    setInput(userAnswer) // Restore answer when loaded
+    // CRITICAL: Load answer asynchronously AFTER question is shown (text/select steps only)
+    if (!isColorsPanelStep(step)) {
+      const userAnswer = await loadAnswerForStep(stepId)
+      if (currentStepIdRef.current === stepId) {
+        setInput(userAnswer)
+      }
+    } else {
+      setInput('')
+    }
     
     // Focus input if requested (e.g., when edit pencil is clicked)
     if (focusInput) {
@@ -352,7 +404,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         inputRef.current?.focus()
       }, 50)
     }
-  }, [history, loadAnswerForStep, isAnonymous])
+  }, [history, loadAnswerForStep, isAnonymous, enterColorsPanel])
   
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
@@ -363,12 +415,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         if (isAnonymous && isBeyondFreeTaste(stepId)) return
         setAnonymousGateView(false)
         const step = getStep(stepId)
-        openColorsPickerForStep(stepId)
-        setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
-        setInput('') // Token jumps target unanswered questions - leftover text from the previous step must not carry over
+        enterColorsPanel(stepId)
+        setCurrentStepId(stepId)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
         setFullHistory(prev => [...prev, stepMessage])
+
+        if (!isColorsPanelStep(step)) {
+          void loadAnswerForStep(stepId).then((userAnswer) => {
+            if (currentStepIdRef.current === stepId) {
+              setInput(userAnswer)
+            }
+          })
+        }
       }
     }
     
@@ -376,7 +435,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [onCurrentStepChange, isAnonymous, openColorsPickerForStep])
+  }, [isAnonymous, enterColorsPanel, loadAnswerForStep])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -407,15 +466,18 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
         setAnonymousGateView(false)
         const step = getStep(stepId)
-        openColorsPickerForStep(stepId)
-        setCurrentStepId(stepId) // Effect at line 55-59 handles notification automatically
+        enterColorsPanel(stepId)
+        setCurrentStepId(stepId)
         const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
         setHistory([stepMessage])
-        // Don't add to fullHistory - navigation isn't new content
-        
-        // Load answer if it exists (for answered cards being viewed)
-        const userAnswer = await loadAnswerForStep(stepId)
-        setInput(userAnswer) // Show answer if editing, empty if new question
+
+        if (!isColorsPanelStep(step)) {
+          void loadAnswerForStep(stepId).then((userAnswer) => {
+            if (currentStepIdRef.current === stepId) {
+              setInput(userAnswer)
+            }
+          })
+        }
       }
     }
     
@@ -423,7 +485,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep, isAnonymous, openColorsPickerForStep])
+  }, [loadAnswerForStep, isAnonymous, enterColorsPanel])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -478,6 +540,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           if (onTypingUpdate) {
             onTypingUpdate(draft.profilePreview.artist_name, 'INIT')
           }
+        } else if (isColorsPanelStep(step)) {
+          enterColorsPanel(stepId)
         } else if (step.key) {
           const saved = getDraftAnswerText(step.key)
           if (saved) setInput(saved)
@@ -495,7 +559,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     setHistory([initMessage])
     setFullHistory([initMessage])
-  }, [onCurrentStepChange, isAnonymous, onTypingUpdate])
+  }, [onCurrentStepChange, isAnonymous, onTypingUpdate, enterColorsPanel])
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -582,35 +646,178 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
     }
   }
-  
-  // Listen for panel completion events to advance curriculum
-  useEffect(() => {
-    const handlePanelComplete = (e: Event) => {
-      const customEvent = e as CustomEvent<{ stepId: StepId }>
-      const stepId = customEvent.detail?.stepId
-      
-      // Only advance if this panel matches the current step
-      if (stepId && stepId === currentStepId) {
-        const nextStepId = currentStep.nextStep
-        const nextStep = getStep(nextStepId)
-        
-        setTimeout(() => {
-          // CRITICAL: Panel steps are now shown inline, don't trigger old panel mode
-          // Just advance to next step (inline picker will render automatically)
-          const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: nextStepId }
-          setHistory([nextMessage])
-          setFullHistory(prev => [...prev, nextMessage]) // Add to full history
-          setPreviousStepId(currentStepId)
-          setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
-        }, 300) // Small delay to let panel close animation finish
+
+  /** Single brand-panel save path: first completion advances once; re-edit saves and stays. */
+  async function completeBrandPanel() {
+    if (!isColorsPanelStep(currentStep) || isSubmitting) return
+
+    cancelPendingStepAdvance()
+    const isFirstCompletion = !answeredKeys.has('colors_set')
+    const stepIdAtStart = currentStepId
+    setIsSubmitting(true)
+    setSaveError('')
+
+    const { data: { user } } = isAnonymous
+      ? { data: { user: null } }
+      : await supabase.auth.getUser()
+
+    const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
+    const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
+    const brandColor =
+      (currentPickerState.colors as { brand_color?: string | null } | undefined)?.brand_color ||
+      profile?.brand_color ||
+      primaryColor
+    const logoUrl =
+      currentPickerState.logo?.logo_url !== undefined
+        ? currentPickerState.logo.logo_url
+        : profile?.logo_url
+    const logoUseBackground =
+      currentPickerState.logo?.logo_use_background !== undefined
+        ? currentPickerState.logo.logo_use_background
+        : profile?.logo_use_background || false
+    const fontFamily = currentPickerState.font?.font_family || profile?.font_family
+
+    if ((user || isAnonymous) && currentStep.key) {
+      if (user) {
+        const { error: colorsError } = await supabase.from('curriculum_answers').upsert({
+          user_id: user.id,
+          question_key: 'colors_set',
+          answer_data: {
+            text: 'Colors set',
+            primary: primaryColor,
+            accent: accentColor,
+            brand_color: brandColor,
+            step_id: stepIdAtStart,
+          },
+          project_id: null,
+        })
+        if (colorsError) {
+          console.error('Error saving colors_set:', colorsError.message)
+          setSaveError('Your brand choices could not be saved. Try again.')
+          setIsSubmitting(false)
+          return
+        }
+
+        if (logoUrl) {
+          const { error: logoError } = await supabase.from('curriculum_answers').upsert({
+            user_id: user.id,
+            question_key: 'logo_uploaded',
+            answer_data: {
+              text: 'Logo uploaded',
+              url: logoUrl,
+              logo_use_background: logoUseBackground,
+              step_id: stepIdAtStart,
+            },
+            project_id: null,
+          })
+          if (logoError) {
+            console.error('Error saving logo_uploaded:', logoError.message)
+            setSaveError('Your brand choices could not be saved. Try again.')
+            setIsSubmitting(false)
+            return
+          }
+        }
+
+        if (fontFamily) {
+          const { error: fontError } = await supabase.from('curriculum_answers').upsert({
+            user_id: user.id,
+            question_key: 'font_set',
+            answer_data: {
+              text: 'Font set',
+              font: fontFamily,
+              step_id: stepIdAtStart,
+            },
+            project_id: null,
+          })
+          if (fontError) {
+            console.error('Error saving font_set:', fontError.message)
+            setSaveError('Your brand choices could not be saved. Try again.')
+            setIsSubmitting(false)
+            return
+          }
+        }
+      } else {
+        upsertDraftAnswer('colors_set', {
+          text: 'Colors set',
+          primary: primaryColor,
+          accent: accentColor,
+          brand_color: brandColor,
+          step_id: stepIdAtStart,
+        })
+        if (logoUrl) {
+          upsertDraftAnswer('logo_uploaded', {
+            text: 'Logo uploaded',
+            url: logoUrl,
+            logo_use_background: logoUseBackground,
+            step_id: stepIdAtStart,
+          })
+        }
+        if (fontFamily) {
+          upsertDraftAnswer('font_set', {
+            text: 'Font set',
+            font: fontFamily,
+            step_id: stepIdAtStart,
+          })
+        }
+        setDraftProfilePreview({
+          primary_color: primaryColor ?? undefined,
+          accent_color: accentColor ?? undefined,
+          brand_color: brandColor ?? undefined,
+          logo_url: logoUrl ?? undefined,
+          logo_use_background: logoUseBackground,
+          font_family: fontFamily ?? undefined,
+        })
+        onDraftRefresh?.()
+      }
+
+      const updatedAnsweredKeys = new Set(answeredKeys)
+      updatedAnsweredKeys.add('colors_set')
+      if (logoUrl) updatedAnsweredKeys.add('logo_uploaded')
+      if (fontFamily) updatedAnsweredKeys.add('font_set')
+      setAnsweredKeys(updatedAnsweredKeys)
+      setCurrentPickerState({})
+
+      if (isFirstCompletion) {
+        let nextStepId = currentStep.nextStep
+        let finalStep = getStep(nextStepId)
+
+        if (finalStep.id.includes('_COMPLETE')) {
+          const phase = finalStep.phase
+          if (phase) {
+            const phaseSteps = Object.values(CURRICULUM).filter(
+              (s) =>
+                s.phase === phase &&
+                !s.id.includes('_COMPLETE') &&
+                s.key &&
+                s.key.length > 0
+            )
+            const allPhaseAnswered = phaseSteps.every((s) => updatedAnsweredKeys.has(s.key))
+            if (!allPhaseAnswered) {
+              nextStepId = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
+              finalStep = getStep(nextStepId)
+            }
+          }
+        } else {
+          nextStepId = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
+          finalStep = getStep(nextStepId)
+        }
+
+        if (isAnonymous) {
+          if (isBeyondFreeTaste(nextStepId)) {
+            nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
+            finalStep = getStep(nextStepId)
+          }
+          setDraftCurrentStepId(nextStepId)
+        }
+
+        if (currentStepIdRef.current === stepIdAtStart) {
+          scheduleStepAdvance(nextStepId, stepIdAtStart)
+        }
       }
     }
-    
-    window.addEventListener('panelComplete', handlePanelComplete as EventListener)
-    return () => {
-      window.removeEventListener('panelComplete', handlePanelComplete as EventListener)
-    }
-  }, [currentStepId, currentStep, onTriggerPanel])
+
+    setIsSubmitting(false)
+  }
 
   // Auto-scroll chat to bottom when messages change
   useEffect(() => {
@@ -621,7 +828,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   // Live Typing Effect
   useEffect(() => {
-    if (isSelectInputStep) return
+    if (isSelectInputStep || isColorsStep) return
     if (claimedGateView) return
     
     if (!input.trim() || isSubmitting) {
@@ -661,7 +868,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current)
     }
-  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh, claimedGateView])
+  }, [input, currentStep.key, onProfileUpdate, isSubmitting, isSelectInputStep, isColorsStep, onTypingUpdate, currentStepId, isAnonymous, onDraftRefresh, claimedGateView])
 
   // Keep portal headline on the claimed name while the sanctuary gate is open
   useEffect(() => {
@@ -785,175 +992,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    
-    // CRITICAL: If picker is active, save to curriculum_answers and advance to next step
-    if (isColorsPanelStep(currentStep)) {
-      // Profile is already updated by picker (live preview)
-      // Now save to curriculum_answers when user clicks Send
-      // CRITICAL: Use currentPickerState to get actual current values (handles removals correctly)
-      const { data: { user } } = isAnonymous
-        ? { data: { user: null } }
-        : await supabase.auth.getUser()
-      
-      let nextStepId = currentStep.nextStep
-      let finalStep = getStep(nextStepId)
-      
-      if ((user || isAnonymous) && currentStep.key) {
-        const primaryColor = currentPickerState.colors?.primary_color || profile?.primary_color
-        const accentColor = currentPickerState.colors?.accent_color || profile?.accent_color
-        const brandColor = (currentPickerState.colors as any)?.brand_color || profile?.brand_color || primaryColor
-        const logoUrl = currentPickerState.logo?.logo_url !== undefined 
-          ? currentPickerState.logo.logo_url 
-          : profile?.logo_url
-        const logoUseBackground = currentPickerState.logo?.logo_use_background !== undefined
-          ? currentPickerState.logo.logo_use_background
-          : profile?.logo_use_background || false
-        const fontFamily = currentPickerState.font?.font_family || profile?.font_family
-        
-        if (user) {
-          const { error: colorsError } = await supabase.from('curriculum_answers').upsert({
-            user_id: user.id,
-            question_key: 'colors_set',
-            answer_data: {
-              text: 'Colors set',
-              primary: primaryColor,
-              accent: accentColor,
-              brand_color: brandColor,
-              step_id: currentStepId
-            },
-            project_id: null
-          })
-          if (colorsError) {
-            console.error('Error saving colors_set:', colorsError.message)
-            setSaveError('Your brand choices could not be saved. Try Send again.')
-            setIsSubmitting(false)
-            return
-          }
-          
-          if (logoUrl) {
-            const { error: logoError } = await supabase.from('curriculum_answers').upsert({
-              user_id: user.id,
-              question_key: 'logo_uploaded',
-              answer_data: {
-                text: 'Logo uploaded',
-                url: logoUrl,
-                logo_use_background: logoUseBackground,
-                step_id: currentStepId
-              },
-              project_id: null
-            })
-            if (logoError) {
-              console.error('Error saving logo_uploaded:', logoError.message)
-              setSaveError('Your brand choices could not be saved. Try Send again.')
-              setIsSubmitting(false)
-              return
-            }
-          }
-          
-          if (fontFamily) {
-            const { error: fontError } = await supabase.from('curriculum_answers').upsert({
-              user_id: user.id,
-              question_key: 'font_set',
-              answer_data: {
-                text: 'Font set',
-                font: fontFamily,
-                step_id: currentStepId
-              },
-              project_id: null
-            })
-            if (fontError) {
-              console.error('Error saving font_set:', fontError.message)
-              setSaveError('Your brand choices could not be saved. Try Send again.')
-              setIsSubmitting(false)
-              return
-            }
-          }
-          setSaveError('')
-        } else {
-          upsertDraftAnswer('colors_set', {
-            text: 'Colors set',
-            primary: primaryColor,
-            accent: accentColor,
-            brand_color: brandColor,
-            step_id: currentStepId,
-          })
-          if (logoUrl) {
-            upsertDraftAnswer('logo_uploaded', {
-              text: 'Logo uploaded',
-              url: logoUrl,
-              logo_use_background: logoUseBackground,
-              step_id: currentStepId,
-            })
-          }
-          if (fontFamily) {
-            upsertDraftAnswer('font_set', {
-              text: 'Font set',
-              font: fontFamily,
-              step_id: currentStepId,
-            })
-          }
-          setDraftProfilePreview({
-            primary_color: primaryColor ?? undefined,
-            accent_color: accentColor ?? undefined,
-            brand_color: brandColor ?? undefined,
-            logo_url: logoUrl ?? undefined,
-            logo_use_background: logoUseBackground,
-            font_family: fontFamily ?? undefined,
-          })
-          onDraftRefresh?.()
-        }
-        
-        const updatedAnsweredKeys = new Set(answeredKeys)
-        updatedAnsweredKeys.add('colors_set')
-        if (logoUrl) updatedAnsweredKeys.add('logo_uploaded')
-        if (fontFamily) updatedAnsweredKeys.add('font_set')
-        setAnsweredKeys(updatedAnsweredKeys)
-        
-        setCurrentPickerState({})
-        
-        nextStepId = currentStep.nextStep
-        finalStep = getStep(nextStepId)
-        
-        if (finalStep.id.includes('_COMPLETE')) {
-          const phase = finalStep.phase
-          if (phase) {
-            const phaseSteps = Object.values(CURRICULUM).filter(s => 
-              s.phase === phase && 
-              !s.id.includes('_COMPLETE') && 
-              s.key && 
-              s.key.length > 0
-            )
-            
-            const allPhaseAnswered = phaseSteps.every(s => updatedAnsweredKeys.has(s.key))
-            
-            if (!allPhaseAnswered) {
-              const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
-              nextStepId = firstUnanswered
-              finalStep = getStep(nextStepId)
-            }
-          }
-        } else {
-          const firstUnanswered = findFirstUnansweredStep(nextStepId, updatedAnsweredKeys)
-          nextStepId = firstUnanswered
-          finalStep = getStep(nextStepId)
-        }
 
-        if (isAnonymous) {
-          if (isBeyondFreeTaste(nextStepId)) {
-            nextStepId = findFirstUnansweredInFreeTaste(updatedAnsweredKeys)
-            finalStep = getStep(nextStepId)
-          }
-          setDraftCurrentStepId(nextStepId)
-        }
-      }
-      
-      setTimeout(() => {
-        const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
-        setHistory([nextMessage])
-        setFullHistory(prev => [...prev, nextMessage])
-        setPreviousStepId(currentStepId)
-        setCurrentStepId(nextStepId)
-      }, 300)
+    // Brand panel has its own completion path — never treat it as a text question
+    if (isColorsPanelStep(currentStep)) {
       return
     }
     
@@ -1249,6 +1290,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         setFullHistory(prev => [...prev, nextMessage]) // Add to full history
         setPreviousStepId(currentStepId)
         setCurrentStepId(nextStepId) // Effect at line 55-59 handles notification automatically
+        if (isColorsPanelStep(finalStep)) {
+          enterColorsPanel(nextStepId)
+        }
       } else {
         const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
         setHistory([completeMessage])
@@ -1348,6 +1392,27 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                     // No need to dispatch events - InlineColorPicker handles everything
                   }}
                 />
+                {saveError && (
+                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void completeBrandPanel()}
+                  disabled={isSubmitting}
+                  style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    backgroundColor: '#047857',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: isSubmitting ? 'wait' : 'pointer',
+                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    width: '100%',
+                  }}
+                >
+                  {isSubmitting ? 'Saving...' : 'Save brand'}
+                </button>
               </div>
             ) : showColorsSummary ? (
               /* Browsing an already-answered colors card: compact summary, no picker hijack */
@@ -1388,7 +1453,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 </div>
                 <button
                   type="button"
-                  onClick={() => setPickerOpenedExplicitly(true)}
+                  onClick={() => enterColorsPanel(currentStepId)}
                   className="px-4 py-2 rounded-lg border border-emerald-400/50 text-emerald-200 hover:bg-emerald-500/10 transition-colors text-sm"
                 >
                   Open brand settings
@@ -1658,12 +1723,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 }}
               />
             )}
+            {!isColorsStep && (
             <button
               type="submit"
               disabled={
-                (isColorsStep
-                  ? false
-                  : isSelectInputStep
+                (isSelectInputStep
                     ? !input.trim() || !getSelectLabel(currentStep, input)
                     : !input.trim())
                 || isSubmitting 
@@ -1683,6 +1747,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         >
           {isSubmitting ? 'Sending...' : 'Send'}
         </button>
+            )}
           </>
         )}
       </form>

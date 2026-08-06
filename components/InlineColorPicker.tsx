@@ -320,6 +320,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
           {Object.entries(COLOR_PRESETS).map(([key, preset]) => (
             <button
               key={`primary-${key}`}
+              type="button"
               onClick={() => applyPrimaryPreset(key)}
               className={`relative w-10 h-10 rounded-lg border-2 transition-all hover:scale-110 ${
                 primaryColor === preset.primary
@@ -346,6 +347,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
             className="w-10 h-10 rounded border border-gray-600"
           />
           <button
+            type="button"
             onClick={() => handleEyeDropper('primary')}
             className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
             title="Pick color from screen"
@@ -369,6 +371,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
           {Object.entries(COLOR_PRESETS).map(([key, preset]) => (
             <button
               key={`accent-${key}`}
+              type="button"
               onClick={() => applyAccentPreset(key)}
               className={`relative w-10 h-10 rounded-lg border-2 transition-all hover:scale-110 ${
                 accentColor === preset.accent
@@ -395,6 +398,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
             className="w-10 h-10 rounded border border-gray-600"
           />
           <button
+            type="button"
             onClick={() => handleEyeDropper('accent')}
             className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
             title="Pick color from screen"
@@ -419,6 +423,7 @@ export default function InlineColorPicker({ profile, onColorChange, onPreviewCha
         {logoPreview && (
           <div className="mb-3 relative">
             <button
+              type="button"
               onClick={() => {
                 if (confirm('Are you sure you want to remove the logo?')) {
                   if (logoPreview.startsWith('blob:')) {
