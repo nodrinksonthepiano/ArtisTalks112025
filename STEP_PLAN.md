@@ -33,10 +33,12 @@ Everything in this plan serves that one sentence. If a proposed feature does not
 EmeraldChat
 → page comes alive
 → free email save and restore
-→ optional Orbit application
-→ $8/month ongoing ArtisTalks SaaS
-→ separate Orbit tuition after approval
+→ CURRENT_FOCUS_PILLAR fork (two routes, not sequential):
+   → Continue ArtisTalks — $8/month DIY SaaS
+   OR
+   → Apply to Orbit Launch (free) → Jai review → tuition only if approved
 → Venmo activation and manual review for private beta
+→ Active Orbit includes ArtisTalks for the Orbit term (no double $8)
 ```
 
 Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port, Stripe, LLM Guide (last), dreamboard/tesseract, Google working studio.
@@ -104,15 +106,15 @@ FREE TASTE
 → build the beginning of the sanctuary
 → free email save and restore
 
-STANDALONE ARTISTALKS
+STANDALONE ARTISTALKS (DIY path)
 → $8/month
 → ongoing curriculum, saved sanctuary, secure return, and continued building
 
-ARTISTALKS ORBIT LAUNCH
-→ application is separate from saving
+ARTISTALKS ORBIT LAUNCH (done-with-you path)
+→ application is free and separate from saving
 → approval is separate from payment
-→ $8/month ArtisTalks SaaS continues
-→ PLUS six-month Orbit tuition
+→ tuition only after approval ($500/mo × 6 or $2,000 upfront)
+→ ArtisTalks included during the Orbit term (no double $8)
 ```
 
 ### Free taste
@@ -135,33 +137,51 @@ The subscription provides ongoing access to the one-page ArtisTalks experience:
 continued curriculum, saved sanctuary, secure return, and continued building on
 the artist's living page.
 
-**Every active SaaS user pays $8/month, including Orbit participants.**
+**ArtisTalks `$8/month` is the DIY path** — guided artist-development software
+artists use on their own.
 
 Jai may issue a coupon or comp that reduces or waives the subscription for an
 individual artist. A discount is an **explicit exception**, not an included Orbit benefit.
 
 ### ArtisTalks Orbit Launch
 
-Orbit is a separate six-month guided program.
+Orbit is a separate six-month done-with-you / mastermind program.
 
-Pricing:
+**Application is free.** Tuition is offered only after Jai approves.
+
+Pricing after approval:
 
 - **$3,000** standard total;
 - **$500/month** for six months;
 - **$2,000** paid in full upfront, saving $1,000;
 - **Pay What You CANCakes** by approval.
 
-An Orbit artist therefore normally pays:
+**`$8` and Orbit are two different paths, not sequential upsells.**
 
 ```text
-$8/month SaaS
-+
-their approved Orbit tuition arrangement
+CURRENT_FOCUS_PILLAR
+→ What kind of support do you want?
+→ ArtisTalks DIY / SaaS ($8/month)
+   OR
+→ Orbit Launch (apply free → Jai reviews → tuition only if approved)
 ```
 
-Applying, approval, SaaS subscription, and Orbit tuition are separate states.
+- Choosing **Apply to Orbit** bypasses the `$8` checkout entirely.
+- While an Orbit application is pending, the artist may wait for free, or
+  optionally choose **Continue ArtisTalks — $8/month** to go deeper in curriculum.
+- Orbit is **not** a prerequisite for `$8`, and `$8` is **not** a prerequisite
+  for Orbit.
+- Artists may apply for Orbit **without** first subscribing to the `$8/month` SaaS.
+- If Orbit is not the fit, ArtisTalks remains available for `$8/month`.
 
-Artists may apply for Orbit **without** first subscribing to the $8/month SaaS.
+**Orbit includes ArtisTalks during the Orbit term.** Active Orbit artists do not
+also owe `$8/month`. Internally, SaaS status and Orbit status stay separate;
+Orbit activation may mark ArtisTalks access included/`comped` for the term
+(Sprint 5). An existing `$8` member who later joins Orbit must not be
+double-charged — Orbit activation replaces the separate `$8` obligation while
+Orbit is active.
+
+Applying, approval, SaaS subscription, and Orbit tuition remain separate states.
 
 ### Payment rails (private beta)
 
@@ -576,38 +596,47 @@ Checkpoint: `fe8d869 — Add paid ArtisTalks access gate`
 
 ### Sprint 4 — Native Orbit application ← current
 
-Approved scope (doc-only until implementation is requested):
+Approved conversational scope:
 
-- Optional **Apply to Orbit** CTA on the one-page sanctuary after free-taste
-  save / on return for authenticated artists
+- After `CURRENT_FOCUS_PILLAR`, EmeraldChat offers **two routes** (not sequential
+  upsells):
+  1. **Continue ArtisTalks — $8/month**
+  2. **Apply to Orbit Launch**
 - Orbit application is **not** a curriculum step and must not live inside the
   curriculum state machine; EmeraldChat progression does not depend on Orbit
   status; save ≠ apply
+- Apply to Orbit bypasses `$8` checkout; applying is free
 - Authenticated artists may apply whether `saas_subscription_status` is
   `inactive`, `active`, or `comped`
-- Native form replaces Tally; no admin dashboard; no tuition/payment; no SMS;
-  no Artistocks; no Orbit membership activation
-- Display existing sanctuary/profile/curriculum answers from current tables;
-  do **not** snapshot/duplicate them into `orbit_applications`
+- Native EmeraldChat conversation replaces Tally and any sanctuary form UI;
+  no admin dashboard; no tuition/payment in this sprint; no SMS; no Artistocks;
+  no Orbit membership activation
+- Display existing sanctuary/profile/curriculum on the living page; do **not**
+  snapshot/duplicate them into `orbit_applications`
 - `orbit_applications` holds only new application fields + status/timestamps
-- Minimum new questions:
+- Minimum new questions (one at a time in EmeraldChat):
   1. Best phone number
   2. Why Orbit now / what to accomplish over the next six months
   3. Ready to commit to six months of focused artist development? Yes / Not yet
+  → then explicit Submit Orbit application
 - Status: no row = `not_applied`; stored `draft | submitted | approved | declined`
 - Draft editable by artist; **submitted is read-only** to the artist for MVP
 - Artist cannot self-set `approved` or `declined` (server/admin only)
 - Jai reviews manually in Supabase (application + linked profile +
   `curriculum_answers`); sets approved or declined
-- Temporary product copy: **Apply to Orbit** — do not invent Guide
-  “apply yourself” poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
+- Temporary product copy stays plain — do not invent Guide “apply yourself”
+  poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
 ### Sprint 5 — Orbit payment and activation
 
-- Explicitly later than Sprint 4
-- Standard, paid-in-full, payment-plan, and Pay What You CANCakes paths;
-  Venmo QR/reference; pending-review; manual verification; access activation;
-  SaaS subscription status independent of Orbit tuition.
+- Explicitly later than Sprint 4 — **zero Orbit tuition code in Sprint 4**
+- After approval only:
+  `approved → choose $500/mo × 6 or $2,000 upfront → pay (Venmo/manual) →
+  Orbit active → ArtisTalks included for the Orbit term`
+- SaaS status and Orbit status remain separate internally; activation may
+  include/`comp` ArtisTalks access so there is no double charge
+- Pay What You CANCakes and other paths as needed; no Stripe required for
+  first private-beta cohort
 
 ---
 
@@ -662,8 +691,11 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 
 1. Saving and applying are **separate**. Never auto-submit an application on save.
 2. Free email save and restore of free-taste stay free.
-3. Ongoing SaaS is **$8/month for every active user**, including Orbit/mastermind artists.
-4. Orbit tuition is separate. SaaS is **not** included in Orbit tuition.
+3. Ongoing SaaS is **$8/month** for DIY ArtisTalks users.
+   *(Superseded for Orbit stacking: see Locked 2026-08-07 — $8 vs Orbit
+   two-route pricing. Active Orbit includes ArtisTalks; no double $8.)*
+4. Orbit tuition is separate from the DIY `$8` path and is charged only after
+   approval. *(Superseded stacking rule: SaaS is included during active Orbit.)*
 5. Coupons/comps may reduce or waive `$8` for an individual — explicit exception only.
 6. Artists may apply for Orbit without first subscribing to SaaS.
 7. SaaS subscription status, Orbit application/access status, and Orbit tuition status stay separate.
@@ -745,23 +777,43 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 ### Locked 2026-08-07 — Sprint 4 Native Orbit application
 
 1. Sprint 3 / Slice E complete at `fe8d869 — Add paid ArtisTalks access gate`.
-   Sprint 4 is current. Sprint 5 Orbit tuition stays later.
-2. Orbit application is **not** a curriculum step and must not enter the
-   curriculum state machine. Optional **Apply to Orbit** CTA on the sanctuary
-   after free-taste save / on return. Save ≠ apply.
+   Sprint 4 is current. Sprint 5 Orbit tuition stays later — **no Orbit
+   payment code in Sprint 4**.
+2. After `CURRENT_FOCUS_PILLAR`, EmeraldChat offers two routes (not sequential
+   upsells): **Continue ArtisTalks — $8/month** or **Apply to Orbit Launch**.
+   Orbit application is conversational inside EmeraldChat; not a sanctuary form;
+   not a curriculum StepId. Save ≠ apply.
 3. Authenticated artists may apply with SaaS `inactive`, `active`, or `comped`.
+   Apply bypasses `$8` checkout. Applying is free.
 4. No SMS consent in Sprint 4. Contact field is phone number only. Email is
    already known from authenticated identity.
 5. Do not snapshot sanctuary data into `orbit_applications`. Store only new
    Orbit fields + status/timestamps. Jai reviews linked profile and
    `curriculum_answers` in Supabase.
-6. Minimum questions: phone; why Orbit now / six-month goals; commit Yes / Not yet.
+6. Minimum questions (one at a time): phone; why Orbit now / six-month goals;
+   commit Yes / Not yet; then Submit.
 7. Status: no row = `not_applied`; stored `draft | submitted | approved | declined`.
    Draft editable; submitted read-only to artist for MVP; approved/declined
    server/admin only.
 8. Jai reviews in Supabase Table Editor / SQL only — no admin dashboard.
 9. After submit: received/Submitted, no payment, no acceptance implication.
-   Approved: status + simple next-step with Jai; no tuition or membership
-   activation yet.
-10. Guide voice §6 remains `[NEEDS JAI]`. Plain CTA copy: **Apply to Orbit**.
+   Pending applicants may wait for free, or optionally take the `$8` path to
+   continue deeper curriculum. Approved tuition/payment is Sprint 5 only.
+10. Guide voice §6 remains `[NEEDS JAI]`. Plain product copy only.
 11. Backlog: browser SaaS self-promotion security proof (Slice E follow-up).
+
+### Locked 2026-08-07 — $8 vs Orbit two-route pricing
+
+1. **ArtisTalks `$8/month`** = DIY guided artist-development software.
+2. **Orbit** = done-with-you/mastermind. Application free. Tuition only after
+   approval (`$500/mo × 6` or `$2,000` upfront for private beta).
+3. `$8` and Orbit are **alternative paths**, never step 1 then step 2.
+4. Orbit applicants do **not** need to buy `$8` first.
+5. Active Orbit membership **includes ArtisTalks** during the Orbit term — no
+   double payment. SaaS status and Orbit status stay separate internally;
+   activation may include/`comp` ArtisTalks access (Sprint 5).
+6. An existing `$8` member who later joins Orbit must not pay both; Orbit
+   activation replaces the separate `$8` obligation while Orbit is active.
+7. If Orbit is not approved / not the fit, ArtisTalks remains available for
+   `$8/month`.
+8. Supersedes older “every Orbit artist also pays `$8` on top” stacking copy.

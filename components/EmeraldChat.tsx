@@ -22,6 +22,20 @@ import InlineLogoPicker from '@/components/InlineLogoPicker'
 import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
 import SaasAccessGate from '@/components/SaasAccessGate'
+import {
+  ORBIT_CHAT_QUESTIONS,
+  ORBIT_CONTINUATION_PROMPT,
+  ORBIT_CONTINUE_CTA,
+  ORBIT_APPLY_CTA,
+  ORBIT_READY_OPTIONS,
+  fetchOrbitApplication,
+  getFirstUnansweredOrbitStep,
+  orbitStatusMessage,
+  saveOrbitApplication,
+  type OrbitApplicationRow,
+  type OrbitChatStep,
+  type SixMonthReady,
+} from '@/lib/orbitApplication'
 
 /** Legacy status strings — never hydrate into a text question input. */
 const STATUS_ANSWER_TEXTS = new Set([
@@ -121,6 +135,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }, [currentStepId])
   const [anonymousGateView, setAnonymousGateView] = useState(false)
   const [saasGateView, setSaasGateView] = useState(false)
+  const [continuationChoiceView, setContinuationChoiceView] = useState(false)
+  const [orbitChatActive, setOrbitChatActive] = useState(false)
+  const [orbitStep, setOrbitStep] = useState<OrbitChatStep | null>(null)
+  const [orbitApplication, setOrbitApplication] =
+    useState<OrbitApplicationRow | null>(null)
   const [claimedGateView, setClaimedGateView] = useState(false)
   const [claimedArtistName, setClaimedArtistName] = useState('')
   const [claimError, setClaimError] = useState('')
@@ -134,7 +153,29 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       profile?.saas_subscription_status === 'comped')
   const needsSaasGate =
     !isAnonymous && answeredKeys.has('current_focus_pillar') && !hasSaasAccess
-  const showSaasGate = needsSaasGate && saasGateView && !showGateUI && !showClaimedGate
+  const showSaasGate =
+    needsSaasGate &&
+    saasGateView &&
+    !continuationChoiceView &&
+    !orbitChatActive &&
+    !showGateUI &&
+    !showClaimedGate
+  const showContinuationChoice =
+    continuationChoiceView &&
+    !showSaasGate &&
+    !orbitChatActive &&
+    !showGateUI &&
+    !showClaimedGate
+  const showOrbitChat =
+    orbitChatActive &&
+    !!orbitStep &&
+    !showSaasGate &&
+    !showContinuationChoice &&
+    !showGateUI &&
+    !showClaimedGate
+  const orbitStatusCopy = orbitApplication
+    ? orbitStatusMessage(orbitApplication.status)
+    : null
 
   const gateEmailPlaceholder = useMemo(() => {
     const artistName =
@@ -221,13 +262,79 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     [answeredKeys, hasSaasAccess, isAnonymous]
   )
 
-  const showSaasGateMessage = useCallback(() => {
+  const showAssistantOnly = useCallback((content: string) => {
+    const message = { role: 'assistant' as const, content }
+    setHistory([message])
+    setFullHistory((prev) => [...prev, message])
+    setInput('')
+  }, [])
+
+  const showContinuationChoiceMessage = useCallback(
+    (application?: OrbitApplicationRow | null) => {
+      setAnonymousGateView(false)
+      setSaasGateView(false)
+      setOrbitChatActive(false)
+      setOrbitStep(null)
+      setContinuationChoiceView(true)
+      setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+      setPreviousStepId('CURRENT_FOCUS_PILLAR')
+      setInput('')
+      const statusLine = application
+        ? orbitStatusMessage(application.status)
+        : null
+      showAssistantOnly(
+        statusLine
+          ? `${ORBIT_CONTINUATION_PROMPT}\n\n${statusLine}`
+          : ORBIT_CONTINUATION_PROMPT
+      )
+    },
+    [setCurrentStepIdSync, showAssistantOnly]
+  )
+
+  const enterOrbitChatStep = useCallback(
+    (step: OrbitChatStep, application?: OrbitApplicationRow | null) => {
+      if (application) setOrbitApplication(application)
+      setAnonymousGateView(false)
+      setSaasGateView(false)
+      setContinuationChoiceView(false)
+      setOrbitChatActive(true)
+      setOrbitStep(step)
+      setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+      setPreviousStepId('CURRENT_FOCUS_PILLAR')
+      setInput('')
+      showAssistantOnly(ORBIT_CHAT_QUESTIONS[step])
+    },
+    [setCurrentStepIdSync, showAssistantOnly]
+  )
+
+  const openPostPillarContinuation = useCallback(async () => {
     setAnonymousGateView(false)
-    setSaasGateView(true)
+    setSaasGateView(false)
     setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
     setPreviousStepId('CURRENT_FOCUS_PILLAR')
     setInput('')
-  }, [setCurrentStepIdSync])
+
+    try {
+      const application = await fetchOrbitApplication()
+      setOrbitApplication(application)
+      const draftStep = getFirstUnansweredOrbitStep(application)
+      if (draftStep) {
+        enterOrbitChatStep(draftStep, application)
+        return
+      }
+      showContinuationChoiceMessage(application)
+    } catch {
+      setOrbitApplication(null)
+      showContinuationChoiceMessage(null)
+    }
+  }, [
+    enterOrbitChatStep,
+    setCurrentStepIdSync,
+    showContinuationChoiceMessage,
+  ])
+
+  /** Legacy name kept at call sites: post-pillar fork (SaaS vs Orbit), not SaaS-only. */
+  const showSaasGateMessage = openPostPillarContinuation
 
   useEffect(() => {
     return () => cancelPendingStepAdvance()
@@ -783,11 +890,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         const firstUnanswered = findFirstUnansweredStep('INIT', answeredKeys)
         if (
           !isAnonymous &&
-          !hasSaasAccess &&
           answeredKeys.has('current_focus_pillar') &&
-          firstUnanswered === 'CURRENT_FOCUS_PILLAR'
+          (firstUnanswered === 'CURRENT_FOCUS_PILLAR' ||
+            firstUnanswered === 'FAN_CONNECTION' ||
+            (!hasSaasAccess && isPaidSaasStep(firstUnanswered)))
         ) {
-          showSaasGateMessage()
+          await openPostPillarContinuation()
           hasInitializedRef.current = true
           return
         }
@@ -813,7 +921,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       cancelled = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, hasSaasAccess, showSaasGateMessage])
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, hasSaasAccess, openPostPillarContinuation])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -1214,9 +1322,11 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
   }
 
-  const handleSaasAccessActivated = async () => {
-    await onSaasAccessActivated?.()
+  const continueIntoFanConnection = useCallback(() => {
+    setContinuationChoiceView(false)
     setSaasGateView(false)
+    setOrbitChatActive(false)
+    setOrbitStep(null)
     const nextStepId: StepId = 'FAN_CONNECTION'
     const nextStep = getStep(nextStepId)
     const nextMessage = {
@@ -1232,10 +1342,107 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setTimeout(() => {
       inputRef.current?.focus()
     }, 100)
+  }, [setCurrentStepIdSync])
+
+  const handleSaasAccessActivated = async () => {
+    await onSaasAccessActivated?.()
+    continueIntoFanConnection()
+  }
+
+  const handleChooseContinueArtisTalks = () => {
+    setContinuationChoiceView(false)
+    if (hasSaasAccess) {
+      continueIntoFanConnection()
+      return
+    }
+    setSaasGateView(true)
+    setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+    setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    setInput('')
+  }
+
+  const handleChooseApplyToOrbit = () => {
+    const draftStep = getFirstUnansweredOrbitStep(orbitApplication) || 'phone'
+    enterOrbitChatStep(draftStep, orbitApplication)
+  }
+
+  const handleOrbitReadySelect = (value: string) => {
+    setInput(value)
+  }
+
+  async function persistOrbitAnswer(step: OrbitChatStep, value: string) {
+    setSaveError('')
+    setIsSubmitting(true)
+    try {
+      let application: OrbitApplicationRow
+      if (step === 'phone') {
+        application = await saveOrbitApplication({ phone: value })
+      } else if (step === 'why') {
+        application = await saveOrbitApplication({ why_orbit: value })
+      } else if (step === 'ready') {
+        application = await saveOrbitApplication({
+          six_month_ready: value as SixMonthReady,
+        })
+      } else {
+        application = await saveOrbitApplication({ submit: true })
+      }
+
+      setOrbitApplication(application)
+
+      const userMessage = {
+        role: 'user' as const,
+        content:
+          step === 'ready'
+            ? value === 'yes'
+              ? 'Yes'
+              : 'Not yet'
+            : step === 'submit'
+              ? 'Submit Orbit application'
+              : value,
+      }
+      setHistory((prev) => [...prev, userMessage])
+      setFullHistory((prev) => [...prev, userMessage])
+
+      if (application.status === 'submitted') {
+        setOrbitChatActive(false)
+        setOrbitStep(null)
+        showContinuationChoiceMessage(application)
+        setIsSubmitting(false)
+        return
+      }
+
+      const nextStep = getFirstUnansweredOrbitStep(application)
+      if (nextStep) {
+        enterOrbitChatStep(nextStep, application)
+      } else {
+        showContinuationChoiceMessage(application)
+      }
+    } catch (err) {
+      setSaveError(
+        err instanceof Error ? err.message : 'Unable to save Orbit application.'
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    if (showOrbitChat && orbitStep) {
+      if (orbitStep === 'submit') {
+        await persistOrbitAnswer('submit', '')
+        return
+      }
+      if (orbitStep === 'ready') {
+        if (input !== 'yes' && input !== 'not_yet') return
+        await persistOrbitAnswer('ready', input)
+        return
+      }
+      if (!input.trim() || isSubmitting) return
+      await persistOrbitAnswer(orbitStep, input.trim())
+      return
+    }
 
     // Brand panels have their own completion paths — never treat as text questions
     if (isBrandPanelStep(currentStep)) {
@@ -1480,8 +1687,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         return
       }
 
+      if (!isAnonymous && currentStep.key === 'current_focus_pillar') {
+        void openPostPillarContinuation()
+        setIsSubmitting(false)
+        return
+      }
+
       if (shouldBlockPaidStep(currentStep.nextStep, updatedAnsweredKeys)) {
-        showSaasGateMessage()
+        void openPostPillarContinuation()
         setIsSubmitting(false)
         return
       }
@@ -1601,6 +1814,75 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               {ANONYMOUS_GATE_MESSAGE}
             </p>
           </>
+        ) : showContinuationChoice ? (
+          <>
+            <p
+              className="gold-etched"
+              style={{ marginTop: '0', marginBottom: '16px', whiteSpace: 'pre-line' }}
+            >
+              {orbitStatusCopy
+                ? `${ORBIT_CONTINUATION_PROMPT}\n\n${orbitStatusCopy}`
+                : ORBIT_CONTINUATION_PROMPT}
+            </p>
+            <button
+              type="button"
+              onClick={handleChooseContinueArtisTalks}
+              style={{
+                marginTop: '10px',
+                padding: '10px',
+                backgroundColor: '#047857',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: 'pointer',
+                boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                width: '100%',
+              }}
+            >
+              {ORBIT_CONTINUE_CTA}
+            </button>
+            <button
+              type="button"
+              onClick={handleChooseApplyToOrbit}
+              disabled={
+                !!orbitApplication && orbitApplication.status !== 'draft'
+              }
+              style={{
+                marginTop: '10px',
+                padding: '10px',
+                backgroundColor: 'transparent',
+                color: '#a7f3d0',
+                border: '1px solid rgba(16, 185, 129, 0.45)',
+                borderRadius: '5px',
+                cursor:
+                  orbitApplication && orbitApplication.status !== 'draft'
+                    ? 'not-allowed'
+                    : 'pointer',
+                width: '100%',
+                opacity:
+                  orbitApplication && orbitApplication.status !== 'draft'
+                    ? 0.55
+                    : 1,
+              }}
+            >
+              {!orbitApplication
+                ? ORBIT_APPLY_CTA
+                : orbitApplication.status === 'draft'
+                  ? 'Continue Orbit Application'
+                  : orbitApplication.status === 'submitted'
+                    ? 'Orbit application submitted'
+                    : orbitApplication.status === 'approved'
+                      ? 'Approved for ArtisTalks Orbit Launch'
+                      : 'Orbit application update'}
+            </button>
+          </>
+        ) : showOrbitChat && orbitStep ? (
+          <p
+            className="gold-etched"
+            style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
+          >
+            {ORBIT_CHAT_QUESTIONS[orbitStep]}
+          </p>
         ) : showSaasGate ? (
           <SaasAccessGate onActivated={handleSaasAccessActivated} />
         ) : currentStep && currentStep.question && (
@@ -1906,8 +2188,74 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           </div>
         )}
         
-        {/* Input Area — claimed sanctuary / gate OTP are separate from curriculum submit */}
-        {showClaimedGate || showSaasGate ? null : showGateUI ? (
+        {/* Input Area — claimed sanctuary / gate OTP / post-pillar forks are separate from curriculum submit */}
+        {showClaimedGate || showSaasGate || showContinuationChoice ? null : showOrbitChat && orbitStep ? (
+          <form
+            onSubmit={(e) => {
+              void handleSubmit(e)
+            }}
+            id="orbitApplicationForm"
+          >
+            {saveError && (
+              <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
+                {saveError}
+              </p>
+            )}
+            {orbitStep === 'ready' ? (
+              <InlineSelectPicker
+                options={[...ORBIT_READY_OPTIONS]}
+                value={input || null}
+                disabled={isSubmitting}
+                onChange={handleOrbitReadySelect}
+              />
+            ) : orbitStep === 'submit' ? null : (
+              <input
+                ref={inputRef}
+                type={orbitStep === 'phone' ? 'tel' : 'text'}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  orbitStep === 'phone'
+                    ? 'Best phone number'
+                    : 'Share your answer'
+                }
+                disabled={isSubmitting}
+                className="email-input"
+                autoFocus
+              />
+            )}
+            <button
+              type="submit"
+              disabled={
+                isSubmitting ||
+                (orbitStep === 'submit'
+                  ? false
+                  : orbitStep === 'ready'
+                    ? input !== 'yes' && input !== 'not_yet'
+                    : !input.trim())
+              }
+              style={{
+                marginTop: '10px',
+                padding: '10px',
+                backgroundColor: '#047857',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor: isSubmitting ? 'wait' : 'pointer',
+                boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                width: '100%',
+              }}
+            >
+              {isSubmitting
+                ? orbitStep === 'submit'
+                  ? 'Submitting...'
+                  : 'Saving...'
+                : orbitStep === 'submit'
+                  ? 'Submit Orbit application'
+                  : 'Send'}
+            </button>
+          </form>
+        ) : showGateUI ? (
           <div className="w-full">
             {showNavToolbar && hasUserHistory && (
               <div className="flex items-center justify-center gap-2 mb-2">
