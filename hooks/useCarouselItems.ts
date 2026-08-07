@@ -57,12 +57,16 @@ export function useCarouselItems(
     
     // CRITICAL: Since activeStepId is single source of truth, typing always matches
     const typingInput = currentTypingInput
-    const label = currentStep.key
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-    
-    const cardTitle = typingInput ? `${label}: ${typingInput}` : `${label}: `
+    const cardTitle =
+      currentStep.key === 'artist_name'
+        ? typingInput
+        : (() => {
+            const label = currentStep.key
+              .split('_')
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ')
+            return typingInput ? `${label}: ${typingInput}` : `${label}: `
+          })()
     
     return {
       id: `current-question-${activeStepId}`,
@@ -142,6 +146,8 @@ export function useCarouselItems(
         cardContent = bodyName
           ? `${headlineName} · ${bodyName}`
           : headlineName
+      } else if (answer.question_key === 'artist_name') {
+        cardTitle = rawText && !isStatusText ? rawText : ''
       } else {
         const label = keyToLabel(answer.question_key)
         cardTitle =
@@ -182,10 +188,12 @@ export function useCarouselItems(
       if (editedCardIndex !== -1) {
         const editedCard = finalItems[editedCardIndex]
         const step = getStep(activeStepId)
-        const label = keyToLabel(step.key)
         finalItems[editedCardIndex] = {
           ...editedCard,
-          title: `${label}: ${typingInputRef.current}`,
+          title:
+            step.key === 'artist_name'
+              ? typingInputRef.current
+              : `${keyToLabel(step.key)}: ${typingInputRef.current}`,
         }
       }
     }

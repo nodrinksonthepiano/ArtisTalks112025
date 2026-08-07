@@ -1288,17 +1288,65 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
             const label = titleParts[0]?.trim() || '';
             const answerFromTitle = titleParts.slice(1).join(':').trim() || '';
             const contentText = item.content?.trim() || '';
+            const isArtistNameCard = item.questionKey === 'artist_name';
+            const artistName = isArtistNameCard
+              ? answerFromTitle || (item.title || '').trim()
+              : '';
             const hasAnswer =
               !!answerFromTitle ||
               !!contentText ||
               !!item.imageUrl ||
-              ['logo_uploaded', 'colors_set', 'font_set'].includes(item.questionKey);
+              ['logo_uploaded', 'colors_set', 'font_set'].includes(item.questionKey) ||
+              (isArtistNameCard && !!artistName);
             const answer = answerFromTitle || contentText;
             const isColorsCard = item.questionKey === 'colors_set';
             const isFontCard = item.questionKey === 'font_set';
             const colorParts = isColorsCard
               ? contentText.split('·').map((s) => s.trim()).filter((s) => s.startsWith('#'))
               : [];
+
+            if (isArtistNameCard) {
+              return (
+                <>
+                  {hasAnswer && item.stepId && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        window.dispatchEvent(new CustomEvent('cardEdit', {
+                          detail: { stepId: item.stepId, focusInput: true }
+                        }));
+                      }}
+                      className="absolute top-2 right-2 p-1.5 rounded-lg transition-colors hover:bg-black/20 flex-shrink-0 z-10"
+                      style={{
+                        color: cardText,
+                        backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                        backdropFilter: 'blur(4px)',
+                      }}
+                      title="Edit answer"
+                      aria-label="Edit answer"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
+                  <h3 style={{
+                    fontSize: 'clamp(1.25rem, 4vw, 2.25rem)',
+                    fontWeight: 700,
+                    marginBottom: 0,
+                    color: cardText,
+                    fontFamily: overlayFont,
+                    textShadow: cardText === '#fffacd' ? '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)' : 'none',
+                    flexShrink: 0,
+                    lineHeight: 1.2,
+                    textAlign: 'center',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>
+                    {artistName || '\u00A0'}
+                  </h3>
+                </>
+              );
+            }
             
             return (
               <>
