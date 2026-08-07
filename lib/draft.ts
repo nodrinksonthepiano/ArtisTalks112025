@@ -10,6 +10,8 @@ export interface DraftAnswer {
 
 export interface DraftProfilePreview {
   artist_name?: string | null
+  /** Artist-edited Living Affirmation before OTP save. Migrates to profiles.affirmation_text. */
+  affirmation_text?: string | null
   mission_statement?: string | null
   primary_color?: string | null
   accent_color?: string | null

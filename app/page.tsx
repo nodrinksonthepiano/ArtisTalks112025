@@ -23,6 +23,7 @@ import {
   clearReturningClaimMarker,
   hasReturningClaimMarker,
 } from '@/lib/returningClaim'
+import { DATA_RESET_EVENT } from '@/lib/sessionReset'
 import { useDraft } from '@/hooks/useDraft'
 import {
   StepId,
@@ -149,6 +150,20 @@ export default function Home() {
 
   // Carousel items from curriculum answers + current question card
   const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode, answeredKeys)
+
+  // Data Reset — clear carousel typing state before hard navigation
+  useEffect(() => {
+    const handleDataReset = () => {
+      setCurrentTypingInput('')
+      setActiveStepId(null)
+      setIsEditMode(false)
+      setCarouselIndex(0)
+      carouselIndexRef.current = 0
+      prevQuestionRef.current = null
+    }
+    window.addEventListener(DATA_RESET_EVENT, handleDataReset)
+    return () => window.removeEventListener(DATA_RESET_EVENT, handleDataReset)
+  }, [])
 
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
@@ -383,8 +398,6 @@ export default function Home() {
           draftToMigrate.profilePreview.artist_name ||
           draftToMigrate.profilePreview.mission_statement)
 
-      const draftKeysBeforeMigrate = getDraftAnsweredKeys()
-      const continueAfterFreeTaste = isFreeTasteGateReached(draftKeysBeforeMigrate)
       const isReturningClaim = hasReturningClaimMarker()
 
       if (isReturningClaim) {
@@ -408,9 +421,6 @@ export default function Home() {
           }
           await migrationPromiseRef.current
           setSanctuarySaveError(null)
-          if (continueAfterFreeTaste) {
-            setActiveStepId('CURRENT_FOCUS_PILLAR')
-          }
         } catch (err) {
           console.error('Draft migration failed:', err)
           // Keep local draft; account may be connected but sanctuary is not fully saved.
@@ -672,16 +682,11 @@ export default function Home() {
     setSanctuarySaveRetrying(true)
     setSanctuarySaveError(null)
     try {
-      const draftKeys = getDraftAnsweredKeys()
-      const continueAfterFreeTaste = isFreeTasteGateReached(draftKeys)
       await migrateAnonymousDraft(user.id)
       refreshDraft()
       await reloadAnsweredKeys()
       await reloadProfile()
       setSanctuarySaveError(null)
-      if (continueAfterFreeTaste) {
-        setActiveStepId('CURRENT_FOCUS_PILLAR')
-      }
     } catch (err) {
       console.error('Draft migration retry failed:', err)
       setSanctuarySaveError(

@@ -20,6 +20,7 @@ function hasDraftContent(draft: AnonymousDraft): boolean {
   const p = draft.profilePreview
   return Boolean(
     p.artist_name ||
+      p.affirmation_text ||
       p.mission_statement ||
       p.primary_color ||
       p.accent_color ||
@@ -65,6 +66,11 @@ function buildProfileFill(
     preview.mission_statement?.trim() || getDraftAnswerText('gift_to_world').trim()
   if (isBlank(existing?.mission_statement) && mission) {
     fill.mission_statement = mission
+  }
+
+  const affirmation = preview.affirmation_text?.trim()
+  if (isBlank(existing?.affirmation_text) && affirmation) {
+    fill.affirmation_text = affirmation
   }
 
   if (isBlank(existing?.primary_color) && preview.primary_color) {
@@ -188,6 +194,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
       font_family: existingProfile?.font_family ?? null,
       logo_url: existingProfile?.logo_url ?? null,
       logo_use_background: existingProfile?.logo_use_background ?? null,
+      affirmation_text: existingProfile?.affirmation_text ?? null,
       ...fieldsToWrite,
     }
 

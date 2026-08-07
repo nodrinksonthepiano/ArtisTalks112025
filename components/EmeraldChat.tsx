@@ -35,11 +35,13 @@ function isStatusAnswerText(value: string): boolean {
 import LivingAffirmation from '@/components/LivingAffirmation'
 import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
+import SavedPlayground from '@/components/SavedPlayground'
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 import {
   clearReturningClaimMarker,
   setReturningClaimMarker,
 } from '@/lib/returningClaim'
+import { DATA_RESET_EVENT } from '@/lib/sessionReset'
 
 // Add prop type for the update function
 interface EmeraldChatProps {
@@ -58,6 +60,9 @@ interface EmeraldChatProps {
 }
 
 const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
+
+const RATE_LIMIT_MESSAGE =
+  'Too many attempts. Wait about 15 minutes, then refresh and try again.'
 
 export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
@@ -118,15 +123,21 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const isGated = isAnonymous && isFreeTasteGateReached(answeredKeys)
   const showGateUI = isGated && anonymousGateView && !claimedGateView
   const showClaimedGate = isAnonymous && claimedGateView && claimedArtistName.length > 0
+  const showSavedPlayground =
+    !isAnonymous &&
+    isFreeTasteGateReached(answeredKeys) &&
+    !showClaimedGate &&
+    !!profile?.id
+
+  const gateArtistName =
+    profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
 
   const gateEmailPlaceholder = useMemo(() => {
-    const artistName =
-      profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
-    return artistName ? `Enter ${artistName}'s email` : 'Enter your email'
-  }, [profile?.artist_name, answeredKeys])
+    return gateArtistName ? `Enter ${gateArtistName}'s email` : 'Enter your email'
+  }, [gateArtistName])
 
-  /** Gate-only Living Affirmation — derived from exact draft answers; no persistence. */
-  const livingAffirmationText = useMemo(() => {
+  /** Gate assembled affirmation — exact draft answers before any edit. */
+  const assembledGateAffirmation = useMemo(() => {
     if (!showGateUI) return ''
     return assembleLivingAffirmation({
       artist_name: getDraftAnswerText('artist_name'),
@@ -136,6 +147,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       known_for_legacy: getDraftAnswerText('known_for_legacy'),
     })
   }, [showGateUI, answeredKeys])
+
+  const [gateAffirmationEdit, setGateAffirmationEdit] = useState('')
+
+  useEffect(() => {
+    if (!showGateUI) return
+    const draftAffirmation = loadDraft()?.profilePreview?.affirmation_text?.trim()
+    setGateAffirmationEdit(draftAffirmation || assembledGateAffirmation)
+  }, [showGateUI, assembledGateAffirmation])
 
   /** BUSINESS_OFFERING input hint only — display copy; curriculum question untouched. */
   const stepInputPlaceholder = useMemo(() => {
@@ -152,7 +171,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const hasUserHistory = fullHistory.some((m) => m.role === 'user')
   const hideAnonymousInitNav =
     isAnonymous && currentStepId === 'INIT' && !answeredKeys.has('artist_name')
-  const showNavToolbar = !hideAnonymousInitNav
+  const showNavToolbar =
+    !hideAnonymousInitNav && !showSavedPlayground && !showGateUI
   
   const cancelPendingStepAdvance = useCallback(() => {
     if (stepAdvanceTimeoutRef.current !== null) {
@@ -263,6 +283,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       return FREE_TASTE_LAST_STEP_ID
     }
 
+    if (!isAnonymous && isFreeTasteGateReached(keysToCheck)) {
+      return FREE_TASTE_LAST_STEP_ID
+    }
+
     let current: StepId = isAnonymous ? clampStepToFreeTaste(startFrom) : startFrom
     const visited = new Set<StepId>()
     
@@ -271,6 +295,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
       if (isAnonymous && isBeyondFreeTaste(current)) {
         return findFirstUnansweredInFreeTaste(keysToCheck)
+      }
+
+      if (!isAnonymous && isBeyondFreeTaste(current)) {
+        return FREE_TASTE_LAST_STEP_ID
       }
 
       const step = getStep(current)
@@ -623,6 +651,39 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setHistory([initMessage])
     setFullHistory([initMessage])
   }, [onCurrentStepChange, isAnonymous, onTypingUpdate, enterBrandPanel])
+
+  // Data Reset — clear in-memory state before hard navigation
+  useEffect(() => {
+    const handleDataReset = () => {
+      cancelPendingStepAdvance()
+      setClaimedGateView(false)
+      setClaimedArtistName('')
+      setClaimError('')
+      setAnonymousGateView(false)
+      setGateAffirmationEdit('')
+      setInput('')
+      setHistory([])
+      setFullHistory([])
+      setCurrentStepId('INIT')
+      setPreviousStepId(null)
+      setSaveError('')
+      hasInitializedRef.current = false
+      prevAnsweredKeysSizeRef.current = 0
+      resumeLegacyBrandKeysRef.current = new Set()
+      setAnsweredKeys(new Set())
+      onTypingUpdate?.('', 'INIT')
+      onDraftRefresh?.()
+    }
+
+    window.addEventListener(DATA_RESET_EVENT, handleDataReset)
+    return () => window.removeEventListener(DATA_RESET_EVENT, handleDataReset)
+  }, [
+    cancelPendingStepAdvance,
+    onTypingUpdate,
+    onDraftRefresh,
+    setAnsweredKeys,
+    setCurrentStepId,
+  ])
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -649,6 +710,14 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
     if (isAnonymous && isFreeTasteGateReached(answeredKeys)) {
       hasInitializedRef.current = true
+      return
+    }
+
+    if (!isAnonymous && isFreeTasteGateReached(answeredKeys)) {
+      hasInitializedRef.current = true
+      if (currentStepId !== FREE_TASTE_LAST_STEP_ID) {
+        setCurrentStepIdSync(FREE_TASTE_LAST_STEP_ID)
+      }
       return
     }
 
@@ -1098,6 +1167,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (isSubmitting || currentStepId === 'COMPLETE') return
     if (isAnonymous && currentStepId === 'INIT') return
     if (isAnonymous && isFreeTasteGateReached(answeredKeys)) return
+    if (!isAnonymous && isFreeTasteGateReached(answeredKeys)) return
     if (isAnonymous && isBeyondFreeTaste(currentStep.nextStep)) return
     
     const nextStepId = currentStep.nextStep
@@ -1198,11 +1268,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         }
 
         if (res.status === 429) {
-          setClaimError(
-            typeof data.error === 'string' && data.error
-              ? data.error
-              : 'Too many attempts. Try again later.'
-          )
+          setClaimError(RATE_LIMIT_MESSAGE)
           setIsSubmitting(false)
           return
         }
@@ -1381,6 +1447,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         return
       }
 
+      if (!isAnonymous && isFreeTasteGateReached(updatedAnsweredKeys)) {
+        setCurrentStepIdSync(FREE_TASTE_LAST_STEP_ID)
+        setIsSubmitting(false)
+        return
+      }
+
       // 3. Move to Next Step
       let nextStepId = currentStep.nextStep
       const nextStep = getStep(nextStepId)
@@ -1489,7 +1561,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           />
         ) : showGateUI ? (
           <>
-            <LivingAffirmation text={livingAffirmationText} />
+            <LivingAffirmation
+              artistName={gateArtistName}
+              text={gateAffirmationEdit}
+              editable
+              onTextChange={(value) => {
+                setGateAffirmationEdit(value)
+                setDraftProfilePreview({ affirmation_text: value })
+                onDraftRefresh?.()
+              }}
+            />
             <p
               className="gold-etched"
               style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
@@ -1497,6 +1578,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               {ANONYMOUS_GATE_MESSAGE}
             </p>
           </>
+        ) : showSavedPlayground && profile?.id ? (
+          <SavedPlayground
+            userId={profile.id}
+            profile={profile}
+            answeredKeys={answeredKeys}
+            onProfileUpdate={onProfileUpdate}
+            onPillarSaved={(key) =>
+              setAnsweredKeys((prev) => new Set([...prev, key]))
+            }
+          />
         ) : currentStep && currentStep.question && (
           <>
             {showBrandPicker && isLogoStep ? (
@@ -1821,9 +1912,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 </button>
               </div>
             )}
-            <OtpEmailFlow emailPlaceholder={gateEmailPlaceholder} sendButtonLabel="Send code" />
+            <OtpEmailFlow
+              emailPlaceholder={gateEmailPlaceholder}
+              sendButtonLabel="Save this affirmation — Free"
+            />
           </div>
-        ) : (
+        ) : showSavedPlayground ? null : (
       <form onSubmit={handleSubmit} id="artistForm">
         {/* Navigation Buttons - Back/Next/Undo/Redo */}
         {showNavToolbar && (
@@ -1866,7 +1960,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           )}
           
           {/* Next Button - Skip current question */}
-          {!isSubmitting && currentStepId !== 'COMPLETE' && !(isAnonymous && isGated) && (
+          {!isSubmitting && currentStepId !== 'COMPLETE' && !(isAnonymous && isGated) && !showSavedPlayground && (
             <button
               type="button"
               onClick={handleNext}
