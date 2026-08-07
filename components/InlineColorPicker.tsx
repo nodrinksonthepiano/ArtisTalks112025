@@ -55,6 +55,7 @@ export default function InlineColorPicker({
   const [fontError, setFontError] = useState<string | null>(null)
   const [fontLoading, setFontLoading] = useState(false)
   const [featuredFontsReady, setFeaturedFontsReady] = useState<Set<string>>(new Set())
+  const [eyeDropperSupported, setEyeDropperSupported] = useState(false)
 
   const canUploadLogo = Boolean(profile?.id && profile.id !== 'anonymous')
 
@@ -74,6 +75,10 @@ export default function InlineColorPicker({
     return () => {
       cancelled = true
     }
+  }, [])
+
+  useEffect(() => {
+    setEyeDropperSupported('EyeDropper' in window)
   }, [])
   
   // Update ref when preview changes
@@ -299,10 +304,7 @@ export default function InlineColorPicker({
   
   // EyeDropper handler (HTML5 API)
   const handleEyeDropper = async (type: 'primary' | 'accent') => {
-    if (!('EyeDropper' in window)) {
-      alert('EyeDropper API not supported in your browser')
-      return
-    }
+    if (!('EyeDropper' in window)) return
     
     try {
       const eyeDropper = new (window as any).EyeDropper()
@@ -354,14 +356,16 @@ export default function InlineColorPicker({
             onChange={(e) => updatePrimaryColor(e.target.value)}
             className="w-10 h-10 rounded border border-gray-600"
           />
-          <button
-            type="button"
-            onClick={() => handleEyeDropper('primary')}
-            className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
-            title="Pick color from screen"
-          >
-            🎨
-          </button>
+          {eyeDropperSupported && (
+            <button
+              type="button"
+              onClick={() => handleEyeDropper('primary')}
+              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
+              title="Pick color from screen"
+            >
+              🎨
+            </button>
+          )}
           <input
             type="text"
             value={primaryColor}
@@ -405,14 +409,16 @@ export default function InlineColorPicker({
             onChange={(e) => updateAccentColor(e.target.value)}
             className="w-10 h-10 rounded border border-gray-600"
           />
-          <button
-            type="button"
-            onClick={() => handleEyeDropper('accent')}
-            className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
-            title="Pick color from screen"
-          >
-            🎨
-          </button>
+          {eyeDropperSupported && (
+            <button
+              type="button"
+              onClick={() => handleEyeDropper('accent')}
+              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
+              title="Pick color from screen"
+            >
+              🎨
+            </button>
+          )}
           <input
             type="text"
             value={accentColor}
