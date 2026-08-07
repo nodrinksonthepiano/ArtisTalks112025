@@ -52,6 +52,10 @@ async function waitForFontFamily(fontValue: string): Promise<void> {
 export async function ensureFontLoaded(entry: FontCatalogEntry): Promise<void> {
   if (typeof document === 'undefined') return
 
+  if (entry.source === 'geist' || entry.source === 'system') {
+    return
+  }
+
   if (entry.source === 'google') {
     if (!entry.googleStylesheetUrl) {
       throw new Error(`Missing Google stylesheet URL for ${entry.name}`)

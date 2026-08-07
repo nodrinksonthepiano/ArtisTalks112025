@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getResendCooldownSeconds } from '@/lib/rateLimitConfig'
 
 const sendButtonStyle: React.CSSProperties = {
@@ -34,6 +34,8 @@ export default function ClaimedArtistGate({
   const [info, setInfo] = useState('')
   const [resendSecondsLeft, setResendSecondsLeft] = useState(cooldownSeconds)
   const [isAutoSubmitting, setIsAutoSubmitting] = useState(false)
+  const [isRateLimited, setIsRateLimited] = useState(false)
+  const lastSubmittedTokenRef = useRef('')
 
   useEffect(() => {
     if (resendSecondsLeft <= 0) return
@@ -63,6 +65,21 @@ export default function ClaimedArtistGate({
           error?: string
         }
 
+        const trimmed = token.trim()
+        lastSubmittedTokenRef.current = trimmed
+
+        if (res.status === 429) {
+          setIsRateLimited(true)
+          setError(
+            typeof data.error === 'string' && data.error
+              ? data.error
+              : 'Too many attempts. Please wait before trying again.'
+          )
+          setLoading(false)
+          setIsAutoSubmitting(false)
+          return
+        }
+
         if (!res.ok || !data.verified) {
           setError(
             typeof data.error === 'string' && data.error
@@ -85,11 +102,23 @@ export default function ClaimedArtistGate({
   )
 
   useEffect(() => {
-    if (token.length === 6 && !isAutoSubmitting && !loading) {
+    if (token.length === 6 && token !== lastSubmittedTokenRef.current) {
+      setIsRateLimited(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (
+      token.length === 6 &&
+      !isAutoSubmitting &&
+      !loading &&
+      !isRateLimited &&
+      token !== lastSubmittedTokenRef.current
+    ) {
       setIsAutoSubmitting(true)
       void handleVerify()
     }
-  }, [token, isAutoSubmitting, loading, handleVerify])
+  }, [token, isAutoSubmitting, loading, isRateLimited, handleVerify])
 
   async function handleResend() {
     if (resendSecondsLeft > 0 || loading) return
@@ -133,6 +162,8 @@ export default function ClaimedArtistGate({
       setResendSecondsLeft(cooldownSeconds)
       setToken('')
       setIsAutoSubmitting(false)
+      setIsRateLimited(false)
+      lastSubmittedTokenRef.current = ''
     } catch {
       setError('Unable to send code')
     } finally {
