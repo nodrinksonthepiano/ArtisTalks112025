@@ -21,6 +21,7 @@ import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineLogoPicker from '@/components/InlineLogoPicker'
 import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
+import SaasAccessGate from '@/components/SaasAccessGate'
 
 /** Legacy status strings — never hydrate into a text question input. */
 const STATUS_ANSWER_TEXTS = new Set([
@@ -39,6 +40,14 @@ import {
   setReturningClaimMarker,
 } from '@/lib/returningClaim'
 
+function isPaidSaasStep(stepId: StepId): boolean {
+  const spine = getCurriculumSpineOrder()
+  const gateIndex = spine.indexOf('CURRENT_FOCUS_PILLAR')
+  const stepIndex = spine.indexOf(stepId)
+  if (gateIndex === -1 || stepIndex === -1) return false
+  return stepIndex > gateIndex
+}
+
 // Add prop type for the update function
 interface EmeraldChatProps {
   onProfileUpdate?: (updates: Partial<Profile>) => void
@@ -54,11 +63,12 @@ interface EmeraldChatProps {
   isAnonymous?: boolean
   onDraftRefresh?: () => void
   affirmationReadyToSave?: boolean
+  onSaasAccessActivated?: () => Promise<void> | void
 }
 
 const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh, affirmationReadyToSave = true }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh, affirmationReadyToSave = true, onSaasAccessActivated }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -110,6 +120,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     currentStepIdRef.current = currentStepId
   }, [currentStepId])
   const [anonymousGateView, setAnonymousGateView] = useState(false)
+  const [saasGateView, setSaasGateView] = useState(false)
   const [claimedGateView, setClaimedGateView] = useState(false)
   const [claimedArtistName, setClaimedArtistName] = useState('')
   const [claimError, setClaimError] = useState('')
@@ -117,6 +128,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const isGated = isAnonymous && isFreeTasteGateReached(answeredKeys)
   const showGateUI = isGated && anonymousGateView && !claimedGateView
   const showClaimedGate = isAnonymous && claimedGateView && claimedArtistName.length > 0
+  const hasSaasAccess =
+    !isAnonymous &&
+    (profile?.saas_subscription_status === 'active' ||
+      profile?.saas_subscription_status === 'comped')
+  const needsSaasGate =
+    !isAnonymous && answeredKeys.has('current_focus_pillar') && !hasSaasAccess
+  const showSaasGate = needsSaasGate && saasGateView && !showGateUI && !showClaimedGate
 
   const gateEmailPlaceholder = useMemo(() => {
     const artistName =
@@ -190,6 +208,27 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     [cancelPendingStepAdvance]
   )
 
+  const shouldBlockPaidStep = useCallback(
+    (stepId: StepId, keysOverride?: Set<string>) => {
+      const keysToCheck = keysOverride || answeredKeys
+      return (
+        !isAnonymous &&
+        !hasSaasAccess &&
+        keysToCheck.has('current_focus_pillar') &&
+        isPaidSaasStep(stepId)
+      )
+    },
+    [answeredKeys, hasSaasAccess, isAnonymous]
+  )
+
+  const showSaasGateMessage = useCallback(() => {
+    setAnonymousGateView(false)
+    setSaasGateView(true)
+    setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+    setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    setInput('')
+  }, [setCurrentStepIdSync])
+
   useEffect(() => {
     return () => cancelPendingStepAdvance()
   }, [cancelPendingStepAdvance])
@@ -261,6 +300,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       }
 
       const step = getStep(current)
+
+      if (shouldBlockPaidStep(current, keysToCheck)) {
+        return 'CURRENT_FOCUS_PILLAR'
+      }
       
       // CRITICAL: Completion steps (PRE_COMPLETE, PROD_COMPLETE, etc.) are celebrations
       // They should be shown when all questions in their phase are answered
@@ -310,7 +353,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
     
     return 'COMPLETE'
-  }, [answeredKeys, isAnonymous, profile?.artist_name])
+  }, [answeredKeys, isAnonymous, profile?.artist_name, shouldBlockPaidStep])
   
   // Helper: Load answer from fullHistory or database
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
@@ -380,8 +423,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   // This prevents flash of wrong question (like INIT) during carousel navigation
   const handleEditStep = useCallback(async (stepId: StepId, focusInput: boolean = false) => {
     if (isAnonymous && isBeyondFreeTaste(stepId)) return
+    if (shouldBlockPaidStep(stepId)) {
+      showSaasGateMessage()
+      return
+    }
 
     setAnonymousGateView(false)
+    setSaasGateView(false)
     // Clear redo stack when editing (editing is a new action)
     setRedoStack([])
     const step = getStep(stepId)
@@ -434,7 +482,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         inputRef.current?.focus()
       }, 50)
     }
-  }, [history, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync])
+  }, [history, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
@@ -443,7 +491,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const stepId = customEvent.detail?.stepId
       if (stepId) {
         if (isAnonymous && isBeyondFreeTaste(stepId)) return
+        if (shouldBlockPaidStep(stepId)) {
+          showSaasGateMessage()
+          return
+        }
         setAnonymousGateView(false)
+        setSaasGateView(false)
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
@@ -467,7 +520,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [isAnonymous, enterBrandPanel, loadAnswerForStep, setCurrentStepIdSync])
+  }, [isAnonymous, enterBrandPanel, loadAnswerForStep, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -495,8 +548,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const stepId = customEvent.detail?.stepId
       if (stepId) {
         if (isAnonymous && isBeyondFreeTaste(stepId)) return
+        if (shouldBlockPaidStep(stepId)) {
+          showSaasGateMessage()
+          return
+        }
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
         setAnonymousGateView(false)
+        setSaasGateView(false)
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
@@ -519,7 +577,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync])
+  }, [loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -723,6 +781,16 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
       if (currentSize > 0 || profileName) {
         const firstUnanswered = findFirstUnansweredStep('INIT', answeredKeys)
+        if (
+          !isAnonymous &&
+          !hasSaasAccess &&
+          answeredKeys.has('current_focus_pillar') &&
+          firstUnanswered === 'CURRENT_FOCUS_PILLAR'
+        ) {
+          showSaasGateMessage()
+          hasInitializedRef.current = true
+          return
+        }
         if (firstUnanswered !== currentStepId) {
           const step = getStep(firstUnanswered)
           setCurrentStepIdSync(firstUnanswered)
@@ -745,7 +813,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       cancelled = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase])
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, hasSaasAccess, showSaasGateMessage])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -1028,6 +1096,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setClaimedArtistName('')
     setClaimError('')
     setAnonymousGateView(false)
+    setSaasGateView(false)
     setAnsweredKeys((prev) => {
       const next = new Set(prev)
       next.delete('artist_name')
@@ -1080,6 +1149,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const handleLast = () => {
     if (previousStepId && !isSubmitting) {
       setAnonymousGateView(false)
+      setSaasGateView(false)
       const prevStep = getStep(previousStepId)
       setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       // Find the step before previous for new previousStepId
@@ -1102,6 +1172,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     
     const nextStepId = currentStep.nextStep
     const firstUnanswered = findFirstUnansweredStep(nextStepId)
+    if (
+      !isAnonymous &&
+      !hasSaasAccess &&
+      answeredKeys.has('current_focus_pillar') &&
+      firstUnanswered === 'CURRENT_FOCUS_PILLAR'
+    ) {
+      showSaasGateMessage()
+      return
+    }
     const nextStep = getStep(firstUnanswered)
     
     // Move to next unanswered question without saving
@@ -1133,6 +1212,26 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         }
       }
     }
+  }
+
+  const handleSaasAccessActivated = async () => {
+    await onSaasAccessActivated?.()
+    setSaasGateView(false)
+    const nextStepId: StepId = 'FAN_CONNECTION'
+    const nextStep = getStep(nextStepId)
+    const nextMessage = {
+      role: 'assistant' as const,
+      content: nextStep.question,
+      stepId: nextStepId,
+    }
+    setHistory([nextMessage])
+    setFullHistory((prev) => [...prev, nextMessage])
+    setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    setCurrentStepIdSync(nextStepId)
+    setInput('')
+    setTimeout(() => {
+      inputRef.current?.focus()
+    }, 100)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -1381,6 +1480,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         return
       }
 
+      if (shouldBlockPaidStep(currentStep.nextStep, updatedAnsweredKeys)) {
+        showSaasGateMessage()
+        setIsSubmitting(false)
+        return
+      }
+
       // 3. Move to Next Step
       let nextStepId = currentStep.nextStep
       const nextStep = getStep(nextStepId)
@@ -1496,6 +1601,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
               {ANONYMOUS_GATE_MESSAGE}
             </p>
           </>
+        ) : showSaasGate ? (
+          <SaasAccessGate onActivated={handleSaasAccessActivated} />
         ) : currentStep && currentStep.question && (
           <>
             {showBrandPicker && isLogoStep ? (
@@ -1800,7 +1907,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         )}
         
         {/* Input Area — claimed sanctuary / gate OTP are separate from curriculum submit */}
-        {showClaimedGate ? null : showGateUI ? (
+        {showClaimedGate || showSaasGate ? null : showGateUI ? (
           <div className="w-full">
             {showNavToolbar && hasUserHistory && (
               <div className="flex items-center justify-center gap-2 mb-2">

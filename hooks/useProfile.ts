@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 
+export type SaasSubscriptionStatus = 'inactive' | 'active' | 'comped'
+
 export interface Profile {
   id: string
   artist_name: string | null
@@ -16,6 +18,15 @@ export interface Profile {
   body_font_family?: string | null
   logo_use_background?: boolean | null
   brand_color?: string | null
+  saas_subscription_status?: SaasSubscriptionStatus | null
+}
+
+function stripServerControlledProfileFields(
+  updates: Partial<Profile>
+): Partial<Profile> {
+  const safeUpdates = { ...updates }
+  delete safeUpdates.saas_subscription_status
+  return safeUpdates
 }
 
 export function useProfile(userId: string | null) {
@@ -54,6 +65,7 @@ export function useProfile(userId: string | null) {
         affirmation_text: null,
         mission_statement: null,
         email: user?.email || null,
+        saas_subscription_status: 'inactive',
       }
       setProfile(fallback)
       return fallback
@@ -70,6 +82,9 @@ export function useProfile(userId: string | null) {
   }, [reloadProfile])
 
   const updateProfile = async (updates: Partial<Profile>) => {
+    const safeUpdates = stripServerControlledProfileFields(updates)
+    if (Object.keys(safeUpdates).length === 0) return
+
     if (!userId) {
       console.warn('⚠️ Cannot update profile: no user logged in')
       return
@@ -85,7 +100,8 @@ export function useProfile(userId: string | null) {
         affirmation_text: null,
         mission_statement: null,
         email: user?.email || null,
-        ...updates,
+        saas_subscription_status: 'inactive',
+        ...safeUpdates,
       }
       setProfile(newProfile)
       try {
@@ -97,13 +113,13 @@ export function useProfile(userId: string | null) {
       return
     }
 
-    const newProfile = { ...profile, ...updates }
+    const newProfile = { ...profile, ...safeUpdates }
     setProfile(newProfile)
 
     try {
       const { error } = await supabase.from('profiles').upsert({
         id: profile.id,
-        ...updates,
+        ...safeUpdates,
       })
       if (error) throw error
     } catch (err) {

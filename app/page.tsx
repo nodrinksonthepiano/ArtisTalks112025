@@ -657,6 +657,10 @@ export default function Home() {
     isAnonymous: !user,
     onDraftRefresh: handleDraftRefresh,
     affirmationReadyToSave: persistentAffirmationReady,
+    onSaasAccessActivated: async () => {
+      await reloadProfile()
+      setActiveStepId('FAN_CONNECTION')
+    },
   }
 
   // Get current primary color for halo (Zeyoda pattern: livePrimaryColor || config || default)
