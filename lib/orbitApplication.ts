@@ -50,11 +50,15 @@ export function getFirstUnansweredOrbitStep(
   return 'submit'
 }
 
+/** Post-submit end-state — confirmation only; do not reopen the $8 fork. */
+export const ORBIT_SUBMITTED_CONFIRMATION =
+  'Application received. Jai will review your Orbit application.'
+
 export function orbitStatusMessage(
   status: OrbitApplicationStatus
 ): string | null {
   if (status === 'submitted') {
-    return 'Application received. Your Orbit application is submitted and read-only while Jai reviews it.'
+    return ORBIT_SUBMITTED_CONFIRMATION
   }
   if (status === 'approved') {
     return 'Approved for ArtisTalks Orbit Launch. Jai will reach out about next steps.'

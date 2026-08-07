@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const expectedAccessWord = process.env.SAAS_ACCESS_WORD
   if (!expectedAccessWord) {
     return NextResponse.json(
-      { error: 'Beta access is not configured yet.' },
+      { error: 'Access is not available yet.' },
       { status: 503 }
     )
   }
@@ -30,8 +30,19 @@ export async function POST(request: Request) {
 
   const typedAccessWord =
     typeof body.accessWord === 'string' ? body.accessWord.trim() : ''
-  if (typedAccessWord !== expectedAccessWord) {
-    return NextResponse.json({ error: 'That access word did not work.' }, { status: 403 })
+  if (!typedAccessWord || typedAccessWord !== expectedAccessWord) {
+    return NextResponse.json({ error: 'Unable to continue.' }, { status: 403 })
+  }
+
+  const amountProvided =
+    Object.prototype.hasOwnProperty.call(body, 'amount') &&
+    body.amount !== undefined &&
+    body.amount !== null &&
+    body.amount !== ''
+
+  // Word-only recognition — no activation until amount is submitted.
+  if (!amountProvided) {
+    return NextResponse.json({ recognized: true })
   }
 
   const amount =
@@ -43,7 +54,7 @@ export async function POST(request: Request) {
 
   if (!Number.isFinite(amount) || amount !== 0) {
     return NextResponse.json(
-      { error: 'This beta access path currently supports 0 dollars.' },
+      { error: 'That amount is not available for this path yet.' },
       { status: 400 }
     )
   }
@@ -58,7 +69,7 @@ export async function POST(request: Request) {
 
   if (updateError) {
     console.error('cancakes_comp_update_failed', updateError.message)
-    return NextResponse.json({ error: 'Unable to activate access.' }, { status: 500 })
+    return NextResponse.json({ error: 'Unable to continue.' }, { status: 500 })
   }
 
   if (!updatedProfile) {
@@ -76,7 +87,7 @@ export async function POST(request: Request) {
 
     if (insertError) {
       console.error('cancakes_comp_insert_failed', insertError.message)
-      return NextResponse.json({ error: 'Unable to activate access.' }, { status: 500 })
+      return NextResponse.json({ error: 'Unable to continue.' }, { status: 500 })
     }
 
     return NextResponse.json({

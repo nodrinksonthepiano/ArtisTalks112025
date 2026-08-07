@@ -34,48 +34,52 @@ export function useProfile(userId: string | null) {
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
-  const reloadProfile = useCallback(async () => {
-    if (!userId) {
-      setProfile(null)
-      setLoading(false)
-      return null
-    }
-
-    setLoading(true)
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle()
-
-      if (error) throw error
-
-      if (data) {
-        setProfile(data as Profile)
-        return data as Profile
+  const reloadProfile = useCallback(
+    async (opts?: { quiet?: boolean }) => {
+      if (!userId) {
+        setProfile(null)
+        setLoading(false)
+        return null
       }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      const fallback: Profile = {
-        id: userId,
-        artist_name: null,
-        affirmation_text: null,
-        mission_statement: null,
-        email: user?.email || null,
-        saas_subscription_status: 'inactive',
+      const quiet = opts?.quiet === true
+      if (!quiet) setLoading(true)
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle()
+
+        if (error) throw error
+
+        if (data) {
+          setProfile(data as Profile)
+          return data as Profile
+        }
+
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        const fallback: Profile = {
+          id: userId,
+          artist_name: null,
+          affirmation_text: null,
+          mission_statement: null,
+          email: user?.email || null,
+          saas_subscription_status: 'inactive',
+        }
+        setProfile(fallback)
+        return fallback
+      } catch (e) {
+        console.error('Profile load error:', e)
+        return null
+      } finally {
+        if (!quiet) setLoading(false)
       }
-      setProfile(fallback)
-      return fallback
-    } catch (e) {
-      console.error('Profile load error:', e)
-      return null
-    } finally {
-      setLoading(false)
-    }
-  }, [userId, supabase])
+    },
+    [userId, supabase]
+  )
 
   useEffect(() => {
     void reloadProfile()

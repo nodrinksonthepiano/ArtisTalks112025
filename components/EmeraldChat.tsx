@@ -21,13 +21,13 @@ import InlineColorPicker from '@/components/InlineColorPicker'
 import InlineLogoPicker from '@/components/InlineLogoPicker'
 import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
-import SaasAccessGate from '@/components/SaasAccessGate'
 import {
   ORBIT_CHAT_QUESTIONS,
   ORBIT_CONTINUATION_PROMPT,
   ORBIT_CONTINUE_CTA,
   ORBIT_APPLY_CTA,
   ORBIT_READY_OPTIONS,
+  ORBIT_SUBMITTED_CONFIRMATION,
   fetchOrbitApplication,
   getFirstUnansweredOrbitStep,
   orbitStatusMessage,
@@ -36,6 +36,13 @@ import {
   type OrbitChatStep,
   type SixMonthReady,
 } from '@/lib/orbitApplication'
+
+const SAAS_PAYMENT_INTRO =
+  'Keep building your ArtisTalks — $8/month.\n\nYour saved page, affirmation, and answers stay here. To continue deeper into your artist development, pay $8 through Venmo and Jai will activate your access after payment.'
+
+const SAAS_PAYMENT_AMOUNT_PROMPT = 'What can you pay today?'
+
+type SaasPaymentPhase = 'intro' | 'amount'
 
 /** Legacy status strings — never hydrate into a text question input. */
 const STATUS_ANSWER_TEXTS = new Set([
@@ -82,7 +89,21 @@ interface EmeraldChatProps {
 
 const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh, affirmationReadyToSave = true, onSaasAccessActivated }: EmeraldChatProps) {
+export default function EmeraldChat({
+  onProfileUpdate,
+  onTriggerPanel,
+  onTypingUpdate,
+  onSubmitCard,
+  onCurrentStepChange,
+  profile,
+  answeredKeys,
+  setAnsweredKeys,
+  answeredKeysReady = true,
+  isAnonymous = false,
+  onDraftRefresh,
+  affirmationReadyToSave = true,
+  onSaasAccessActivated,
+}: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -134,12 +155,21 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     currentStepIdRef.current = currentStepId
   }, [currentStepId])
   const [anonymousGateView, setAnonymousGateView] = useState(false)
-  const [saasGateView, setSaasGateView] = useState(false)
+  const [saasPaymentPhase, setSaasPaymentPhase] = useState<SaasPaymentPhase | null>(
+    null
+  )
+  const [saasAccessOverride, setSaasAccessOverride] = useState<
+    'active' | 'comped' | null
+  >(null)
+  const saasAccessWordRef = useRef('')
+  const saasTransitionLockRef = useRef(false)
   const [continuationChoiceView, setContinuationChoiceView] = useState(false)
   const [orbitChatActive, setOrbitChatActive] = useState(false)
   const [orbitStep, setOrbitStep] = useState<OrbitChatStep | null>(null)
   const [orbitApplication, setOrbitApplication] =
     useState<OrbitApplicationRow | null>(null)
+  /** Shown above FAN_CONNECTION immediately after Orbit submit (not a dead-end view). */
+  const [orbitReceiptLine, setOrbitReceiptLine] = useState<string | null>(null)
   const [claimedGateView, setClaimedGateView] = useState(false)
   const [claimedArtistName, setClaimedArtistName] = useState('')
   const [claimError, setClaimError] = useState('')
@@ -149,33 +179,54 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const showClaimedGate = isAnonymous && claimedGateView && claimedArtistName.length > 0
   const hasSaasAccess =
     !isAnonymous &&
-    (profile?.saas_subscription_status === 'active' ||
+    (saasAccessOverride === 'active' ||
+      saasAccessOverride === 'comped' ||
+      profile?.saas_subscription_status === 'active' ||
       profile?.saas_subscription_status === 'comped')
+  /** Orbit route bypasses $8 while submitted / approved. */
+  const hasOrbitRouteAccess =
+    !isAnonymous &&
+    !!orbitApplication &&
+    (orbitApplication.status === 'submitted' ||
+      orbitApplication.status === 'approved')
+  const canContinuePaidCurriculum = hasSaasAccess || hasOrbitRouteAccess
   const needsSaasGate =
-    !isAnonymous && answeredKeys.has('current_focus_pillar') && !hasSaasAccess
-  const showSaasGate =
+    !isAnonymous &&
+    answeredKeys.has('current_focus_pillar') &&
+    !canContinuePaidCurriculum
+  const showSaasPayment =
     needsSaasGate &&
-    saasGateView &&
+    saasPaymentPhase !== null &&
     !continuationChoiceView &&
     !orbitChatActive &&
     !showGateUI &&
     !showClaimedGate
   const showContinuationChoice =
     continuationChoiceView &&
-    !showSaasGate &&
+    !showSaasPayment &&
     !orbitChatActive &&
     !showGateUI &&
     !showClaimedGate
   const showOrbitChat =
     orbitChatActive &&
     !!orbitStep &&
-    !showSaasGate &&
+    !showSaasPayment &&
     !showContinuationChoice &&
     !showGateUI &&
     !showClaimedGate
   const orbitStatusCopy = orbitApplication
     ? orbitStatusMessage(orbitApplication.status)
     : null
+
+  // Keep override aligned when parent profile confirms access.
+  useEffect(() => {
+    if (
+      profile?.saas_subscription_status === 'active' ||
+      profile?.saas_subscription_status === 'comped'
+    ) {
+      setSaasAccessOverride(profile.saas_subscription_status)
+    }
+  }, [profile?.saas_subscription_status])
 
   const gateEmailPlaceholder = useMemo(() => {
     const artistName =
@@ -254,12 +305,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       const keysToCheck = keysOverride || answeredKeys
       return (
         !isAnonymous &&
-        !hasSaasAccess &&
+        !canContinuePaidCurriculum &&
         keysToCheck.has('current_focus_pillar') &&
         isPaidSaasStep(stepId)
       )
     },
-    [answeredKeys, hasSaasAccess, isAnonymous]
+    [answeredKeys, canContinuePaidCurriculum, isAnonymous]
   )
 
   const showAssistantOnly = useCallback((content: string) => {
@@ -271,8 +322,9 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   const showContinuationChoiceMessage = useCallback(
     (application?: OrbitApplicationRow | null) => {
+      if (saasTransitionLockRef.current) return
       setAnonymousGateView(false)
-      setSaasGateView(false)
+      setSaasPaymentPhase(null)
       setOrbitChatActive(false)
       setOrbitStep(null)
       setContinuationChoiceView(true)
@@ -295,7 +347,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     (step: OrbitChatStep, application?: OrbitApplicationRow | null) => {
       if (application) setOrbitApplication(application)
       setAnonymousGateView(false)
-      setSaasGateView(false)
+      setSaasPaymentPhase(null)
       setContinuationChoiceView(false)
       setOrbitChatActive(true)
       setOrbitStep(step)
@@ -307,9 +359,46 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     [setCurrentStepIdSync, showAssistantOnly]
   )
 
-  const openPostPillarContinuation = useCallback(async () => {
+  const advanceToFanConnection = useCallback(() => {
+    saasTransitionLockRef.current = true
     setAnonymousGateView(false)
-    setSaasGateView(false)
+    setSaasPaymentPhase(null)
+    setContinuationChoiceView(false)
+    setOrbitChatActive(false)
+    setOrbitStep(null)
+    const nextStepId: StepId = 'FAN_CONNECTION'
+    const nextStep = getStep(nextStepId)
+    const nextMessage = {
+      role: 'assistant' as const,
+      content: nextStep.question,
+      stepId: nextStepId,
+    }
+    setHistory([nextMessage])
+    setFullHistory((prev) => [...prev, nextMessage])
+    setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    setCurrentStepIdSync(nextStepId)
+    setInput('')
+    setTimeout(() => {
+      inputRef.current?.focus()
+      saasTransitionLockRef.current = false
+    }, 100)
+  }, [setCurrentStepIdSync])
+
+  const openPostPillarContinuation = useCallback(async () => {
+    if (saasTransitionLockRef.current) return
+
+    // SaaS paid/comped, or Orbit already submitted/approved: continue curriculum.
+    if (
+      hasSaasAccess ||
+      orbitApplication?.status === 'submitted' ||
+      orbitApplication?.status === 'approved'
+    ) {
+      advanceToFanConnection()
+      return
+    }
+
+    setAnonymousGateView(false)
+    setSaasPaymentPhase(null)
     setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
     setPreviousStepId('CURRENT_FOCUS_PILLAR')
     setInput('')
@@ -317,6 +406,13 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     try {
       const application = await fetchOrbitApplication()
       setOrbitApplication(application)
+      if (
+        application?.status === 'submitted' ||
+        application?.status === 'approved'
+      ) {
+        advanceToFanConnection()
+        return
+      }
       const draftStep = getFirstUnansweredOrbitStep(application)
       if (draftStep) {
         enterOrbitChatStep(draftStep, application)
@@ -328,7 +424,10 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       showContinuationChoiceMessage(null)
     }
   }, [
+    advanceToFanConnection,
     enterOrbitChatStep,
+    hasSaasAccess,
+    orbitApplication?.status,
     setCurrentStepIdSync,
     showContinuationChoiceMessage,
   ])
@@ -536,7 +635,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     }
 
     setAnonymousGateView(false)
-    setSaasGateView(false)
+    setSaasPaymentPhase(null)
     // Clear redo stack when editing (editing is a new action)
     setRedoStack([])
     const step = getStep(stepId)
@@ -603,7 +702,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           return
         }
         setAnonymousGateView(false)
-        setSaasGateView(false)
+        setSaasPaymentPhase(null)
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
@@ -661,7 +760,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         }
         // CRITICAL: Navigation is NOT editing - don't call handleEditStep
         setAnonymousGateView(false)
-        setSaasGateView(false)
+        setSaasPaymentPhase(null)
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
@@ -888,12 +987,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
       if (currentSize > 0 || profileName) {
         const firstUnanswered = findFirstUnansweredStep('INIT', answeredKeys)
+        // Post-pillar unpaid DIY: show fork. SaaS or Orbit route: resume curriculum.
         if (
           !isAnonymous &&
           answeredKeys.has('current_focus_pillar') &&
+          !canContinuePaidCurriculum &&
+          !saasTransitionLockRef.current &&
           (firstUnanswered === 'CURRENT_FOCUS_PILLAR' ||
             firstUnanswered === 'FAN_CONNECTION' ||
-            (!hasSaasAccess && isPaidSaasStep(firstUnanswered)))
+            isPaidSaasStep(firstUnanswered))
         ) {
           await openPostPillarContinuation()
           hasInitializedRef.current = true
@@ -921,7 +1023,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     return () => {
       cancelled = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, hasSaasAccess, openPostPillarContinuation])
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, canContinuePaidCurriculum, openPostPillarContinuation])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -1204,7 +1306,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     setClaimedArtistName('')
     setClaimError('')
     setAnonymousGateView(false)
-    setSaasGateView(false)
+    setSaasPaymentPhase(null)
     setAnsweredKeys((prev) => {
       const next = new Set(prev)
       next.delete('artist_name')
@@ -1257,7 +1359,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   const handleLast = () => {
     if (previousStepId && !isSubmitting) {
       setAnonymousGateView(false)
-      setSaasGateView(false)
+      setSaasPaymentPhase(null)
       const prevStep = getStep(previousStepId)
       setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       // Find the step before previous for new previousStepId
@@ -1282,7 +1384,7 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     const firstUnanswered = findFirstUnansweredStep(nextStepId)
     if (
       !isAnonymous &&
-      !hasSaasAccess &&
+      !canContinuePaidCurriculum &&
       answeredKeys.has('current_focus_pillar') &&
       firstUnanswered === 'CURRENT_FOCUS_PILLAR'
     ) {
@@ -1323,42 +1425,103 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
   }
 
   const continueIntoFanConnection = useCallback(() => {
-    setContinuationChoiceView(false)
-    setSaasGateView(false)
-    setOrbitChatActive(false)
-    setOrbitStep(null)
-    const nextStepId: StepId = 'FAN_CONNECTION'
-    const nextStep = getStep(nextStepId)
-    const nextMessage = {
-      role: 'assistant' as const,
-      content: nextStep.question,
-      stepId: nextStepId,
-    }
-    setHistory([nextMessage])
-    setFullHistory((prev) => [...prev, nextMessage])
-    setPreviousStepId('CURRENT_FOCUS_PILLAR')
-    setCurrentStepIdSync(nextStepId)
-    setInput('')
-    setTimeout(() => {
-      inputRef.current?.focus()
-    }, 100)
-  }, [setCurrentStepIdSync])
+    saasAccessWordRef.current = ''
+    advanceToFanConnection()
+  }, [advanceToFanConnection])
 
-  const handleSaasAccessActivated = async () => {
-    await onSaasAccessActivated?.()
-    continueIntoFanConnection()
-  }
+  const finishSaasActivation = useCallback(
+    async (status: 'active' | 'comped') => {
+      saasTransitionLockRef.current = true
+      setSaasAccessOverride(status)
+      setSaasPaymentPhase(null)
+      saasAccessWordRef.current = ''
+      setContinuationChoiceView(false)
+      try {
+        await onSaasAccessActivated?.()
+      } catch (err) {
+        console.error('saas_access_activated_callback_failed', err)
+      }
+      continueIntoFanConnection()
+    },
+    [continueIntoFanConnection, onSaasAccessActivated]
+  )
 
   const handleChooseContinueArtisTalks = () => {
     setContinuationChoiceView(false)
-    if (hasSaasAccess) {
+    if (canContinuePaidCurriculum) {
       continueIntoFanConnection()
       return
     }
-    setSaasGateView(true)
+    saasAccessWordRef.current = ''
+    setSaasPaymentPhase('intro')
     setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
     setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    showAssistantOnly(SAAS_PAYMENT_INTRO)
+  }
+
+  async function persistSaasPaymentTurn(rawInput: string) {
+    if (!saasPaymentPhase || isSubmitting) return
+    const trimmed = rawInput.trim()
+    if (!trimmed) return
+
+    setSaveError('')
+    setIsSubmitting(true)
+
+    const userMessage = { role: 'user' as const, content: trimmed }
+    setHistory((prev) => [...prev, userMessage])
+    setFullHistory((prev) => [...prev, userMessage])
     setInput('')
+
+    try {
+      if (saasPaymentPhase === 'intro') {
+        const res = await fetch('/api/saas/cancakes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessWord: trimmed }),
+        })
+        if (!res.ok) {
+          setSaveError('Unable to continue.')
+          setIsSubmitting(false)
+          return
+        }
+        saasAccessWordRef.current = trimmed
+        setSaasPaymentPhase('amount')
+        showAssistantOnly(SAAS_PAYMENT_AMOUNT_PROMPT)
+        setIsSubmitting(false)
+        return
+      }
+
+      // amount phase — activate once
+      const amount = Number(trimmed)
+      const res = await fetch('/api/saas/cancakes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessWord: saasAccessWordRef.current,
+          amount,
+        }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string
+        saas_subscription_status?: 'active' | 'comped' | 'inactive'
+      }
+      if (!res.ok) {
+        setSaveError(data.error || 'Unable to continue.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const status =
+        data.saas_subscription_status === 'active' ||
+        data.saas_subscription_status === 'comped'
+          ? data.saas_subscription_status
+          : 'comped'
+      await finishSaasActivation(status)
+    } catch {
+      setSaveError('Unable to continue.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleChooseApplyToOrbit = () => {
@@ -1404,9 +1567,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       setFullHistory((prev) => [...prev, userMessage])
 
       if (application.status === 'submitted') {
+        setOrbitApplication(application)
         setOrbitChatActive(false)
         setOrbitStep(null)
-        showContinuationChoiceMessage(application)
+        setContinuationChoiceView(false)
+        setSaasPaymentPhase(null)
+        const confirmMessage = {
+          role: 'assistant' as const,
+          content: ORBIT_SUBMITTED_CONFIRMATION,
+        }
+        setFullHistory((prev) => [...prev, confirmMessage])
+        setOrbitReceiptLine(ORBIT_SUBMITTED_CONFIRMATION)
+        // Orbit route bypasses $8 — keep talking at FAN_CONNECTION.
+        continueIntoFanConnection()
         setIsSubmitting(false)
         return
       }
@@ -1428,6 +1601,12 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    if (showSaasPayment && saasPaymentPhase) {
+      if (!input.trim() || isSubmitting) return
+      await persistSaasPaymentTurn(input)
+      return
+    }
 
     if (showOrbitChat && orbitStep) {
       if (orbitStep === 'submit') {
@@ -1547,6 +1726,8 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (onSubmitCard) {
       onSubmitCard(answer, currentStepId)
     }
+
+    if (orbitReceiptLine) setOrbitReceiptLine(null)
 
     // 1. Update UI immediately (Optimistic)
     const userMessage = { role: 'user' as const, content: answer, stepId: currentStepId }
@@ -1883,8 +2064,15 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           >
             {ORBIT_CHAT_QUESTIONS[orbitStep]}
           </p>
-        ) : showSaasGate ? (
-          <SaasAccessGate onActivated={handleSaasAccessActivated} />
+        ) : showSaasPayment ? (
+          <p
+            className="gold-etched"
+            style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
+          >
+            {saasPaymentPhase === 'amount'
+              ? SAAS_PAYMENT_AMOUNT_PROMPT
+              : SAAS_PAYMENT_INTRO}
+          </p>
         ) : currentStep && currentStep.question && (
           <>
             {showBrandPicker && isLogoStep ? (
@@ -2115,12 +2303,27 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 </button>
               </div>
             ) : (
-              <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
-                {currentStepId === 'INIT'
-                  ? INIT_WELCOME_HEADLINE
-                  : currentStep.question
-                }
-              </h1>
+              <>
+                {orbitReceiptLine && currentStepId === 'FAN_CONNECTION' ? (
+                  <p
+                    className="gold-etched"
+                    style={{
+                      marginTop: '0',
+                      marginBottom: '12px',
+                      whiteSpace: 'pre-line',
+                      fontSize: '0.95em',
+                    }}
+                  >
+                    {orbitReceiptLine}
+                  </p>
+                ) : null}
+                <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
+                  {currentStepId === 'INIT'
+                    ? INIT_WELCOME_HEADLINE
+                    : currentStep.question
+                  }
+                </h1>
+              </>
             )}
           </>
         )}
@@ -2189,7 +2392,53 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
         )}
         
         {/* Input Area — claimed sanctuary / gate OTP / post-pillar forks are separate from curriculum submit */}
-        {showClaimedGate || showSaasGate || showContinuationChoice ? null : showOrbitChat && orbitStep ? (
+        {showClaimedGate || showContinuationChoice ? null : showSaasPayment ? (
+          <form
+            onSubmit={(e) => {
+              void handleSubmit(e)
+            }}
+            id="saasPaymentForm"
+          >
+            {saveError && (
+              <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
+                {saveError}
+              </p>
+            )}
+            <input
+              ref={inputRef}
+              type={saasPaymentPhase === 'amount' ? 'number' : 'text'}
+              min={saasPaymentPhase === 'amount' ? 0 : undefined}
+              step={saasPaymentPhase === 'amount' ? 1 : undefined}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={
+                saasPaymentPhase === 'amount' ? 'Enter amount' : 'Continue here'
+              }
+              disabled={isSubmitting}
+              className="email-input"
+              autoComplete="off"
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={isSubmitting || !input.trim()}
+              style={{
+                marginTop: '10px',
+                padding: '10px',
+                backgroundColor: '#047857',
+                color: 'white',
+                border: 'none',
+                borderRadius: '5px',
+                cursor:
+                  isSubmitting || !input.trim() ? 'not-allowed' : 'pointer',
+                boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                width: '100%',
+              }}
+            >
+              {isSubmitting ? 'Continuing...' : 'Send'}
+            </button>
+          </form>
+        ) : showOrbitChat && orbitStep ? (
           <form
             onSubmit={(e) => {
               void handleSubmit(e)

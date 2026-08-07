@@ -658,7 +658,8 @@ export default function Home() {
     onDraftRefresh: handleDraftRefresh,
     affirmationReadyToSave: persistentAffirmationReady,
     onSaasAccessActivated: async () => {
-      await reloadProfile()
+      // Quiet reload: never flip profileLoading (that unmounts EmeraldChat).
+      await reloadProfile({ quiet: true })
       setActiveStepId('FAN_CONNECTION')
     },
   }
@@ -748,7 +749,8 @@ export default function Home() {
     }
   }, [mergedProfile, previewOverrides, user])
 
-  if (loading || migrating || (user && profileLoading)) {
+  // Do not unmount EmeraldChat on quiet profile refreshes once a profile exists.
+  if (loading || migrating || (user && profileLoading && !profile)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-emerald-500">
         <div className="animate-pulse">
