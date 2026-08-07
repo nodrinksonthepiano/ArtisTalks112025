@@ -9,12 +9,12 @@ Sprint 1 save-and-restore proven:
 - resume at the first genuinely unanswered step;
 - new answers after login persist across Data Reset and return.
 
-Planning checkpoint: `6319649`.
-Prior restore checkpoint: `a4d4dfa` (partial — INIT/color only).
-Current checkpoint: `cd2dd56` (non-destructive Data Reset + first-save confirm-before-clear).
+**Code baseline:** `feature/artist-accordion-hub` @ `34ed2ea`
+**Last updated:** 2026-08-06
 
-**Code baseline:** `feature/artist-accordion-hub` @ `cd2dd56`. Do not merge to main.
-**Last updated:** 2026-08-05
+**MVP authority:** ArtisTalks is one page. The curriculum is the experience.
+Coaching language inspires curriculum copy. Product behavior comes from this
+file and explicit approval.
 
 > ArtisTalks teaches. Artistocks launches. Zeyoda protects. GOSHBOT routes memory.
 > Read `ECOSYSTEM_MEMORY_MAP.md` before routing mixed concepts.
@@ -106,7 +106,7 @@ FREE TASTE
 
 STANDALONE ARTISTALKS
 → $8/month
-→ ongoing playground, check-ins, versions, links and continued building
+→ ongoing curriculum, saved sanctuary, secure return, and continued building
 
 ARTISTALKS ORBIT LAUNCH
 → application is separate from saving
@@ -131,17 +131,9 @@ Saving does not automatically:
 
 Ongoing ArtisTalks access is **$8/month**.
 
-The subscription provides the limited saved playground, including approved
-features such as:
-
-- recurring action commitments;
-- deadlines;
-- return check-ins;
-- reporting what was implemented;
-- new asset versions;
-- progress history;
-- dinosaur/old-internet links;
-- continued sanctuary building.
+The subscription provides ongoing access to the one-page ArtisTalks experience:
+continued curriculum, saved sanctuary, secure return, and continued building on
+the artist's living page.
 
 **Every active SaaS user pays $8/month, including Orbit participants.**
 
@@ -314,13 +306,14 @@ Code authority for order and `FREE_TASTE_LAST_STEP_ID`: `lib/curriculum.ts`.
 
 ## 6. The Living Affirmation
 
-Gate-only. Do not move into the middle of free taste, the page subtitle, or a carousel card.
+The Living Affirmation is the emotional payoff at the end of the free taste.
+It assembles from the artist's own curriculum answers at the save gate.
 
-Template:
+### Core structure
 
 > I am so happy and grateful now that **[ARTIST]** is stepping fully into **[GENRE / WORLD]**, creating **[BUSINESS / OFFER]**, known for **[EXPRESSION]**, and celebrated for **[LEGACY]**.
 
-| Slot | Existing key |
+| Slot | Key |
 |---|---|
 | ARTIST | `artist_name` |
 | GENRE / WORLD | `genre_associations` |
@@ -330,79 +323,80 @@ Template:
 
 Assembler: `lib/livingAffirmation.ts`. Exact artist strings; no silent rewrite.
 
+### Presentation
+
+- Show the artist's actual name prominently with the affirmation.
+- Keep emerald/gold/etched ArtisTalks presentation.
+- Let the artist edit the assembled affirmation before saving.
+- Persist the edited version in `profiles.affirmation_text`.
+- Editing the affirmation updates `affirmation_text` only. Source curriculum answers stay unchanged.
+
+### Save gate copy (locked)
+
+```text
+This is worth saving. Write it down, print it, or put it somewhere you'll see it every day.
+
+Enter your email to save your affirmation and keep building.
+```
+
+CTA button: **Save this affirmation — Free**
+
+Broader coaching — one thing, momentum, radical action, hard thing first —
+lives in later curriculum copy as the artist progresses.
+
+### On return
+
+- The saved edited affirmation persists in `profiles.affirmation_text`.
+- After save and after login, curriculum continues in the emerald conversation.
+- When the artist revisits the affirmation through the existing one-page experience, show the saved edited version.
+
+`profiles.affirmation_text` already exists in Supabase. Restore application
+support for the existing column. No schema work is required.
+
 ---
 
-## 7. Limited saved playground (post-save boundary)
+## 7. Post-save experience
 
-### The gap in current code
+ArtisTalks is one page: carousel, phase coins, emerald conversation, and the
+artist's growing living page. The curriculum is the experience.
 
-After free-taste save, the code currently continues into the **full remaining curriculum spine** (`CURRENT_FOCUS_PILLAR` onward). That is incorrect for MVP. Bound the experience to the limited playground below. Stop before exposing unfinished mastermind curriculum.
-
-### Playground contents (approved)
-
-**Where are you in your journey?**
-
-- creating something new;
-- finishing something;
-- preparing to release or promote;
-- building the larger artist world;
-- not sure yet;
-- add my own.
-
-**Bring in the work**
-
-- upload a demo, song, photo, artwork, lyrics, or video;
-- mark one asset as featured;
-- later upload a newer version;
-- preserve earlier versions rather than replacing them invisibly.
-
-**Dinosaur links** (optional; supporting material, not the center)
-
-- website, Instagram, TikTok, YouTube, Bandcamp, Spotify/Apple, Facebook/X, add another.
-
-**Dream direction**
-
-- artists to collaborate with;
-- artists to be on tour with;
-- stages, venues, festivals, or communities they are moving toward.
-
-**Action commitment**
-
-> What will you do, and by when?
-
-Store: action; target date; optional proof or uploaded version; status: planned, in progress, implemented, revised.
-
-**Return check-in**
-
-> What did you implement?
-
-Then: acknowledge completed action; ask what changed; allow a new asset version; compare old and new; ask what comes next and by when.
-
-### Beta success loop
+### Flow
 
 ```text
-Decide
-→ act
-→ return
-→ report
-→ upload the next version
-→ see progress
-→ choose the next action
+Artist begins curriculum
+→ page becomes theirs (name, logo, colors, font, answers)
+→ Living Affirmation assembles
+→ artist edits affirmation
+→ Save this affirmation — Free
+→ email + six-digit OTP
+→ work saved (profile + curriculum_answers + affirmation_text)
+→ curriculum continues in the emerald conversation
+→ artist leaves
+→ artist returns securely
+→ work restores
+→ curriculum continues from the appropriate step
+→ prior cards remain viewable and editable
+→ new answers keep building the same page
 ```
 
-That loop is the useful SaaS product before the full mastermind curriculum exists.
+### After free-taste save
 
-### Post-save choice (UI intent)
+- The next relevant curriculum question appears in the emerald panel.
+- `CURRENT_FOCUS_PILLAR` asks where the artist is in their journey:
+  - creating something new
+  - finishing something in progress
+  - promoting something finished
+  - not sure yet
+- The artist keeps answering. Each answer makes the page more personal.
+- Prior carousel cards remain accessible and editable.
+- Action-oriented coaching deepens through the spine as the artist progresses.
+- Vision connects to action through curriculum questions.
 
-After the sanctuary is safely saved:
+### Curriculum as progress
 
-```text
-[Keep building my sanctuary]
-
-[Apply for the ArtisTalks Orbit Launch]
-```
-
-`$8/month` unlocks ongoing playground activity. Free email save/restore of free-taste remains free.
+- `curriculum_answers` stores the artist's curriculum answers and powers their growing ArtisTalks page.
+- The MVP ships enough spine to demonstrate the experience and let real artists continue meaningfully.
+- Real artist usage guides future curriculum expansion.
 
 ---
 
@@ -461,15 +455,20 @@ Approved invariants:
 - no backfill;
 - verify with fresh artists.
 
-### Known gaps / bugs to fix in upcoming sprints
+### Known gaps before warm beta MVP
 
-- After save, spine continues past free taste (playground unbound)
-- Phase coins over-reveal (wrong tags + imperative opacity override)
-- Anonymous logo still triggers login alert after blob preview
-- Font picker lists fonts that are not loaded (only Geist via `next/font`)
-- Journey fork does not branch (`nextStep` hardcoded)
-- Native application, SaaS/Orbit status fields, Venmo, admin queue: **absent**
-- No LLM / Guide API yet (correct — last)
+**Current sprint (baseline `34ed2ea`):**
+- Artist-name carousel card: show the actual name prominently
+- Living Affirmation: editable gate, `affirmation_text` persistence, locked gate copy, save CTA
+- OTP rate-limit stability for claimed-artist login
+- Data Reset: clear in-memory UI and stored state correctly
+- Geist and system fonts: load cleanly in the Font step
+
+**After real-phone core loop passes QA:**
+- Smallest `$8/month` ongoing-access layer (Venmo-first)
+- Phase coin polish
+- Native Orbit application and admin queue
+- Journey fork branching in spine
 
 Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
 
@@ -483,25 +482,25 @@ This is **not** the public launch of `artistalks.org`.
 
 Invite via word of mouth, existing relationships, Rock N Roll Opry, personal outreach, QR/NFC as physical invitations (digital coin system later).
 
-Measure: name entered; free taste completed; save; OTP arrives; return/restore; playground use; action commitment; implementation report; apply; SaaS vs Orbit choice.
+Measure: name entered; free taste completed; affirmation edited; save; OTP arrives;
+return/restore; curriculum continues; prior cards editable; apply; SaaS vs Orbit choice.
 
-### Phase 2 — controlled cold testing
+Warm private beta begins when:
 
-Only after warm artists prove understanding and return. Split-test invitation promise, not radically different products. Same proven core onboarding until evidence justifies change.
+- the full real-phone core loop passes (§10 Slice D);
+- external OTP and return restoration work reliably.
 
-Do not treat artistalks.org as a broad public launch until:
+Real artist usage during the warm beta helps guide further curriculum work.
 
-- external OTP works;
-- return restoration works;
-- the limited playground boundary is intentional;
-- native application works;
-- Venmo review and activation work.
+Paid SaaS access follows as Slice E.
+Orbit application/payment work follows in its own sprints.
 
 ---
 
 ## 10. Surgical MVP sprint order
 
-Each sprint is one clear objective. Do not broaden. Do not touch chat/carousel drift during these sprints (see §11).
+One approved slice at a time: implement, test, approve, commit.
+See §11 for chat/carousel drift — out of scope during MVP core sprints.
 
 ### Sprint 1 — Deploy and prove identity ✓ complete
 
@@ -521,71 +520,72 @@ Completed:
 - resume at the first genuinely unanswered allowed step;
 - post-login answers persist across Data Reset and return.
 
-Next: Sprint 2.
+### Sprint 2 — MVP core ← current
 
-### Sprint 2 — First-impression truth ← current
+**Slice A — Artist name card**
+- Carousel card prominently shows the artist's actual name (e.g. JAITEA).
+- Files: `hooks/useCarouselItems.ts`, `components/OrbitPeekCarousel.tsx`
 
-- no coins before artist name;
-- PRE only during early onboarding;
-- fix opacity override and phase tags;
-- remove anonymous logo login alert;
-- show only fonts that truly load.
+**Slice B — Living Affirmation + save**
+- Name heading, gold/emerald editable affirmation at save gate
+- Gate copy and CTA locked in §6
+- `profiles.affirmation_text` persistence
+- Files: `LivingAffirmation.tsx`, `EmeraldChat.tsx`, `lib/draft.ts`,
+  `lib/migrateDraft.ts`, `hooks/useProfile.ts`, `lib/curriculum.ts`
 
-### Sprint 3 — Bound the saved playground
+**Slice C — Reliability**
+- OTP rate-limit stability
+- Data Reset event chain
+- Geist/system font load
+- Files: `ClaimedArtistGate.tsx`, `DataReset.tsx`, `lib/sessionReset.ts`,
+  `EmeraldChat.tsx`, `app/page.tsx`, `utils/loadWebFont.ts`
 
-Implement only:
+**Slice D — Real-phone MVP test**
 
-- journey;
-- dinosaur links;
-- featured asset;
-- version upload;
-- dream collaborators / On Tour With;
-- “What will you do, and by when?”;
-- return check-in: “What did you implement?”;
-- intentional stop before unfinished curriculum.
+```text
+New artist
+→ Artist Name
+→ Logo
+→ Colors
+→ Font
+→ early curriculum
+→ Living Affirmation
+→ edit affirmation
+→ Save this affirmation — Free
+→ email OTP
+→ saved account
+→ curriculum continues
+→ close/leave
+→ return later
+→ authenticate
+→ work restores
+→ prior cards viewable/editable
+→ curriculum continues forward
+```
 
-### Sprint 4 — SaaS access
+Slice D must pass on a real phone before Slice E begins.
 
-- free saved preview of free-taste restore;
-- `$8/month` status;
-- manually administered Venmo-first SaaS payment initially;
-- preserve application access without requiring SaaS purchase;
-- coupons/comps reduce or waive `$8` only — never auto-approve Orbit.
+### Sprint 3 — SaaS access ($8/month) — Slice E
 
-### Sprint 5 — Native application
+- Smallest intentional paid continuation for ongoing ArtisTalks access
+- Venmo-first; manual review acceptable for private beta
+- Orbit application remains separate from SaaS subscription
+- Coupons/comps reduce or waive `$8` for an individual — explicit exception only
 
-- replace Tally;
-- prefill existing answers;
-- phone field;
-- separate optional SMS consent (unchecked by default; wording/version/timestamp/source);
-- application draft and submission;
-- simple Jai review queue;
-- interview request.
+### Sprint 4 — Native Orbit application
 
-### Sprint 6 — Orbit payment and activation
+- Replace Tally; prefill answers; phone field; optional SMS consent;
+  application draft and submission; simple review queue; interview request.
 
-- `$3,000` standard;
-- `$2,000` paid in full;
-- `$500/month`;
-- server-protected `cancakes`;
-- Pay What You CANCakes;
-- Venmo QR/reference;
-- pending-review state;
-- manual verification;
-- access activation;
-- keep SaaS subscription status independent of tuition.
+### Sprint 5 — Orbit payment and activation
 
-### After private-beta MVP (not blocking warm beta)
-
-- Wire journey routing for real (if still linear)
-- Extend undo/redo beyond chat steps
-- ArtisTalks Guide (last)
-- Enrichment, dreamboard/tesseract, social dinosaur polish, Google working studio
-- Stripe after Venmo is proven
+- Standard, paid-in-full, payment-plan, and Pay What You CANCakes paths;
+  Venmo QR/reference; pending-review; manual verification; access activation;
+  SaaS subscription status independent of Orbit tuition.
 
 ---
 
-## 11. Do Not Touch During the Funnel / Playground Sprints
+## 11. Do Not Touch During the MVP Core Sprints
 
 **The chat/carousel drift bug.** `EmeraldChat.currentStepId` and `page.activeStepId` can drift apart. `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.3 documents a June 2026 regression where a partial focus/objective split made the app feel broken and had to be reverted.
 
@@ -607,7 +607,7 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 | Mastermind facilitation — breakout rooms, declarations, flips, coherence teaching | `ARTISTALKS_GUIDE_VOICE.md` — facilitation layer, not app curriculum |
 | Artist testimonials | `ARTISTALKS_GUIDE_VOICE.md`, voice evidence — not curriculum, not Jai's voice |
 | Mastermind executive summary and authority statements | Marketing copy. Uses "Founder:" correctly — that is Jai |
-| Limited playground questions / action loop | This file §7; implement in product, keep unfinished mastermind spine out of post-save UX |
+| Action-oriented curriculum / check-in questions | `CURRICULUM_V2.md` as spine steps inside emerald curriculum |
 
 **Outstanding:** ten Instagram reels are behind Instagram's login wall and cannot be fetched or transcribed by an agent. To use that material, the files need to be downloaded locally or transcribed to text first.
 
@@ -628,8 +628,11 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 9. Orbit Launch artists are never called founders. The cohort revolves.
 10. The ArtisTalks Guide is the emerald chat voice, is not GOSHBOT, and is built last.
 11. The product promise: the artist answers the emerald chat, and the page comes alive.
+12. ArtisTalks is one page: carousel, phase coins, emerald conversation, and the artist's growing living page.
+13. The curriculum is the experience. Curriculum answers power the growing page.
+14. Coaching language inspires curriculum copy. New product behavior requires explicit approval.
 
-### Locked 2026-08-05 — business + playground
+### Locked 2026-08-05 — business + curriculum
 
 1. Saving and applying are **separate**. Never auto-submit an application on save.
 2. Free email save and restore of free-taste stay free.
@@ -638,7 +641,7 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 5. Coupons/comps may reduce or waive `$8` for an individual — explicit exception only.
 6. Artists may apply for Orbit without first subscribing to SaaS.
 7. SaaS subscription status, Orbit application/access status, and Orbit tuition status stay separate.
-8. Limited playground contents and beta success loop are defined in §7.
+8. Post-save experience continues through the curriculum spine (§7).
 9. First launch is private beta; Venmo before Stripe; manual review OK.
 10. Sprint order in §10 is current; old Sprint 1–10 funnel list is retired.
 
@@ -699,3 +702,16 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
    Colors, and Font for resume.
 8. No status phrases stored as normal answer text. No carousel-motion work in
    this change.
+
+### Locked 2026-08-06 — MVP core
+
+1. Flow: curriculum → affirmation → edit → save → curriculum continues →
+   return → restore → continue (§7).
+2. Gate copy and CTA locked in §6.
+3. `profiles.affirmation_text` stores the edited affirmation; source curriculum
+   answers stay unchanged.
+4. After login, curriculum continues. Show saved affirmation text when the
+   artist revisits affirmation through the existing one-page experience.
+5. Paid `$8/month` access begins only after Slice D real-phone QA passes.
+6. Artist-name card shows the actual name prominently.
+7. Implement behavior Jai specifies. Present new UX separately for approval.
