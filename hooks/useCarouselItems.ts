@@ -142,9 +142,6 @@ export function useCarouselItems(
         cardContent = bodyName
           ? `${headlineName} · ${bodyName}`
           : headlineName
-      } else if (answer.question_key === 'artist_name') {
-        cardTitle = rawText && !isStatusText ? rawText : ''
-        cardContent = ''
       } else {
         const label = keyToLabel(answer.question_key)
         cardTitle =
@@ -188,10 +185,7 @@ export function useCarouselItems(
         const label = keyToLabel(step.key)
         finalItems[editedCardIndex] = {
           ...editedCard,
-          title:
-            step.key === 'artist_name'
-              ? typingInputRef.current
-              : `${label}: ${typingInputRef.current}`,
+          title: `${label}: ${typingInputRef.current}`,
         }
       }
     }

@@ -447,21 +447,7 @@ export const FREE_TASTE_LAST_STEP_ID: StepId = 'BUSINESS_OFFERING'
 export const FREE_TASTE_LAST_KEY = 'business_type_products_services'
 
 export const ANONYMOUS_GATE_MESSAGE =
-  'Enter your email to save your page and return anytime.'
-
-/** Checkpoint prompt for saved playground — one per pillar choice. */
-export function getCheckpointPrompt(pillar: PillarChoice): string {
-  switch (pillar) {
-    case 'creating_new':
-      return 'What did you make?'
-    case 'finishing':
-      return 'What moved closer to finished?'
-    case 'promoting':
-      return 'Who did you tell or contact?'
-    case 'not_sure':
-      return 'What did you explore?'
-  }
-}
+  'To save it and keep building, apply yourself.\n\nEnter your email to save your page and request access to the ArtisTalks Orbit Launch.'
 
 export function isFreeTasteGateReached(answeredKeys: Set<string>): boolean {
   return answeredKeys.has(FREE_TASTE_LAST_KEY)

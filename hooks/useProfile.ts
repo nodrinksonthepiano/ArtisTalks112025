@@ -15,8 +15,6 @@ export interface Profile {
   body_font_family?: string | null
   logo_use_background?: boolean | null
   brand_color?: string | null
-  /** Artist-edited Living Affirmation. Null falls back to assembled version. */
-  affirmation_text?: string | null
 }
 
 export function useProfile(userId: string | null) {

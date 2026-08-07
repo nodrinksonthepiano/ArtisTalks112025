@@ -1294,7 +1294,6 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
               !!item.imageUrl ||
               ['logo_uploaded', 'colors_set', 'font_set'].includes(item.questionKey);
             const answer = answerFromTitle || contentText;
-            const isArtistNameCard = item.questionKey === 'artist_name';
             const isColorsCard = item.questionKey === 'colors_set';
             const isFontCard = item.questionKey === 'font_set';
             const colorParts = isColorsCard
@@ -1329,11 +1328,9 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                 )}
             
                 <h3 style={{ 
-                  fontSize: isArtistNameCard
-                    ? 'clamp(1.25rem, 3vw, 2rem)'
-                    : 'clamp(0.875rem, 2vw, 1.5rem)',
+                  fontSize: 'clamp(0.875rem, 2vw, 1.5rem)', // Responsive text sizing
                   fontWeight: 600,
-                  marginBottom: hasAnswer && !isArtistNameCard ? 'clamp(0.5rem, 1vw, 1rem)' : '0',
+                  marginBottom: hasAnswer ? 'clamp(0.5rem, 1vw, 1rem)' : '0',
                   color: cardText, // Artist's accent color or gold etching color
                   fontFamily: overlayFont,
                   textShadow: cardText === '#fffacd' ? '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)' : 'none', // Gold etching effect if using fallback
@@ -1360,7 +1357,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                     ))}
                   </div>
                 )}
-                {hasAnswer && answer && !isArtistNameCard && (
+                {hasAnswer && answer && (
                   <p style={{ 
                     fontSize: 'clamp(0.75rem, 1.5vw, 1rem)', // Responsive text sizing
                     lineHeight: 1.6,

@@ -1,10 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getResendCooldownSeconds } from '@/lib/rateLimitConfig'
-
-const RATE_LIMIT_MESSAGE =
-  'Too many attempts. Wait about 15 minutes, then refresh and try one new code.'
 
 const sendButtonStyle: React.CSSProperties = {
   marginTop: '10px',
@@ -36,8 +33,7 @@ export default function ClaimedArtistGate({
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [resendSecondsLeft, setResendSecondsLeft] = useState(cooldownSeconds)
-  const [rateLimited, setRateLimited] = useState(false)
-  const lastSubmittedTokenRef = useRef('')
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false)
 
   useEffect(() => {
     if (resendSecondsLeft <= 0) return
@@ -47,21 +43,11 @@ export default function ClaimedArtistGate({
     return () => window.clearInterval(id)
   }, [resendSecondsLeft])
 
-  useEffect(() => {
-    if (token.length < 6) {
-      lastSubmittedTokenRef.current = ''
-      setRateLimited(false)
-    }
-  }, [token])
-
   const handleVerify = useCallback(
     async (e?: React.FormEvent) => {
       if (e) e.preventDefault()
-      const trimmed = token.trim()
-      if (!trimmed || loading || rateLimited) return
-      if (lastSubmittedTokenRef.current === trimmed) return
+      if (!token.trim() || loading) return
 
-      lastSubmittedTokenRef.current = trimmed
       setLoading(true)
       setError('')
       setInfo('')
@@ -70,18 +56,11 @@ export default function ClaimedArtistGate({
         const res = await fetch('/api/artist/verify-otp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ artist_name: artistName, token: trimmed }),
+          body: JSON.stringify({ artist_name: artistName, token: token.trim() }),
         })
         const data = (await res.json().catch(() => ({}))) as {
           verified?: boolean
           error?: string
-        }
-
-        if (res.status === 429) {
-          setRateLimited(true)
-          setError(RATE_LIMIT_MESSAGE)
-          setLoading(false)
-          return
         }
 
         if (!res.ok || !data.verified) {
@@ -91,6 +70,7 @@ export default function ClaimedArtistGate({
               : 'Invalid code'
           )
           setLoading(false)
+          setIsAutoSubmitting(false)
           return
         }
 
@@ -98,16 +78,18 @@ export default function ClaimedArtistGate({
       } catch {
         setError('Unable to verify code')
         setLoading(false)
+        setIsAutoSubmitting(false)
       }
     },
-    [artistName, token, loading, rateLimited]
+    [artistName, token, loading]
   )
 
   useEffect(() => {
-    if (token.length === 6 && !loading && !rateLimited) {
+    if (token.length === 6 && !isAutoSubmitting && !loading) {
+      setIsAutoSubmitting(true)
       void handleVerify()
     }
-  }, [token, loading, rateLimited, handleVerify])
+  }, [token, isAutoSubmitting, loading, handleVerify])
 
   async function handleResend() {
     if (resendSecondsLeft > 0 || loading) return
@@ -129,8 +111,11 @@ export default function ClaimedArtistGate({
       }
 
       if (res.status === 429) {
-        setRateLimited(true)
-        setError(RATE_LIMIT_MESSAGE)
+        setError(
+          typeof data.error === 'string' && data.error
+            ? data.error
+            : 'Please wait before requesting another code.'
+        )
         setResendSecondsLeft(cooldownSeconds)
         return
       }
@@ -147,8 +132,7 @@ export default function ClaimedArtistGate({
       setInfo('A new code was sent.')
       setResendSecondsLeft(cooldownSeconds)
       setToken('')
-      lastSubmittedTokenRef.current = ''
-      setRateLimited(false)
+      setIsAutoSubmitting(false)
     } catch {
       setError('Unable to send code')
     } finally {
@@ -190,7 +174,6 @@ export default function ClaimedArtistGate({
           style={{ textAlign: 'center', letterSpacing: '0.35em', fontFamily: 'monospace' }}
           autoFocus
           required
-          disabled={loading}
         />
         {error && (
           <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
@@ -202,23 +185,15 @@ export default function ClaimedArtistGate({
             {info}
           </p>
         )}
-        <button
-          type="submit"
-          disabled={loading || rateLimited || token.length !== 6}
-          style={{
-            ...sendButtonStyle,
-            opacity: loading || rateLimited || token.length !== 6 ? 0.6 : 1,
-            cursor: loading || rateLimited ? 'wait' : 'pointer',
-          }}
-        >
-          {loading ? 'Verifying…' : 'Enter Sanctuary'}
+        <button type="submit" disabled={loading || token.length !== 6} style={sendButtonStyle}>
+          {loading ? 'Verifying...' : 'Enter Sanctuary'}
         </button>
       </form>
 
       <button
         type="button"
         onClick={() => void handleResend()}
-        disabled={loading || resendSecondsLeft > 0 || rateLimited}
+        disabled={loading || resendSecondsLeft > 0}
         className="w-full text-zinc-300 text-sm hover:text-emerald-300 transition-colors disabled:opacity-50 disabled:hover:text-zinc-300"
         style={{ marginTop: '14px' }}
       >
