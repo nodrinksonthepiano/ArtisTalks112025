@@ -8,6 +8,7 @@ import {
   type AnonymousDraft,
   type DraftProfilePreview,
 } from '@/lib/draft'
+import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 
 export interface MigrateDraftResult {
   skipped: boolean
@@ -20,6 +21,7 @@ function hasDraftContent(draft: AnonymousDraft): boolean {
   const p = draft.profilePreview
   return Boolean(
     p.artist_name ||
+      p.affirmation_text ||
       p.mission_statement ||
       p.primary_color ||
       p.accent_color ||
@@ -94,6 +96,23 @@ function buildProfileFill(
 
   if (isBlank(existing?.email) && email) {
     fill.email = email
+  }
+
+  if (isBlank(existing?.affirmation_text)) {
+    if ('affirmation_text' in preview) {
+      fill.affirmation_text = preview.affirmation_text ?? ''
+    } else {
+      const assembled = assembleLivingAffirmation({
+        artist_name: getDraftAnswerText('artist_name'),
+        genre_associations: getDraftAnswerText('genre_associations'),
+        business_type_products_services: getDraftAnswerText('business_type_products_services'),
+        known_for_expression: getDraftAnswerText('known_for_expression'),
+        known_for_legacy: getDraftAnswerText('known_for_legacy'),
+      })
+      if (assembled) {
+        fill.affirmation_text = assembled
+      }
+    }
   }
 
   return fill
@@ -180,6 +199,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
     const row = {
       id: userId,
       artist_name: existingProfile?.artist_name ?? null,
+      affirmation_text: existingProfile?.affirmation_text ?? null,
       mission_statement: existingProfile?.mission_statement ?? null,
       email: existingProfile?.email ?? user.email ?? null,
       primary_color: existingProfile?.primary_color ?? null,

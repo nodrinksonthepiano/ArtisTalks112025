@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep, isSelectStep, isBrandPanelStep, isLogoPanelStep, isColorsPanelStep, isFontPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, getCurriculumSpineOrder, withProfileSatisfiedArtistName, legacyBrandBridgeKeys, BRAND_FLOW_VERSION } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isBrandPanelStep, isLogoPanelStep, isColorsPanelStep, isFontPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, ANONYMOUS_GATE_SAVE_CTA, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, getCurriculumSpineOrder, withProfileSatisfiedArtistName, legacyBrandBridgeKeys, BRAND_FLOW_VERSION } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import {
   getDraftAnswerText,
@@ -32,10 +32,8 @@ const STATUS_ANSWER_TEXTS = new Set([
 function isStatusAnswerText(value: string): boolean {
   return STATUS_ANSWER_TEXTS.has(value.trim().toLowerCase())
 }
-import LivingAffirmation from '@/components/LivingAffirmation'
 import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
-import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 import {
   clearReturningClaimMarker,
   setReturningClaimMarker,
@@ -55,11 +53,12 @@ interface EmeraldChatProps {
   answeredKeysReady?: boolean
   isAnonymous?: boolean
   onDraftRefresh?: () => void
+  affirmationReadyToSave?: boolean
 }
 
 const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
 
-export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh }: EmeraldChatProps) {
+export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingUpdate, onSubmitCard, onCurrentStepChange, profile, answeredKeys, setAnsweredKeys, answeredKeysReady = true, isAnonymous = false, onDraftRefresh, affirmationReadyToSave = true }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
   const [input, setInput] = useState('')
@@ -124,18 +123,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
       profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
     return artistName ? `Enter ${artistName}'s email` : 'Enter your email'
   }, [profile?.artist_name, answeredKeys])
-
-  /** Gate-only Living Affirmation — derived from exact draft answers; no persistence. */
-  const livingAffirmationText = useMemo(() => {
-    if (!showGateUI) return ''
-    return assembleLivingAffirmation({
-      artist_name: getDraftAnswerText('artist_name'),
-      genre_associations: getDraftAnswerText('genre_associations'),
-      business_type_products_services: getDraftAnswerText('business_type_products_services'),
-      known_for_expression: getDraftAnswerText('known_for_expression'),
-      known_for_legacy: getDraftAnswerText('known_for_legacy'),
-    })
-  }, [showGateUI, answeredKeys])
 
   /** BUSINESS_OFFERING input hint only — display copy; curriculum question untouched. */
   const stepInputPlaceholder = useMemo(() => {
@@ -648,6 +635,19 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
     if (hasInitializedRef.current) return
 
     if (isAnonymous && isFreeTasteGateReached(answeredKeys)) {
+      setAnonymousGateView(true)
+      setCurrentStepIdSync(FREE_TASTE_LAST_STEP_ID)
+      const draft = loadDraft()
+      if (draft && draft.currentStepId !== FREE_TASTE_LAST_STEP_ID) {
+        setDraftCurrentStepId(FREE_TASTE_LAST_STEP_ID)
+      }
+      const gateMessage = {
+        role: 'assistant' as const,
+        content: ANONYMOUS_GATE_MESSAGE,
+        stepId: FREE_TASTE_LAST_STEP_ID,
+      }
+      setHistory([gateMessage])
+      setFullHistory([gateMessage])
       hasInitializedRef.current = true
       return
     }
@@ -1489,7 +1489,6 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
           />
         ) : showGateUI ? (
           <>
-            <LivingAffirmation text={livingAffirmationText} />
             <p
               className="gold-etched"
               style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
@@ -1821,7 +1820,23 @@ export default function EmeraldChat({ onProfileUpdate, onTriggerPanel, onTypingU
                 </button>
               </div>
             )}
-            <OtpEmailFlow emailPlaceholder={gateEmailPlaceholder} sendButtonLabel="Send code" />
+            {affirmationReadyToSave ? (
+              <OtpEmailFlow
+                emailPlaceholder={gateEmailPlaceholder}
+                sendButtonLabel={ANONYMOUS_GATE_SAVE_CTA}
+              />
+            ) : (
+              <p
+                className="text-sm text-center"
+                style={{
+                  marginTop: '10px',
+                  color: '#fcd34d',
+                  lineHeight: 1.5,
+                }}
+              >
+                Write your affirmation above before saving.
+              </p>
+            )}
           </div>
         ) : (
       <form onSubmit={handleSubmit} id="artistForm">

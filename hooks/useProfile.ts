@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/client'
 export interface Profile {
   id: string
   artist_name: string | null
+  affirmation_text?: string | null
   mission_statement: string | null
   email: string | null
   logo_url?: string | null
@@ -50,6 +51,7 @@ export function useProfile(userId: string | null) {
       const fallback: Profile = {
         id: userId,
         artist_name: null,
+        affirmation_text: null,
         mission_statement: null,
         email: user?.email || null,
       }
@@ -80,6 +82,7 @@ export function useProfile(userId: string | null) {
       const newProfile: Profile = {
         id: userId,
         artist_name: null,
+        affirmation_text: null,
         mission_statement: null,
         email: user?.email || null,
         ...updates,

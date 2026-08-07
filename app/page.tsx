@@ -32,6 +32,7 @@ import {
   isFreeTasteGateReached,
   withResumeSatisfiedKeys,
 } from "@/lib/curriculum";
+import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 
 export default function Home() {
   const [user, setUser] = useState<any>(null)
@@ -455,6 +456,7 @@ export default function Home() {
     return {
       id: 'anonymous',
       artist_name: preview.artist_name ?? null,
+      affirmation_text: preview.affirmation_text ?? null,
       mission_statement: preview.mission_statement ?? null,
       email: null,
       primary_color: preview.primary_color ?? null,
@@ -533,6 +535,95 @@ export default function Home() {
 
   const showPhaseCoins = effectiveAnsweredKeys.has('artist_name')
   const isEarlyOnboarding = !isFreeTasteGateReached(effectiveAnsweredKeys)
+  const freeTasteComplete = isFreeTasteGateReached(effectiveAnsweredKeys)
+
+  const assembledDraftAffirmation = useMemo(() => {
+    if (!draft || !freeTasteComplete) return ''
+    return assembleLivingAffirmation({
+      artist_name: getDraftAnswerText('artist_name'),
+      genre_associations: getDraftAnswerText('genre_associations'),
+      business_type_products_services: getDraftAnswerText('business_type_products_services'),
+      known_for_expression: getDraftAnswerText('known_for_expression'),
+      known_for_legacy: getDraftAnswerText('known_for_legacy'),
+    })
+  }, [draft, freeTasteComplete, answeredKeys])
+
+  const draftHasAffirmationText =
+    !!draft && Object.prototype.hasOwnProperty.call(draft.profilePreview, 'affirmation_text')
+
+  const sourceAffirmationText = user
+    ? profile?.affirmation_text ?? ''
+    : draftHasAffirmationText
+      ? draft?.profilePreview.affirmation_text ?? ''
+      : assembledDraftAffirmation
+
+  const [liveAffirmationText, setLiveAffirmationText] = useState<string | null>(null)
+  const affirmationSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previousAssembledAffirmationRef = useRef('')
+  const persistentAffirmationText = liveAffirmationText ?? sourceAffirmationText
+  const showPersistentAffirmation = freeTasteComplete
+  const persistentAffirmationReady = persistentAffirmationText.trim().length > 0
+
+  useEffect(() => {
+    if (user || !freeTasteComplete) {
+      previousAssembledAffirmationRef.current = assembledDraftAffirmation
+      return
+    }
+
+    const previousAssembled = previousAssembledAffirmationRef.current
+    const storedAffirmation = draftHasAffirmationText
+      ? draft?.profilePreview.affirmation_text ?? ''
+      : null
+
+    if (
+      previousAssembled &&
+      assembledDraftAffirmation &&
+      assembledDraftAffirmation !== previousAssembled &&
+      storedAffirmation === previousAssembled
+    ) {
+      updateProfilePreview({ affirmation_text: assembledDraftAffirmation })
+      setLiveAffirmationText(null)
+    }
+
+    previousAssembledAffirmationRef.current = assembledDraftAffirmation
+  }, [
+    user,
+    freeTasteComplete,
+    assembledDraftAffirmation,
+    draftHasAffirmationText,
+    draft?.profilePreview.affirmation_text,
+    updateProfilePreview,
+  ])
+
+  useEffect(() => {
+    setLiveAffirmationText(null)
+  }, [sourceAffirmationText, user?.id])
+
+  useEffect(() => {
+    return () => {
+      if (affirmationSaveTimerRef.current) {
+        clearTimeout(affirmationSaveTimerRef.current)
+      }
+    }
+  }, [])
+
+  const handlePersistentAffirmationChange = (text: string) => {
+    setLiveAffirmationText(text)
+
+    if (!user) {
+      updateProfilePreview({ affirmation_text: text })
+      return
+    }
+
+    if (affirmationSaveTimerRef.current) {
+      clearTimeout(affirmationSaveTimerRef.current)
+    }
+
+    affirmationSaveTimerRef.current = setTimeout(() => {
+      void updateProfile({ affirmation_text: text })
+      affirmationSaveTimerRef.current = null
+    }, 500)
+  }
 
   /** First land only: centered welcome card. Exits as soon as name typing/stage begins (answer B). */
   const isAnonymousPoster =
@@ -565,6 +656,7 @@ export default function Home() {
     answeredKeysReady,
     isAnonymous: !user,
     onDraftRefresh: handleDraftRefresh,
+    affirmationReadyToSave: persistentAffirmationReady,
   }
 
   // Get current primary color for halo (Zeyoda pattern: livePrimaryColor || config || default)
@@ -915,6 +1007,11 @@ export default function Home() {
               chatProfile?.accent_color || chatProfile?.brand_color || null
             }
             fontFamily={chatProfile?.font_family || null}
+            showAffirmation={showPersistentAffirmation}
+            artistName={chatProfile?.artist_name || anonymousLiveName || ''}
+            affirmationText={persistentAffirmationText}
+            affirmationReady={persistentAffirmationReady}
+            onAffirmationChange={handlePersistentAffirmationChange}
           />
         ) : null}
 

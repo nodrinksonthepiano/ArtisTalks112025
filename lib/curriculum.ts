@@ -447,7 +447,9 @@ export const FREE_TASTE_LAST_STEP_ID: StepId = 'BUSINESS_OFFERING'
 export const FREE_TASTE_LAST_KEY = 'business_type_products_services'
 
 export const ANONYMOUS_GATE_MESSAGE =
-  'To save it and keep building, apply yourself.\n\nEnter your email to save your page and request access to the ArtisTalks Orbit Launch.'
+  "This is worth saving. Write it down, print it, or put it somewhere you'll see it every day.\n\nEnter your email to save your affirmation and keep building."
+
+export const ANONYMOUS_GATE_SAVE_CTA = 'Save this affirmation — Free'
 
 export function isFreeTasteGateReached(answeredKeys: Set<string>): boolean {
   return answeredKeys.has(FREE_TASTE_LAST_KEY)

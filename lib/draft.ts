@@ -10,6 +10,7 @@ export interface DraftAnswer {
 
 export interface DraftProfilePreview {
   artist_name?: string | null
+  affirmation_text?: string | null
   mission_statement?: string | null
   primary_color?: string | null
   accent_color?: string | null
@@ -111,6 +112,13 @@ export function getDraftAnswerText(question_key: string): string {
   const label = typeof data.label === 'string' ? data.label : ''
   const text = typeof data.text === 'string' ? data.text : ''
   return label || text
+}
+
+/** Returns null when affirmation_text was never stored in the draft preview. */
+export function getDraftAffirmationText(): string | null {
+  const draft = loadDraft()
+  if (!draft || !('affirmation_text' in draft.profilePreview)) return null
+  return draft.profilePreview.affirmation_text ?? ''
 }
 
 /**
