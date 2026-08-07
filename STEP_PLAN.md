@@ -9,8 +9,8 @@ Sprint 1 save-and-restore proven:
 - resume at the first genuinely unanswered step;
 - new answers after login persist across Data Reset and return.
 
-**Code baseline:** `feature/artist-accordion-hub` @ `34ed2ea`
-**Last updated:** 2026-08-06
+**Code baseline:** paid ArtisTalks access gate @ `fe8d869`
+**Last updated:** 2026-08-07
 
 **MVP authority:** ArtisTalks is one page. The curriculum is the experience.
 Coaching language inspires curriculum copy. Product behavior comes from this
@@ -184,14 +184,12 @@ SaaS subscription
 - comped
 
 Orbit application/access
-- not_applied
+- not_applied (no row)
 - draft
 - submitted
-- interview_scheduled
 - approved
-- waitlisted
 - declined
-- orbit_member
+- later (not Sprint 4): interview_scheduled, waitlisted, orbit_member
 
 Orbit tuition
 - not_required
@@ -457,18 +455,17 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current sprint (baseline `34ed2ea`):**
-- Artist-name carousel card: show the actual name prominently
-- Living Affirmation: editable gate, `affirmation_text` persistence, locked gate copy, save CTA
-- OTP rate-limit stability for claimed-artist login
-- Data Reset: clear in-memory UI and stored state correctly
-- Geist and system fonts: load cleanly in the Font step
+**Current sprint (baseline `fe8d869`):** Sprint 4 — Native Orbit application (§10).
 
-**After real-phone core loop passes QA:**
-- Smallest `$8/month` ongoing-access layer (Venmo-first)
+**Shipped through Slice E (`fe8d869`):**
+- MVP core free-taste → save → restore → continue
+- Smallest `$8/month` ongoing-access layer (Venmo-first / Pay What You CANCakes)
+
+**Backlog (not Sprint 4):**
+- Browser SaaS self-promotion security proof (Slice E follow-up)
 - Phase coin polish
-- Native Orbit application and admin queue
 - Journey fork branching in spine
+- Admin dashboard (private beta uses Supabase Table Editor / SQL only)
 
 Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
 
@@ -492,8 +489,8 @@ Warm private beta begins when:
 
 Real artist usage during the warm beta helps guide further curriculum work.
 
-Paid SaaS access follows as Slice E.
-Orbit application/payment work follows in its own sprints.
+Paid SaaS access (Slice E) is shipped at `fe8d869`.
+Orbit application is Sprint 4; Orbit tuition/payment is Sprint 5.
 
 ---
 
@@ -520,7 +517,7 @@ Completed:
 - resume at the first genuinely unanswered allowed step;
 - post-login answers persist across Data Reset and return.
 
-### Sprint 2 — MVP core ← current
+### Sprint 2 — MVP core ✓ complete
 
 **Slice A — Artist name card**
 - Carousel card prominently shows the artist's actual name (e.g. JAITEA).
@@ -565,20 +562,49 @@ New artist
 
 Slice D must pass on a real phone before Slice E begins.
 
-### Sprint 3 — SaaS access ($8/month) — Slice E
+### Sprint 3 — SaaS access ($8/month) — Slice E ✓ complete
+
+Checkpoint: `fe8d869 — Add paid ArtisTalks access gate`
 
 - Smallest intentional paid continuation for ongoing ArtisTalks access
 - Venmo-first; manual review acceptable for private beta
 - Orbit application remains separate from SaaS subscription
 - Coupons/comps reduce or waive `$8` for an individual — explicit exception only
 
-### Sprint 4 — Native Orbit application
+**Backlog from Slice E (not blocking Sprint 4):**
+- Browser SaaS self-promotion security proof
 
-- Replace Tally; prefill answers; phone field; optional SMS consent;
-  application draft and submission; simple review queue; interview request.
+### Sprint 4 — Native Orbit application ← current
+
+Approved scope (doc-only until implementation is requested):
+
+- Optional **Apply to Orbit** CTA on the one-page sanctuary after free-taste
+  save / on return for authenticated artists
+- Orbit application is **not** a curriculum step and must not live inside the
+  curriculum state machine; EmeraldChat progression does not depend on Orbit
+  status; save ≠ apply
+- Authenticated artists may apply whether `saas_subscription_status` is
+  `inactive`, `active`, or `comped`
+- Native form replaces Tally; no admin dashboard; no tuition/payment; no SMS;
+  no Artistocks; no Orbit membership activation
+- Display existing sanctuary/profile/curriculum answers from current tables;
+  do **not** snapshot/duplicate them into `orbit_applications`
+- `orbit_applications` holds only new application fields + status/timestamps
+- Minimum new questions:
+  1. Best phone number
+  2. Why Orbit now / what to accomplish over the next six months
+  3. Ready to commit to six months of focused artist development? Yes / Not yet
+- Status: no row = `not_applied`; stored `draft | submitted | approved | declined`
+- Draft editable by artist; **submitted is read-only** to the artist for MVP
+- Artist cannot self-set `approved` or `declined` (server/admin only)
+- Jai reviews manually in Supabase (application + linked profile +
+  `curriculum_answers`); sets approved or declined
+- Temporary product copy: **Apply to Orbit** — do not invent Guide
+  “apply yourself” poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
 ### Sprint 5 — Orbit payment and activation
 
+- Explicitly later than Sprint 4
 - Standard, paid-in-full, payment-plan, and Pay What You CANCakes paths;
   Venmo QR/reference; pending-review; manual verification; access activation;
   SaaS subscription status independent of Orbit tuition.
@@ -715,3 +741,27 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 5. Paid `$8/month` access begins only after Slice D real-phone QA passes.
 6. Artist-name card shows the actual name prominently.
 7. Implement behavior Jai specifies. Present new UX separately for approval.
+
+### Locked 2026-08-07 — Sprint 4 Native Orbit application
+
+1. Sprint 3 / Slice E complete at `fe8d869 — Add paid ArtisTalks access gate`.
+   Sprint 4 is current. Sprint 5 Orbit tuition stays later.
+2. Orbit application is **not** a curriculum step and must not enter the
+   curriculum state machine. Optional **Apply to Orbit** CTA on the sanctuary
+   after free-taste save / on return. Save ≠ apply.
+3. Authenticated artists may apply with SaaS `inactive`, `active`, or `comped`.
+4. No SMS consent in Sprint 4. Contact field is phone number only. Email is
+   already known from authenticated identity.
+5. Do not snapshot sanctuary data into `orbit_applications`. Store only new
+   Orbit fields + status/timestamps. Jai reviews linked profile and
+   `curriculum_answers` in Supabase.
+6. Minimum questions: phone; why Orbit now / six-month goals; commit Yes / Not yet.
+7. Status: no row = `not_applied`; stored `draft | submitted | approved | declined`.
+   Draft editable; submitted read-only to artist for MVP; approved/declined
+   server/admin only.
+8. Jai reviews in Supabase Table Editor / SQL only — no admin dashboard.
+9. After submit: received/Submitted, no payment, no acceptance implication.
+   Approved: status + simple next-step with Jai; no tuition or membership
+   activation yet.
+10. Guide voice §6 remains `[NEEDS JAI]`. Plain CTA copy: **Apply to Orbit**.
+11. Backlog: browser SaaS self-promotion security proof (Slice E follow-up).
