@@ -37,11 +37,13 @@ EmeraldChat
    → Continue ArtisTalks — $8/month DIY SaaS
    OR
    → Apply to Orbit Launch (free) → Jai review → tuition only if approved
-→ Venmo activation and manual review for private beta
+→ $8 DIY: build/test Stripe first; launch UX Venmo / PayPal primary, Card secondary
 → Active Orbit includes ArtisTalks for the Orbit term (no double $8)
 ```
 
-Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port, Stripe, LLM Guide (last), dreamboard/tesseract, Google working studio.
+Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port,
+LLM Guide (last), dreamboard/tesseract, Google working studio.
+(DIY `$8` Stripe/PayPal rails are no longer parked — see Locked 2026-08-09 payments.)
 
 ---
 
@@ -91,9 +93,15 @@ Two reasons, and the second is the load-bearing one:
 
 ### Pay What You CANCakes vs `cancakes`
 
-- Customer-facing phrase: **Pay What You CANCakes**
+- Customer-facing phrase: **Pay What You CANCakes** (spoken/known path — never a
+  visible UI control, button, coupon field, or “have a code?” prompt)
 - Server-side access/payment-path code: **`cancakes`**
 - Never an OTP or login credential. Validated only after identity is verified.
+- Always invisible: the artist types `cancakes` naturally into EmeraldChat at
+  the payment moment because Jai gave them the word. Server recognizes silently
+  → “What can you pay today?” → amount → approved CANCakes / comp path.
+- Never ship: “Have a code?”, “Beta access”, “Coupon code”, “Pay What You
+  CANCakes” button, or “Enter secret word.”
 
 ---
 
@@ -192,23 +200,39 @@ Applying, approval, SaaS subscription, and Orbit tuition remain separate states.
 
 ### Payment rails (private beta)
 
-- Venmo before Stripe.
-- Manual Venmo verification is acceptable.
+```text
+ENGINEERING / TEST ORDER
+  Stripe $8 sandbox
+  → checkout → webhook → DB subscription record
+  → active → FAN_CONNECTION
+  → failed-payment → past_due (access remains)
+
+THEN
+  PayPal / Venmo on the same entitlement architecture
+  → real-phone Venmo QA
+  → Venmo / PayPal = primary launch UX
+  → Card / Stripe = secondary
+```
+
+- Build/test **Stripe first**; launch artist experience **Venmo / PayPal primary**.
+- Access only from **server-verified** provider/webhook confirmation — never a
+  client-side “payment succeeded” flag or success-URL alone.
 - Do not route ArtisTalks payments through Artistocks wallet/token rails.
 - SEC-001 stays in force: no agent touches wallet-signing code; `fundWallet` stays disabled.
+- Orbit tuition stays Sprint 5 (after approval).
 
 ### Important data boundary
 
 Do **not** combine these into one status:
 
 ```text
-SaaS subscription
-- inactive
-- trialing
-- active
-- past_due
-- canceled
-- comped
+SaaS subscription (DIY access gate)
+- inactive  → no DIY access
+- active    → access
+- past_due  → ACCESS REMAINS ON (failed recurring payment; Jai handles manually)
+- comped    → access
+
+(No automatic boot on payment failure. Jai manually sets inactive to revoke.)
 
 Orbit application/access
 - not_applied (no row)
@@ -482,19 +506,25 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current objective (baseline `6596ad0`):** real payments **assessment** only —
-PayPal/Venmo + Stripe + existing ArtisTalks/Zeyoda patterns. Do **not** invent
-implementation. Do **not** wire SDKs. Sprint 5 Orbit tuition stays later.
+**Current objective:** `$8` Stripe **sandbox test implementation** (assessment
+complete). Prove checkout → webhook → DB subscription record → `active` →
+`FAN_CONNECTION` → failed payment → `past_due` (access remains). Then PayPal /
+Venmo on the same architecture; Venmo / PayPal primary at launch. Sprint 5
+Orbit tuition stays later.
 
 **Shipped through Sprint 4 flow QA (`6596ad0`):**
 - MVP core free-taste → save → restore → continue
-- Smallest `$8/month` ongoing-access layer (chat-only DIY; temporary silent
-  `cancakes` test path — see §10)
+- Smallest `$8/month` ongoing-access layer (chat-only DIY; silent invisible
+  `cancakes` path — see §2 / Locked payments)
 - Native Orbit application conversational flow + post-submit → `FAN_CONNECTION`
+- Payments assessment locked 2026-08-09 (Stripe test-first; Venmo launch-primary)
 
 **Backlog:**
 - Browser SaaS self-promotion security proof (Slice E follow-up)
-- Real payment rails (after assessment — not Sprint 4)
+- PayPal / Venmo after Stripe `$8` plumbing is proven
+- A/B curriculum experiments (measure without rewriting canonical artist record)
+- Treasure-hunt / growth experiments that unlock the hidden CANCakes path
+  (not a new subscription status)
 - Phase coin polish
 - Journey fork branching in spine
 - Admin dashboard (private beta uses Supabase Table Editor / SQL only)
@@ -523,8 +553,9 @@ Warm private beta begins when:
 Real artist usage during the warm beta helps guide further curriculum work.
 
 Paid SaaS access (Slice E) shipped at `fe8d869`; conversational Orbit + flow QA
-complete at `6596ad0`. Next objective: real payments **assessment** (no SDK
-wiring yet). Orbit tuition/payment remains Sprint 5.
+complete at `6596ad0`; payments assessment locked 2026-08-09. Next objective:
+`$8` Stripe sandbox test implementation, then PayPal / Venmo. Orbit
+tuition/payment remains Sprint 5.
 
 ---
 
@@ -601,7 +632,9 @@ Slice D must pass on a real phone before Slice E begins.
 Checkpoint: `fe8d869 — Add paid ArtisTalks access gate`
 
 - Smallest intentional paid continuation for ongoing ArtisTalks access
-- Venmo-first; manual review acceptable for private beta
+- Slice E era: Venmo/manual review acceptable for private beta
+  *(rail order now Locked 2026-08-09 — Real payments: Stripe test-first;
+  Venmo / PayPal launch-primary)*
 - Orbit application remains separate from SaaS subscription
 - Coupons/comps reduce or waive `$8` for an individual — explicit exception only
 
@@ -655,20 +688,30 @@ Proven conversational scope:
 - Temporary product copy stays plain — do not invent Guide “apply yourself”
   poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
-**Next objective (not Sprint 5 implementation yet):** real payments **assessment**
-only — PayPal/Venmo + Stripe + existing ArtisTalks/Zeyoda patterns. No SDK
-wiring. No invented payment architecture.
+**Next objective:** `$8` Stripe sandbox test implementation ← current
+(see Locked 2026-08-09 — Real payments decisions). Not Orbit tuition.
+
+### Payments — SaaS `$8` (after Sprint 4; before Sprint 5) ← current
+
+1. Wire `past_due` into DB + access: `active | past_due | comped` continue;
+   only `inactive` blocks DIY. Failed recurring payment → `past_due`; **no
+   automatic boot** — Jai manually sets `inactive` to revoke.
+2. Stripe `$8` sandbox first: Checkout → webhook → subscription row →
+   `active` → `FAN_CONNECTION`; prove failed-payment → `past_due`.
+3. Then PayPal / Venmo on the same entitlement/payment-state architecture;
+   real-phone Venmo QA; launch UX **Venmo / PayPal** primary, **Card** secondary.
+4. `cancakes` remains permanently invisible (silent EmeraldChat recognition).
+5. Zero Orbit tuition code in this lane.
 
 ### Sprint 5 — Orbit payment and activation
 
 - Explicitly later — **zero Orbit tuition code until this sprint**
 - After approval only:
-  `approved → choose $500/mo × 6 or $2,000 upfront → pay (Venmo/manual) →
+  `approved → choose $500/mo × 6 or $2,000 upfront → pay →
   Orbit active → ArtisTalks included for the Orbit term`
 - SaaS status and Orbit status remain separate internally; activation may
   include/`comp` ArtisTalks access so there is no double charge
-- Pay What You CANCakes and other paths as needed; no Stripe required for
-  first private-beta cohort
+- Pay What You CANCakes and other paths as needed
 
 ---
 
@@ -678,7 +721,10 @@ wiring. No invented payment architecture.
 
 If it is touched while the funnel is being rewired, we will not know which change broke what. It gets its own sprint, later, or it does not get touched.
 
-Also not yet: NFC claim port from Zeyoda, wallets/tokens, Artistocks commerce, automated enrichment, Twilio-required marketing SMS, Stripe, LLM rewriting, unfinished accounting modules.
+Also not yet: NFC claim port from Zeyoda, wallets/tokens, Artistocks commerce,
+automated enrichment, Twilio-required marketing SMS, LLM rewriting, unfinished
+accounting modules. (DIY `$8` Stripe/PayPal is the current payments lane — not
+parked. Orbit tuition remains Sprint 5.)
 
 ---
 
@@ -732,7 +778,9 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 6. Artists may apply for Orbit without first subscribing to SaaS.
 7. SaaS subscription status, Orbit application/access status, and Orbit tuition status stay separate.
 8. Post-save experience continues through the curriculum spine (§7).
-9. First launch is private beta; Venmo before Stripe; manual review OK.
+9. First launch is private beta. *(Payment rail order superseded by Locked
+   2026-08-09 — Real payments: build/test Stripe first; Venmo / PayPal
+   primary at launch.)*
 10. Sprint order in §10 is current; old Sprint 1–10 funnel list is retired.
 
 ### Locked 2026-08-05 — restore / first-save reliability
@@ -856,8 +904,8 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 
 1. Checkpoint `6596ad0 — Fix Orbit and SaaS conversation flows`. Sprint 4
    conversational Orbit + DIY flow QA is **complete**.
-2. Proven DIY path: Continue ArtisTalks → `$8` / temporary silent `cancakes`
-   test → “What can you pay today?” → `0` comps once → `FAN_CONNECTION`.
+2. Proven DIY path: Continue ArtisTalks → `$8` / silent invisible `cancakes`
+   → “What can you pay today?” → amount → `FAN_CONNECTION`.
    No artist-facing access-word/beta UI; no `SaasAccessGate`.
 3. Proven Orbit path: Apply free → submit →
    “Application received. Jai will review your Orbit application.” →
@@ -866,9 +914,36 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 4. Unlock rules: `draft` = resume apply only (no deeper unlock);
    `submitted` | `approved` = Orbit-route curriculum continuation;
    `declined` = no Orbit entitlement (DIY `$8` still available).
-5. Current objective: real payments **assessment** only (PayPal/Venmo + Stripe
-   + existing patterns). Do not invent architecture. Do not wire SDKs.
+5. Payments assessment complete. Current objective: `$8` Stripe sandbox test
+   implementation — see Locked 2026-08-09 — Real payments decisions.
 6. Sprint 5 Orbit tuition stays later (`$500/mo × 6` or `$2,000`). Active Orbit
    includes ArtisTalks — no double `$8`. SaaS / Orbit application / Orbit
    tuition remain separate concepts. No Orbit fields in `curriculum_answers`.
 7. Confirms Locked 2026-08-07 item 9 (submit → `FAN_CONNECTION`; no `$8` after submit).
+
+### Locked 2026-08-09 — Real payments decisions
+
+1. Payments **assessment complete**. Current objective: `$8` Stripe sandbox
+   test implementation, then PayPal / Venmo.
+2. **Build/test order:** Stripe `$8` first (checkout, webhook, DB subscription
+   record, `active` → `FAN_CONNECTION`, failed-payment → `past_due`). Then
+   PayPal / Venmo on the same entitlement architecture.
+3. **Launch UX order:** **Venmo / PayPal** primary; **Card** (Stripe) secondary.
+   Not Card-first with Venmo as an afterthought.
+4. Access only from server-verified provider/webhook confirmation. Never trust
+   client “payment succeeded” or success-URL alone.
+5. **`past_due` retains access.** DIY gate:
+   `inactive` = no access; `active` | `past_due` | `comped` = access.
+   Failed recurring payment → `past_due`; artist keeps ArtisTalks; Jai handles
+   manually. **No automatic boot.** Revoke only when Jai sets `inactive`.
+6. **`cancakes` always invisible.** Never: “Have a code?”, “Beta access”,
+   “Coupon code”, “Pay What You CANCakes” button, or “Enter secret word.”
+   Artist types `cancakes` in EmeraldChat at the payment moment → silent
+   server recognition → “What can you pay today?” → amount → approved path.
+7. **Backlog (not now):** A/B curriculum experiments (measure without rewriting
+   the canonical artist record); treasure-hunt / growth experiments that unlock
+   the hidden CANCakes path (not a new subscription status).
+8. Sprint 5 Orbit tuition remains later. Do not collapse SaaS, Orbit
+   application, and Orbit tuition.
+9. Supersedes “Venmo before Stripe” engineering order and “assessment only /
+   do not wire SDKs” as the current objective.
