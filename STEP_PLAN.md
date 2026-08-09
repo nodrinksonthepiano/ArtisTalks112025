@@ -9,8 +9,8 @@ Sprint 1 save-and-restore proven:
 - resume at the first genuinely unanswered step;
 - new answers after login persist across Data Reset and return.
 
-**Code baseline:** paid ArtisTalks access gate @ `fe8d869`
-**Last updated:** 2026-08-07
+**Code baseline:** `6596ad0` — Fix Orbit and SaaS conversation flows
+**Last updated:** 2026-08-09
 
 **MVP authority:** ArtisTalks is one page. The curriculum is the experience.
 Coaching language inspires curriculum copy. Product behavior comes from this
@@ -167,8 +167,15 @@ CURRENT_FOCUS_PILLAR
 ```
 
 - Choosing **Apply to Orbit** bypasses the `$8` checkout entirely.
-- While an Orbit application is pending, the artist may wait for free, or
-  optionally choose **Continue ArtisTalks — $8/month** to go deeper in curriculum.
+- After Orbit **submit**: confirmation
+  (“Application received. Jai will review your Orbit application.”) →
+  continue at `FAN_CONNECTION` → deeper curriculum while Jai reviews.
+  **No `$8` required** after submit. `$8` remains the separate DIY route.
+- Orbit application status unlock rules (proven at `6596ad0`):
+  - `draft` — resume apply only; does **not** unlock deeper curriculum
+  - `submitted` | `approved` — Orbit-route entitlement; continue past
+    `CURRENT_FOCUS_PILLAR` without `$8`
+  - `declined` — no Orbit-route entitlement; DIY `$8` remains available
 - Orbit is **not** a prerequisite for `$8`, and `$8` is **not** a prerequisite
   for Orbit.
 - Artists may apply for Orbit **without** first subscribing to the `$8/month` SaaS.
@@ -475,17 +482,23 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current sprint (baseline `fe8d869`):** Sprint 4 — Native Orbit application (§10).
+**Current objective (baseline `6596ad0`):** real payments **assessment** only —
+PayPal/Venmo + Stripe + existing ArtisTalks/Zeyoda patterns. Do **not** invent
+implementation. Do **not** wire SDKs. Sprint 5 Orbit tuition stays later.
 
-**Shipped through Slice E (`fe8d869`):**
+**Shipped through Sprint 4 flow QA (`6596ad0`):**
 - MVP core free-taste → save → restore → continue
-- Smallest `$8/month` ongoing-access layer (Venmo-first / Pay What You CANCakes)
+- Smallest `$8/month` ongoing-access layer (chat-only DIY; temporary silent
+  `cancakes` test path — see §10)
+- Native Orbit application conversational flow + post-submit → `FAN_CONNECTION`
 
-**Backlog (not Sprint 4):**
+**Backlog:**
 - Browser SaaS self-promotion security proof (Slice E follow-up)
+- Real payment rails (after assessment — not Sprint 4)
 - Phase coin polish
 - Journey fork branching in spine
 - Admin dashboard (private beta uses Supabase Table Editor / SQL only)
+- Sprint 5 Orbit tuition after approval
 
 Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
 
@@ -509,8 +522,9 @@ Warm private beta begins when:
 
 Real artist usage during the warm beta helps guide further curriculum work.
 
-Paid SaaS access (Slice E) is shipped at `fe8d869`.
-Orbit application is Sprint 4; Orbit tuition/payment is Sprint 5.
+Paid SaaS access (Slice E) shipped at `fe8d869`; conversational Orbit + flow QA
+complete at `6596ad0`. Next objective: real payments **assessment** (no SDK
+wiring yet). Orbit tuition/payment remains Sprint 5.
 
 ---
 
@@ -591,20 +605,33 @@ Checkpoint: `fe8d869 — Add paid ArtisTalks access gate`
 - Orbit application remains separate from SaaS subscription
 - Coupons/comps reduce or waive `$8` for an individual — explicit exception only
 
-**Backlog from Slice E (not blocking Sprint 4):**
+**Backlog from Slice E:**
 - Browser SaaS self-promotion security proof
 
-### Sprint 4 — Native Orbit application ← current
+### Sprint 4 — Native Orbit application ✓ complete (flow QA @ `6596ad0`)
 
-Approved conversational scope:
+Checkpoint: `6596ad0 — Fix Orbit and SaaS conversation flows`
+
+Proven conversational scope:
 
 - After `CURRENT_FOCUS_PILLAR`, EmeraldChat offers **two routes** (not sequential
   upsells):
-  1. **Continue ArtisTalks — $8/month**
-  2. **Apply to Orbit Launch**
+  1. **Continue ArtisTalks — $8/month** (DIY)
+  2. **Apply to Orbit Launch** (free)
 - Orbit application is **not** a curriculum step and must not live inside the
-  curriculum state machine; EmeraldChat progression does not depend on Orbit
-  status; save ≠ apply
+  curriculum state machine; save ≠ apply
+- Curriculum continuation past `CURRENT_FOCUS_PILLAR` is gated by SaaS
+  `active`/`comped` **or** Orbit application `submitted`/`approved`
+  (`hasOrbitRouteAccess`). `draft` does **not** unlock deeper curriculum;
+  `declined` does **not** grant Orbit-route entitlement
+- Proven Orbit path: apply free → submit → confirmation
+  (“Application received. Jai will review your Orbit application.”) →
+  `FAN_CONNECTION` → deeper curriculum while Jai reviews. No `$8` required
+  after submit
+- Proven DIY path (temporary test): chat-only; no artist-facing access-word /
+  beta UI; no `SaasAccessGate` component; silent server-side `cancakes`
+  recognition → “What can you pay today?” → `0` comps once → one-shot
+  `FAN_CONNECTION`. Browser self-promotion security proof stays backlog
 - Apply to Orbit bypasses `$8` checkout; applying is free
 - Authenticated artists may apply whether `saas_subscription_status` is
   `inactive`, `active`, or `comped`
@@ -614,6 +641,7 @@ Approved conversational scope:
 - Display existing sanctuary/profile/curriculum on the living page; do **not**
   snapshot/duplicate them into `orbit_applications`
 - `orbit_applications` holds only new application fields + status/timestamps
+  (never Orbit fields in `curriculum_answers`)
 - Minimum new questions (one at a time in EmeraldChat):
   1. Best phone number
   2. Why Orbit now / what to accomplish over the next six months
@@ -627,9 +655,13 @@ Approved conversational scope:
 - Temporary product copy stays plain — do not invent Guide “apply yourself”
   poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
+**Next objective (not Sprint 5 implementation yet):** real payments **assessment**
+only — PayPal/Venmo + Stripe + existing ArtisTalks/Zeyoda patterns. No SDK
+wiring. No invented payment architecture.
+
 ### Sprint 5 — Orbit payment and activation
 
-- Explicitly later than Sprint 4 — **zero Orbit tuition code in Sprint 4**
+- Explicitly later — **zero Orbit tuition code until this sprint**
 - After approval only:
   `approved → choose $500/mo × 6 or $2,000 upfront → pay (Venmo/manual) →
   Orbit active → ArtisTalks included for the Orbit term`
@@ -777,8 +809,8 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 ### Locked 2026-08-07 — Sprint 4 Native Orbit application
 
 1. Sprint 3 / Slice E complete at `fe8d869 — Add paid ArtisTalks access gate`.
-   Sprint 4 is current. Sprint 5 Orbit tuition stays later — **no Orbit
-   payment code in Sprint 4**.
+   Sprint 5 Orbit tuition stays later — **no Orbit payment code in Sprint 4**.
+   *(Sprint 4 current-status superseded by Locked 2026-08-09.)*
 2. After `CURRENT_FOCUS_PILLAR`, EmeraldChat offers two routes (not sequential
    upsells): **Continue ArtisTalks — $8/month** or **Apply to Orbit Launch**.
    Orbit application is conversational inside EmeraldChat; not a sanctuary form;
@@ -796,9 +828,11 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
    Draft editable; submitted read-only to artist for MVP; approved/declined
    server/admin only.
 8. Jai reviews in Supabase Table Editor / SQL only — no admin dashboard.
-9. After submit: received/Submitted, no payment, no acceptance implication.
-   Pending applicants may wait for free, or optionally take the `$8` path to
-   continue deeper curriculum. Approved tuition/payment is Sprint 5 only.
+9. After submit:
+   “Application received. Jai will review your Orbit application.”
+   → `FAN_CONNECTION` → deeper curriculum while Jai reviews.
+   No `$8` is required after Orbit submit.
+   Approved tuition/payment remains Sprint 5 only.
 10. Guide voice §6 remains `[NEEDS JAI]`. Plain product copy only.
 11. Backlog: browser SaaS self-promotion security proof (Slice E follow-up).
 
@@ -817,3 +851,24 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 7. If Orbit is not approved / not the fit, ArtisTalks remains available for
    `$8/month`.
 8. Supersedes older “every Orbit artist also pays `$8` on top” stacking copy.
+
+### Locked 2026-08-09 — Sprint 4 flow QA complete; payments assessment next
+
+1. Checkpoint `6596ad0 — Fix Orbit and SaaS conversation flows`. Sprint 4
+   conversational Orbit + DIY flow QA is **complete**.
+2. Proven DIY path: Continue ArtisTalks → `$8` / temporary silent `cancakes`
+   test → “What can you pay today?” → `0` comps once → `FAN_CONNECTION`.
+   No artist-facing access-word/beta UI; no `SaasAccessGate`.
+3. Proven Orbit path: Apply free → submit →
+   “Application received. Jai will review your Orbit application.” →
+   `FAN_CONNECTION` → deeper curriculum while Jai reviews. No `$8` required
+   after submit. `$8` remains the separate DIY choice.
+4. Unlock rules: `draft` = resume apply only (no deeper unlock);
+   `submitted` | `approved` = Orbit-route curriculum continuation;
+   `declined` = no Orbit entitlement (DIY `$8` still available).
+5. Current objective: real payments **assessment** only (PayPal/Venmo + Stripe
+   + existing patterns). Do not invent architecture. Do not wire SDKs.
+6. Sprint 5 Orbit tuition stays later (`$500/mo × 6` or `$2,000`). Active Orbit
+   includes ArtisTalks — no double `$8`. SaaS / Orbit application / Orbit
+   tuition remain separate concepts. No Orbit fields in `curriculum_answers`.
+7. Confirms Locked 2026-08-07 item 9 (submit → `FAN_CONNECTION`; no `$8` after submit).
