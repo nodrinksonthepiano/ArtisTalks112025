@@ -38,11 +38,17 @@ import {
 } from '@/lib/orbitApplication'
 
 const SAAS_PAYMENT_INTRO =
-  'Keep building your ArtisTalks — $8/month.\n\nYour saved page, affirmation, and answers stay here. To continue deeper into your artist development, pay $8 through Venmo and Jai will activate your access after payment.'
+  'Keep building your ArtisTalks — $8/month.\n\nYour saved page, affirmation, and answers stay here. Continue with Card when you are ready.'
 
 const SAAS_PAYMENT_AMOUNT_PROMPT = 'What can you pay today?'
+const SAAS_PAYMENT_CARD_PROMPT =
+  'Enter your card below to continue ArtisTalks — $8/month.'
+const SAAS_PAYMENT_AWAITING =
+  'One moment — confirming your ArtisTalks access…'
+const SAAS_PAYMENT_YOU_ARE_IN = "You're in."
+const SAAS_CARD_CTA = 'Card'
 
-type SaasPaymentPhase = 'intro' | 'amount'
+type SaasPaymentPhase = 'intro' | 'amount' | 'card' | 'awaiting'
 
 /** Legacy status strings — never hydrate into a text question input. */
 const STATUS_ANSWER_TEXTS = new Set([
@@ -56,6 +62,7 @@ function isStatusAnswerText(value: string): boolean {
 }
 import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
+import SaasPaymentElement from '@/components/SaasPaymentElement'
 import {
   clearReturningClaimMarker,
   setReturningClaimMarker,
@@ -158,10 +165,15 @@ export default function EmeraldChat({
   const [saasPaymentPhase, setSaasPaymentPhase] = useState<SaasPaymentPhase | null>(
     null
   )
+  const [saasCheckoutClientSecret, setSaasCheckoutClientSecret] = useState<
+    string | null
+  >(null)
   const [saasAccessOverride, setSaasAccessOverride] = useState<
-    'active' | 'comped' | null
+    'active' | 'past_due' | 'comped' | null
   >(null)
   const saasAccessWordRef = useRef('')
+  const saasCheckoutIdempotencyKeyRef = useRef('')
+  const saasReturnHandledRef = useRef(false)
   const saasTransitionLockRef = useRef(false)
   const [continuationChoiceView, setContinuationChoiceView] = useState(false)
   const [orbitChatActive, setOrbitChatActive] = useState(false)
@@ -180,8 +192,10 @@ export default function EmeraldChat({
   const hasSaasAccess =
     !isAnonymous &&
     (saasAccessOverride === 'active' ||
+      saasAccessOverride === 'past_due' ||
       saasAccessOverride === 'comped' ||
       profile?.saas_subscription_status === 'active' ||
+      profile?.saas_subscription_status === 'past_due' ||
       profile?.saas_subscription_status === 'comped')
   /** Orbit route bypasses $8 while submitted / approved. */
   const hasOrbitRouteAccess =
@@ -195,7 +209,7 @@ export default function EmeraldChat({
     answeredKeys.has('current_focus_pillar') &&
     !canContinuePaidCurriculum
   const showSaasPayment =
-    needsSaasGate &&
+    (needsSaasGate || saasPaymentPhase === 'awaiting') &&
     saasPaymentPhase !== null &&
     !continuationChoiceView &&
     !orbitChatActive &&
@@ -222,6 +236,7 @@ export default function EmeraldChat({
   useEffect(() => {
     if (
       profile?.saas_subscription_status === 'active' ||
+      profile?.saas_subscription_status === 'past_due' ||
       profile?.saas_subscription_status === 'comped'
     ) {
       setSaasAccessOverride(profile.saas_subscription_status)
@@ -363,6 +378,7 @@ export default function EmeraldChat({
     saasTransitionLockRef.current = true
     setAnonymousGateView(false)
     setSaasPaymentPhase(null)
+    setSaasCheckoutClientSecret(null)
     setContinuationChoiceView(false)
     setOrbitChatActive(false)
     setOrbitStep(null)
@@ -387,7 +403,7 @@ export default function EmeraldChat({
   const openPostPillarContinuation = useCallback(async () => {
     if (saasTransitionLockRef.current) return
 
-    // SaaS paid/comped, or Orbit already submitted/approved: continue curriculum.
+    // SaaS active/past_due/comped, or Orbit submitted/approved: continue curriculum.
     if (
       hasSaasAccess ||
       orbitApplication?.status === 'submitted' ||
@@ -1430,10 +1446,11 @@ export default function EmeraldChat({
   }, [advanceToFanConnection])
 
   const finishSaasActivation = useCallback(
-    async (status: 'active' | 'comped') => {
+    async (status: 'active' | 'past_due' | 'comped') => {
       saasTransitionLockRef.current = true
       setSaasAccessOverride(status)
       setSaasPaymentPhase(null)
+      setSaasCheckoutClientSecret(null)
       saasAccessWordRef.current = ''
       setContinuationChoiceView(false)
       try {
@@ -1441,10 +1458,84 @@ export default function EmeraldChat({
       } catch (err) {
         console.error('saas_access_activated_callback_failed', err)
       }
-      continueIntoFanConnection()
+      showAssistantOnly(SAAS_PAYMENT_YOU_ARE_IN)
+      // Brief beat, then continue curriculum once.
+      setTimeout(() => {
+        continueIntoFanConnection()
+      }, 600)
     },
-    [continueIntoFanConnection, onSaasAccessActivated]
+    [continueIntoFanConnection, onSaasAccessActivated, showAssistantOnly]
   )
+
+  const pollSaasAccessUntilReady = useCallback(async () => {
+    const started = Date.now()
+    const maxMs = 60_000
+    while (Date.now() - started < maxMs) {
+      try {
+        const res = await fetch('/api/saas/status')
+        const data = (await res.json().catch(() => ({}))) as {
+          saas_subscription_status?: string
+        }
+        if (
+          res.ok &&
+          (data.saas_subscription_status === 'active' ||
+            data.saas_subscription_status === 'past_due' ||
+            data.saas_subscription_status === 'comped')
+        ) {
+          await finishSaasActivation(
+            data.saas_subscription_status as 'active' | 'past_due' | 'comped'
+          )
+          return
+        }
+      } catch {
+        // keep polling quietly
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    setSaveError('Still confirming — stay here a moment, then continue.')
+    setSaasPaymentPhase('intro')
+    showAssistantOnly(SAAS_PAYMENT_INTRO)
+  }, [finishSaasActivation, showAssistantOnly])
+
+  // Stripe Checkout return: never grant access from the URL; poll webhook state.
+  useEffect(() => {
+    if (isAnonymous || saasReturnHandledRef.current) return
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const saasReturn = params.get('saas_return')
+    if (!saasReturn) return
+    saasReturnHandledRef.current = true
+
+    const url = new URL(window.location.href)
+    url.searchParams.delete('saas_return')
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+
+    if (saasReturn === 'cancel') {
+      setContinuationChoiceView(false)
+      setSaasCheckoutClientSecret(null)
+      setSaasPaymentPhase('intro')
+      setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+      setPreviousStepId('CURRENT_FOCUS_PILLAR')
+      showAssistantOnly(SAAS_PAYMENT_INTRO)
+      return
+    }
+
+    if (saasReturn === '1') {
+      setContinuationChoiceView(false)
+      setOrbitChatActive(false)
+      setSaasCheckoutClientSecret(null)
+      setSaasPaymentPhase('awaiting')
+      setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+      setPreviousStepId('CURRENT_FOCUS_PILLAR')
+      showAssistantOnly(SAAS_PAYMENT_AWAITING)
+      void pollSaasAccessUntilReady()
+    }
+  }, [
+    isAnonymous,
+    pollSaasAccessUntilReady,
+    setCurrentStepIdSync,
+    showAssistantOnly,
+  ])
 
   const handleChooseContinueArtisTalks = () => {
     setContinuationChoiceView(false)
@@ -1453,10 +1544,67 @@ export default function EmeraldChat({
       return
     }
     saasAccessWordRef.current = ''
+    saasCheckoutIdempotencyKeyRef.current = ''
+    setSaasCheckoutClientSecret(null)
     setSaasPaymentPhase('intro')
     setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
     setPreviousStepId('CURRENT_FOCUS_PILLAR')
     showAssistantOnly(SAAS_PAYMENT_INTRO)
+  }
+
+  async function handleStripeCheckoutCard() {
+    if (isSubmitting || isAnonymous) return
+    setSaveError('')
+    setIsSubmitting(true)
+    if (!saasCheckoutIdempotencyKeyRef.current) {
+      saasCheckoutIdempotencyKeyRef.current =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `saas_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    }
+    try {
+      const res = await fetch('/api/saas/stripe/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: saasCheckoutIdempotencyKeyRef.current,
+        }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        clientSecret?: string
+        already_entitled?: boolean
+        saas_subscription_status?: 'active' | 'past_due' | 'comped' | 'inactive'
+        error?: string
+      }
+      if (res.status === 409 && data.already_entitled) {
+        const status =
+          data.saas_subscription_status === 'active' ||
+          data.saas_subscription_status === 'past_due' ||
+          data.saas_subscription_status === 'comped'
+            ? data.saas_subscription_status
+            : 'active'
+        await finishSaasActivation(status)
+        return
+      }
+      if (!res.ok || !data.clientSecret) {
+        setSaveError(data.error || 'Unable to continue.')
+        return
+      }
+      setSaasCheckoutClientSecret(data.clientSecret)
+      setSaasPaymentPhase('card')
+      showAssistantOnly(SAAS_PAYMENT_CARD_PROMPT)
+    } catch {
+      setSaveError('Unable to continue.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  function handleEmbeddedPaymentConfirmed() {
+    setSaveError('')
+    setSaasPaymentPhase('awaiting')
+    showAssistantOnly(SAAS_PAYMENT_AWAITING)
+    void pollSaasAccessUntilReady()
   }
 
   async function persistSaasPaymentTurn(rawInput: string) {
@@ -1503,7 +1651,7 @@ export default function EmeraldChat({
       })
       const data = (await res.json().catch(() => ({}))) as {
         error?: string
-        saas_subscription_status?: 'active' | 'comped' | 'inactive'
+        saas_subscription_status?: 'active' | 'past_due' | 'comped' | 'inactive'
       }
       if (!res.ok) {
         setSaveError(data.error || 'Unable to continue.')
@@ -1513,6 +1661,7 @@ export default function EmeraldChat({
 
       const status =
         data.saas_subscription_status === 'active' ||
+        data.saas_subscription_status === 'past_due' ||
         data.saas_subscription_status === 'comped'
           ? data.saas_subscription_status
           : 'comped'
@@ -2071,7 +2220,11 @@ export default function EmeraldChat({
           >
             {saasPaymentPhase === 'amount'
               ? SAAS_PAYMENT_AMOUNT_PROMPT
-              : SAAS_PAYMENT_INTRO}
+              : saasPaymentPhase === 'card'
+                ? SAAS_PAYMENT_CARD_PROMPT
+                : saasPaymentPhase === 'awaiting'
+                  ? SAAS_PAYMENT_AWAITING
+                  : SAAS_PAYMENT_INTRO}
           </p>
         ) : currentStep && currentStep.question && (
           <>
@@ -2404,6 +2557,38 @@ export default function EmeraldChat({
                 {saveError}
               </p>
             )}
+            {saasPaymentPhase === 'intro' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void handleStripeCheckoutCard()
+                }}
+                disabled={isSubmitting}
+                style={{
+                  marginTop: '10px',
+                  padding: '10px',
+                  backgroundColor: '#047857',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                  width: '100%',
+                  opacity: isSubmitting ? 0.7 : 1,
+                }}
+              >
+                {SAAS_CARD_CTA}
+              </button>
+            ) : null}
+            {saasPaymentPhase === 'card' && saasCheckoutClientSecret ? (
+              <SaasPaymentElement
+                clientSecret={saasCheckoutClientSecret}
+                onConfirmed={handleEmbeddedPaymentConfirmed}
+                onError={(message) => setSaveError(message)}
+              />
+            ) : null}
+            {saasPaymentPhase === 'awaiting' ||
+            saasPaymentPhase === 'card' ? null : (
             <input
               ref={inputRef}
               type={saasPaymentPhase === 'amount' ? 'number' : 'text'}
@@ -2417,8 +2602,14 @@ export default function EmeraldChat({
               disabled={isSubmitting}
               className="email-input"
               autoComplete="off"
-              autoFocus
+              autoFocus={saasPaymentPhase !== 'intro'}
+              style={
+                saasPaymentPhase === 'intro' ? { marginTop: '10px' } : undefined
+              }
             />
+            )}
+            {saasPaymentPhase === 'awaiting' ||
+            saasPaymentPhase === 'card' ? null : (
             <button
               type="submit"
               disabled={isSubmitting || !input.trim()}
@@ -2437,6 +2628,7 @@ export default function EmeraldChat({
             >
               {isSubmitting ? 'Continuing...' : 'Send'}
             </button>
+            )}
           </form>
         ) : showOrbitChat && orbitStep ? (
           <form

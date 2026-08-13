@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 
-export type SaasSubscriptionStatus = 'inactive' | 'active' | 'comped'
+export type SaasSubscriptionStatus =
+  | 'inactive'
+  | 'active'
+  | 'past_due'
+  | 'comped'
 
 export interface Profile {
   id: string
