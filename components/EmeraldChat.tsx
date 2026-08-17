@@ -202,13 +202,8 @@ export default function EmeraldChat({
       profile?.saas_subscription_status === 'active' ||
       profile?.saas_subscription_status === 'past_due' ||
       profile?.saas_subscription_status === 'comped')
-  /** Orbit route bypasses $8 while submitted / approved. */
-  const hasOrbitRouteAccess =
-    !isAnonymous &&
-    !!orbitApplication &&
-    (orbitApplication.status === 'submitted' ||
-      orbitApplication.status === 'approved')
-  const canContinuePaidCurriculum = hasSaasAccess || hasOrbitRouteAccess
+  /** Paid curriculum = ArtisTalks entitlement only. Orbit draft/submitted/approved do not unlock. */
+  const canContinuePaidCurriculum = hasSaasAccess
   const needsSaasGate =
     !isAnonymous &&
     answeredKeys.has('current_focus_pillar') &&
@@ -363,6 +358,20 @@ export default function EmeraldChat({
     [setCurrentStepIdSync, showAssistantOnly]
   )
 
+  const enterExistingSaasPaymentIntro = useCallback(() => {
+    saasAccessWordRef.current = ''
+    saasCheckoutIdempotencyKeyRef.current = ''
+    setSaasCheckoutClientSecret(null)
+    setAnonymousGateView(false)
+    setOrbitChatActive(false)
+    setOrbitStep(null)
+    setContinuationChoiceView(false)
+    setSaasPaymentPhase('intro')
+    setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
+    setPreviousStepId('CURRENT_FOCUS_PILLAR')
+    showAssistantOnly(SAAS_PAYMENT_INTRO)
+  }, [setCurrentStepIdSync, showAssistantOnly])
+
   const enterOrbitChatStep = useCallback(
     (step: OrbitChatStep, application?: OrbitApplicationRow | null) => {
       if (application) setOrbitApplication(application)
@@ -408,12 +417,8 @@ export default function EmeraldChat({
   const openPostPillarContinuation = useCallback(async () => {
     if (saasTransitionLockRef.current) return
 
-    // SaaS active/past_due/comped, or Orbit submitted/approved: continue curriculum.
-    if (
-      hasSaasAccess ||
-      orbitApplication?.status === 'submitted' ||
-      orbitApplication?.status === 'approved'
-    ) {
+    // Paid curriculum requires ArtisTalks entitlement, not Orbit application status.
+    if (hasSaasAccess) {
       advanceToFanConnection()
       return
     }
@@ -431,7 +436,9 @@ export default function EmeraldChat({
         application?.status === 'submitted' ||
         application?.status === 'approved'
       ) {
-        advanceToFanConnection()
+        const receipt = orbitStatusMessage(application.status)
+        if (receipt) setOrbitReceiptLine(receipt)
+        enterExistingSaasPaymentIntro()
         return
       }
       const draftStep = getFirstUnansweredOrbitStep(application)
@@ -446,9 +453,9 @@ export default function EmeraldChat({
     }
   }, [
     advanceToFanConnection,
+    enterExistingSaasPaymentIntro,
     enterOrbitChatStep,
     hasSaasAccess,
-    orbitApplication?.status,
     setCurrentStepIdSync,
     showContinuationChoiceMessage,
   ])
@@ -1008,7 +1015,7 @@ export default function EmeraldChat({
 
       if (currentSize > 0 || profileName) {
         const firstUnanswered = findFirstUnansweredStep('INIT', answeredKeys)
-        // Post-pillar unpaid DIY: show fork. SaaS or Orbit route: resume curriculum.
+        // Post-pillar unpaid: show fork or $8 gate. ArtisTalks entitlement: resume curriculum.
         if (
           !isAnonymous &&
           answeredKeys.has('current_focus_pillar') &&
@@ -1468,6 +1475,7 @@ export default function EmeraldChat({
         content: SAAS_PAYMENT_YOU_ARE_IN,
       }
       setFullHistory((prev) => [...prev, youAreIn])
+      setOrbitReceiptLine(null)
       setSaasReceiptLine(SAAS_PAYMENT_YOU_ARE_IN)
       continueIntoFanConnection()
     },
@@ -1550,13 +1558,7 @@ export default function EmeraldChat({
       continueIntoFanConnection()
       return
     }
-    saasAccessWordRef.current = ''
-    saasCheckoutIdempotencyKeyRef.current = ''
-    setSaasCheckoutClientSecret(null)
-    setSaasPaymentPhase('intro')
-    setCurrentStepIdSync('CURRENT_FOCUS_PILLAR')
-    setPreviousStepId('CURRENT_FOCUS_PILLAR')
-    showAssistantOnly(SAAS_PAYMENT_INTRO)
+    enterExistingSaasPaymentIntro()
   }
 
   async function handleStripeCheckoutCard() {
@@ -1734,8 +1736,11 @@ export default function EmeraldChat({
         }
         setFullHistory((prev) => [...prev, confirmMessage])
         setOrbitReceiptLine(ORBIT_SUBMITTED_CONFIRMATION)
-        // Orbit route bypasses $8 — keep talking at FAN_CONNECTION.
-        continueIntoFanConnection()
+        if (hasSaasAccess) {
+          continueIntoFanConnection()
+        } else {
+          enterExistingSaasPaymentIntro()
+        }
         setIsSubmitting(false)
         return
       }
@@ -2222,18 +2227,33 @@ export default function EmeraldChat({
             {ORBIT_CHAT_QUESTIONS[orbitStep]}
           </p>
         ) : showSaasPayment ? (
-          <p
-            className="gold-etched"
-            style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
-          >
-            {saasPaymentPhase === 'amount'
-              ? SAAS_PAYMENT_AMOUNT_PROMPT
-              : saasPaymentPhase === 'card'
-                ? SAAS_PAYMENT_CARD_PROMPT
-                : saasPaymentPhase === 'awaiting'
-                  ? SAAS_PAYMENT_AWAITING
-                  : SAAS_PAYMENT_INTRO}
-          </p>
+          <>
+            {orbitReceiptLine ? (
+              <p
+                className="gold-etched"
+                style={{
+                  marginTop: '0',
+                  marginBottom: '16px',
+                  whiteSpace: 'pre-line',
+                  fontSize: '0.95em',
+                }}
+              >
+                {orbitReceiptLine}
+              </p>
+            ) : null}
+            <p
+              className="gold-etched"
+              style={{ marginTop: '0', marginBottom: '20px', whiteSpace: 'pre-line' }}
+            >
+              {saasPaymentPhase === 'amount'
+                ? SAAS_PAYMENT_AMOUNT_PROMPT
+                : saasPaymentPhase === 'card'
+                  ? SAAS_PAYMENT_CARD_PROMPT
+                  : saasPaymentPhase === 'awaiting'
+                    ? SAAS_PAYMENT_AWAITING
+                    : SAAS_PAYMENT_INTRO}
+            </p>
+          </>
         ) : currentStep && currentStep.question && (
           <>
             {saasReceiptLine ? (
