@@ -45,7 +45,10 @@ const SAAS_PAYMENT_CARD_PROMPT =
   'Enter your card below to continue ArtisTalks — $8/month.'
 const SAAS_PAYMENT_AWAITING =
   'One moment — confirming your ArtisTalks access…'
-const SAAS_PAYMENT_YOU_ARE_IN = "You're in."
+const SAAS_PAYMENT_WELCOME_HEADLINE = 'WELCOME TO ARTISTALKS.'
+const SAAS_PAYMENT_WELCOME_SUPPORT =
+  "You're officially in. Let's build your legacy."
+const SAAS_PAYMENT_YOU_ARE_IN = `${SAAS_PAYMENT_WELCOME_HEADLINE}\n${SAAS_PAYMENT_WELCOME_SUPPORT}`
 const SAAS_CARD_CTA = 'Card'
 
 type SaasPaymentPhase = 'intro' | 'amount' | 'card' | 'awaiting'
@@ -182,6 +185,8 @@ export default function EmeraldChat({
     useState<OrbitApplicationRow | null>(null)
   /** Shown above FAN_CONNECTION immediately after Orbit submit (not a dead-end view). */
   const [orbitReceiptLine, setOrbitReceiptLine] = useState<string | null>(null)
+  /** Shown above the next curriculum question after SaaS entitlement confirms. */
+  const [saasReceiptLine, setSaasReceiptLine] = useState<string | null>(null)
   const [claimedGateView, setClaimedGateView] = useState(false)
   const [claimedArtistName, setClaimedArtistName] = useState('')
   const [claimError, setClaimError] = useState('')
@@ -1458,13 +1463,15 @@ export default function EmeraldChat({
       } catch (err) {
         console.error('saas_access_activated_callback_failed', err)
       }
-      showAssistantOnly(SAAS_PAYMENT_YOU_ARE_IN)
-      // Brief beat, then continue curriculum once.
-      setTimeout(() => {
-        continueIntoFanConnection()
-      }, 600)
+      const youAreIn = {
+        role: 'assistant' as const,
+        content: SAAS_PAYMENT_YOU_ARE_IN,
+      }
+      setFullHistory((prev) => [...prev, youAreIn])
+      setSaasReceiptLine(SAAS_PAYMENT_YOU_ARE_IN)
+      continueIntoFanConnection()
     },
-    [continueIntoFanConnection, onSaasAccessActivated, showAssistantOnly]
+    [continueIntoFanConnection, onSaasAccessActivated]
   )
 
   const pollSaasAccessUntilReady = useCallback(async () => {
@@ -1877,6 +1884,7 @@ export default function EmeraldChat({
     }
 
     if (orbitReceiptLine) setOrbitReceiptLine(null)
+    if (saasReceiptLine) setSaasReceiptLine(null)
 
     // 1. Update UI immediately (Optimistic)
     const userMessage = { role: 'user' as const, content: answer, stepId: currentStepId }
@@ -2228,6 +2236,37 @@ export default function EmeraldChat({
           </p>
         ) : currentStep && currentStep.question && (
           <>
+            {saasReceiptLine ? (
+              <div
+                style={{
+                  marginTop: '0',
+                  marginBottom: '28px',
+                }}
+              >
+                <p
+                  className="gold-etched"
+                  style={{
+                    marginTop: '0',
+                    marginBottom: '8px',
+                    fontSize: '1.2em',
+                    fontWeight: 600,
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  {SAAS_PAYMENT_WELCOME_HEADLINE}
+                </p>
+                <p
+                  className="gold-etched"
+                  style={{
+                    marginTop: '0',
+                    marginBottom: '0',
+                    fontSize: '0.95em',
+                  }}
+                >
+                  {SAAS_PAYMENT_WELCOME_SUPPORT}
+                </p>
+              </div>
+            ) : null}
             {showBrandPicker && isLogoStep ? (
               <div className="mb-4">
                 <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
