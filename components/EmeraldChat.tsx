@@ -49,7 +49,7 @@ const SAAS_PAYMENT_WELCOME_HEADLINE = 'WELCOME TO ARTISTALKS.'
 const SAAS_PAYMENT_WELCOME_SUPPORT =
   "You're officially in. Let's build your legacy."
 const SAAS_PAYMENT_YOU_ARE_IN = `${SAAS_PAYMENT_WELCOME_HEADLINE}\n${SAAS_PAYMENT_WELCOME_SUPPORT}`
-const SAAS_CARD_CTA = 'Card'
+const SAAS_CARD_CTA = 'Debit or Credit Card'
 
 type SaasPaymentPhase = 'intro' | 'amount' | 'card' | 'awaiting'
 

@@ -114,6 +114,8 @@ export default function SaasPaypalButtons(props: SaasPaypalButtonsProps) {
         vault: true,
         intent: 'subscription',
         components: 'buttons',
+        disableFunding: ['card', 'credit', 'paylater'],
+        enableFunding: ['venmo'],
       }}
     >
       <PaypalSubscribeButtons {...props} />
