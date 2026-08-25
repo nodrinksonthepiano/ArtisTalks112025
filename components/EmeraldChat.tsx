@@ -66,6 +66,7 @@ function isStatusAnswerText(value: string): boolean {
 import ClaimedArtistGate from '@/components/ClaimedArtistGate'
 import OtpEmailFlow from '@/components/OtpEmailFlow'
 import SaasPaymentElement from '@/components/SaasPaymentElement'
+import SaasPaypalButtons from '@/components/SaasPaypalButtons'
 import {
   clearReturningClaimMarker,
   setReturningClaimMarker,
@@ -2617,6 +2618,7 @@ export default function EmeraldChat({
               </p>
             )}
             {saasPaymentPhase === 'intro' ? (
+              <>
               <button
                 type="button"
                 onClick={() => {
@@ -2638,6 +2640,13 @@ export default function EmeraldChat({
               >
                 {SAAS_CARD_CTA}
               </button>
+              <SaasPaypalButtons
+                disabled={isSubmitting}
+                onConfirmed={handleEmbeddedPaymentConfirmed}
+                onAlreadyEntitled={(status) => finishSaasActivation(status)}
+                onError={(message) => setSaveError(message)}
+              />
+              </>
             ) : null}
             {saasPaymentPhase === 'card' && saasCheckoutClientSecret ? (
               <SaasPaymentElement
