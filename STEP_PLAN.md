@@ -9,8 +9,8 @@ Sprint 1 save-and-restore proven:
 - resume at the first genuinely unanswered step;
 - new answers after login persist across Data Reset and return.
 
-**Code baseline:** `6596ad0` — Fix Orbit and SaaS conversation flows
-**Last updated:** 2026-08-09
+**Code baseline:** `ef49879` — Add PayPal subscription entitlement flow
+**Last updated:** 2026-08-25
 
 **MVP authority:** ArtisTalks is one page. The curriculum is the experience.
 Coaching language inspires curriculum copy. Product behavior comes from this
@@ -37,13 +37,13 @@ EmeraldChat
    → Continue ArtisTalks — $8/month DIY SaaS
    OR
    → Apply to Orbit Launch (free) → Jai review → tuition only if approved
-→ $8 DIY: build/test Stripe first; launch UX Venmo / PayPal primary, Card secondary
+→ $8 DIY: Stripe Card + PayPal sandbox proven; Venmo unproven; launch payment order undecided
 → Active Orbit includes ArtisTalks for the Orbit term (no double $8)
 ```
 
 Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port,
 LLM Guide (last), dreamboard/tesseract, Google working studio.
-(DIY `$8` Stripe/PayPal rails are no longer parked — see Locked 2026-08-09 payments.)
+(DIY `$8` Stripe/PayPal rails are proven — see Locked 2026-08-25. Launch payment order waits on Venmo evidence.)
 
 ---
 
@@ -201,20 +201,25 @@ Applying, approval, SaaS subscription, and Orbit tuition remain separate states.
 ### Payment rails (private beta)
 
 ```text
-ENGINEERING / TEST ORDER
-  Stripe $8 sandbox
-  → checkout → webhook → DB subscription record
-  → active → FAN_CONNECTION
+PROVEN
+  Stripe $8 sandbox Card
+  → in-chat Payment Element → webhook → active → FAN_CONNECTION
   → failed-payment → past_due (access remains)
 
-THEN
-  PayPal / Venmo on the same entitlement architecture
-  → real-phone Venmo QA
-  → Venmo / PayPal = primary launch UX
-  → Card / Stripe = secondary
+  PayPal $8 sandbox
+  → subscription → verified PAYMENT.SALE.COMPLETED
+  → provider=paypal, provider_status=ACTIVE
+  → saas_subscription_status=active → existing welcome / FAN_CONNECTION
+
+NEXT
+  PayPal funding cleanup (disable card, credit, paylater;
+    keep PayPal wallet + any eligible Venmo)
+  → real-phone Venmo surface QA
+  → then Jai decides launch UX order (Venmo/PayPal vs Card)
 ```
 
-- Build/test **Stripe first**; launch artist experience **Venmo / PayPal primary**.
+- Stripe Card and PayPal `$8` sandbox are **proven**. Venmo is **unproven**.
+  Final launch payment order is **undecided** pending Venmo evidence.
 - Access only from **server-verified** provider/webhook confirmation — never a
   client-side “payment succeeded” flag or success-URL alone.
 - Do not route ArtisTalks payments through Artistocks wallet/token rails.
@@ -506,22 +511,23 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current objective:** `$8` Stripe **sandbox test implementation** (assessment
-complete). Prove checkout → webhook → DB subscription record → `active` →
-`FAN_CONNECTION` → failed payment → `past_due` (access remains). Then PayPal /
-Venmo on the same architecture; Venmo / PayPal primary at launch. Sprint 5
-Orbit tuition stays later.
+**Current objective:** PayPal `$8` button funding cleanup (later code — not this
+docs checkpoint), then Venmo surface QA on eligible US/mobile, then Jai decides
+launch payment order. Sprint 5 Orbit tuition stays later.
 
-**Shipped through Sprint 4 flow QA (`6596ad0`):**
+**Shipped through Sprint 4 flow QA (`6596ad0`) plus `$8` rails (`ef49879`):**
 - MVP core free-taste → save → restore → continue
 - Smallest `$8/month` ongoing-access layer (chat-only DIY; silent invisible
   `cancakes` path — see §2 / Locked payments)
 - Native Orbit application conversational flow + post-submit → `FAN_CONNECTION`
-- Payments assessment locked 2026-08-09 (Stripe test-first; Venmo launch-primary)
+- Stripe Card `$8` sandbox proven; PayPal `$8` sandbox `PAYMENT.SALE.COMPLETED`
+  entitlement proven (Locked 2026-08-25)
 
 **Backlog:**
 - Browser SaaS self-promotion security proof (Slice E follow-up)
-- PayPal / Venmo after Stripe `$8` plumbing is proven
+- PayPal funding cleanup: disable card, credit, paylater; keep PayPal wallet
+  and any eligible Venmo (verify current PayPal SDK funding-source identifiers
+  before code). Then Venmo surface QA. Launch order undecided until then.
 - A/B curriculum experiments (measure without rewriting canonical artist record)
 - Treasure-hunt / growth experiments that unlock the hidden CANCakes path
   (not a new subscription status)
@@ -531,6 +537,7 @@ Orbit tuition stays later.
 - Sprint 5 Orbit tuition after approval
 
 Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
+`$8` PayPal: `lib/paypal.ts`, `lib/saasPaypalDb.ts`, `app/api/webhooks/paypal/route.ts`, `components/SaasPaypalButtons.tsx`.
 
 ---
 
@@ -553,9 +560,9 @@ Warm private beta begins when:
 Real artist usage during the warm beta helps guide further curriculum work.
 
 Paid SaaS access (Slice E) shipped at `fe8d869`; conversational Orbit + flow QA
-complete at `6596ad0`; payments assessment locked 2026-08-09. Next objective:
-`$8` Stripe sandbox test implementation, then PayPal / Venmo. Orbit
-tuition/payment remains Sprint 5.
+complete at `6596ad0`; Stripe Card + PayPal `$8` sandbox proven at `ef49879`
+(Locked 2026-08-25). Next: PayPal funding cleanup, then Venmo surface QA;
+launch payment order undecided. Orbit tuition/payment remains Sprint 5.
 
 ---
 
@@ -688,18 +695,22 @@ Proven conversational scope:
 - Temporary product copy stays plain — do not invent Guide “apply yourself”
   poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
-**Next objective:** `$8` Stripe sandbox test implementation ← current
-(see Locked 2026-08-09 — Real payments decisions). Not Orbit tuition.
+**Next objective:** PayPal `$8` funding cleanup, then Venmo surface QA ← current
+(see Locked 2026-08-25). Not Orbit tuition. Launch payment order undecided.
 
-### Payments — SaaS `$8` (after Sprint 4; before Sprint 5) ← current
+### Payments — SaaS `$8` (after Sprint 4; before Sprint 5)
 
 1. Wire `past_due` into DB + access: `active | past_due | comped` continue;
    only `inactive` blocks DIY. Failed recurring payment → `past_due`; **no
-   automatic boot** — Jai manually sets `inactive` to revoke.
-2. Stripe `$8` sandbox first: Checkout → webhook → subscription row →
-   `active` → `FAN_CONNECTION`; prove failed-payment → `past_due`.
-3. Then PayPal / Venmo on the same entitlement/payment-state architecture;
-   real-phone Venmo QA; launch UX **Venmo / PayPal** primary, **Card** secondary.
+   automatic boot** — Jai manually sets `inactive` to revoke. **Proven.**
+2. Stripe `$8` sandbox Card: in-chat Payment Element → webhook → subscription
+   row → `active` → `FAN_CONNECTION`; failed-payment → `past_due`. **Proven.**
+3. PayPal `$8` sandbox on the same entitlement architecture:
+   subscription → verified `PAYMENT.SALE.COMPLETED` → `provider='paypal'` →
+   `provider_status='ACTIVE'` → `saas_subscription_status='active'`. **Proven.**
+   Venmo remains unproven. Next: funding cleanup (disable PayPal card, credit,
+   paylater; keep PayPal wallet + eligible Venmo), then real-phone Venmo
+   surface QA, then Jai decides launch UX order.
 4. `cancakes` remains permanently invisible (silent EmeraldChat recognition).
 5. Zero Orbit tuition code in this lane.
 
@@ -947,3 +958,39 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
    application, and Orbit tuition.
 9. Supersedes “Venmo before Stripe” engineering order and “assessment only /
    do not wire SDKs” as the current objective.
+
+### Locked 2026-08-25 — Stripe Card + PayPal `$8` sandbox proven
+
+Checkpoint: `ef49879 — Add PayPal subscription entitlement flow`.
+
+1. Stripe Card `$8` sandbox is **proven**: in-chat Payment Element → webhook
+   (`invoice.paid` → `active`; `invoice.payment_failed` → `past_due`) →
+   WELCOME TO ARTISTALKS → `FAN_CONNECTION`. `past_due` keeps access.
+   `comped` is protected. Cancel does not automatically revoke.
+2. PayPal `$8` sandbox E2E is **proven**:
+   sandbox PayPal subscription
+   → verified `PAYMENT.SALE.COMPLETED`
+   → `provider='paypal'`
+   → `provider_status='ACTIVE'`
+   → `saas_subscription_status='active'`
+   → existing ArtisTalks entitlement flow (welcome → `FAN_CONNECTION`).
+   Client `onApprove` is UX-only. `custom_id` is the opaque attempt UUID.
+3. PayPal grant scope remains limited: only `PAYMENT.SALE.COMPLETED` sets
+   `active`. Failed-payment / cancellation lifecycle is not implemented.
+4. Venmo is **unproven**. It is not a separate engine. Do not promise it.
+5. **Launch payment order is undecided** pending Venmo surface evidence.
+   Locked 2026-08-09 item 3 (Venmo/PayPal primary, Card secondary) remains
+   historical intent, not a re-lock. Current shipped UI is Card CTA with
+   PayPal under it.
+6. **Later** PayPal funding cleanup (not this docs checkpoint; do not
+   implement until SDK identifiers are verified): disable PayPal `card`,
+   `credit`, and `paylater`; keep the PayPal wallet path and any eligible
+   Venmo funding source if/when PayPal surfaces it. Stripe already owns
+   the Card experience inside EmeraldChat.
+7. Current objective after this checkpoint: that funding cleanup, then
+   Venmo surface QA on eligible US/mobile, then Jai decides launch order.
+   Sprint 5 Orbit tuition stays later.
+8. Supersedes Locked 2026-08-09 items 1–2 as the **current objective**
+   (those rails are now proven). Does not rewrite 2026-08-09. Items 4–8
+   of that note remain in force (webhook-only access, `past_due` keeps
+   access, invisible `cancakes`, no Orbit/SaaS/tuition collapse).
