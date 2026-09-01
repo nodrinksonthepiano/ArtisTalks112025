@@ -2,6 +2,7 @@ export type StepId =
   // Curriculum V2 spine
   | 'INIT'
   | 'LOGO_PANEL'
+  | 'SYMBOL'
   | 'COLORS_PANEL'
   | 'FONT_PANEL'
   | 'GIFT_PRESENCE'
@@ -128,10 +129,18 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   LOGO_PANEL: {
     id: 'LOGO_PANEL',
     question: "Upload your logo—or describe the logo you imagine.",
-    nextStep: 'COLORS_PANEL',
+    nextStep: 'SYMBOL',
     key: 'logo_uploaded',
     triggersPanel: 'logo',
     input: { kind: 'panel', panel: 'logo' },
+    phase: 'pre'
+  },
+  SYMBOL: {
+    id: 'SYMBOL',
+    question: "Is there a symbol, sign, or icon that represents you or your artist world?",
+    nextStep: 'COLORS_PANEL',
+    key: 'artist_symbol',
+    placeholder: "Is there a symbol, sign, or icon that represents you or your artist world?",
     phase: 'pre'
   },
   COLORS_PANEL: {
@@ -294,7 +303,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   },
   SIGNATURE_WORLD: {
     id: 'SIGNATURE_WORLD',
-    question: "What lyric, phrase, symbol, image, story, joke, or piece of stage banter could become part of your signature world?",
+    question: "What lyric, phrase, image, story, joke, or piece of stage banter could become part of your signature world?",
     nextStep: 'GRATITUDE_MOMENTUM',
     key: 'signature_world_elements',
     placeholder: "A signature piece of my world is...",
