@@ -22,5 +22,6 @@ export function resolveStripeProfileStatusUpdate(
   next: 'active' | 'past_due'
 ): 'active' | 'past_due' | 'comped' | null {
   if (current === 'comped') return null
+  if (next === 'past_due' && current !== 'active') return null
   return next
 }
