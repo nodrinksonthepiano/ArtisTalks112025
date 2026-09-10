@@ -71,7 +71,12 @@ export default function SanctuaryAccordion({
     const newestVisibleId = visibleIds[visibleIds.length - 1]
 
     if (!hydratedOpenRef.current) {
-      setOpenSectionIds(new Set([newestVisibleId]))
+      const isPhoneViewport =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(max-width: 767px)').matches
+      setOpenSectionIds(
+        isPhoneViewport ? new Set() : new Set([newestVisibleId])
+      )
       previousVisibleIdsRef.current = visibleIds
       hydratedOpenRef.current = true
       return

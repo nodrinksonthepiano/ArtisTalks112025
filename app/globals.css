@@ -57,6 +57,43 @@ body {
   align-items: center; /* Center horizontally */
 }
 
+.artis-carousel-stage {
+  margin-top: 24px;
+  margin-bottom: 16px;
+}
+
+.artis-chat-stage {
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 767px) {
+  .artis-page-shell {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-top: max(2.5rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .artis-portal-main {
+    min-height: auto;
+  }
+
+  .artis-carousel-stage {
+    margin-top: 12px;
+    margin-bottom: 0;
+  }
+
+  .action-section.artis-anonymous-chat-stage,
+  .artis-chat-stage {
+    margin-top: 8px;
+  }
+
+  .artis-chat-stage {
+    margin-bottom: 12px;
+  }
+}
+
 .action-section {
   display: flex;
   flex-direction: column;
@@ -230,4 +267,3 @@ body {
   color: rgba(255, 215, 0, 0.6);
   text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
 }
-

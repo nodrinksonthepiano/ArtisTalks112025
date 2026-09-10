@@ -792,7 +792,7 @@ export default function Home() {
 
   return (
     <div
-      className="flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
+      className="artis-page-shell flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
     >
       <DataReset isAnonymous={!user} />
       {user && sanctuarySaveError ? (
@@ -826,7 +826,7 @@ export default function Home() {
         </div>
       ) : null}
       {/* Poster: login-view only on empty anonymous first land. Portal: flex-start, no login-view. */}
-      <main className={isAnonymousPoster ? 'app-main login-view' : 'app-main'}>
+      <main className={isAnonymousPoster ? 'app-main login-view' : 'app-main artis-portal-main'}>
         {/* Band A — visual/identity/orbit (z-0). Empty in poster mode; portal after identity begins. */}
         <div className="text-center relative z-0">
           {loggedInReady ? (
@@ -865,8 +865,8 @@ export default function Home() {
               {showCarouselStage ? (
                 <div
                   ref={haloContainerRef}
-                  className="relative w-full max-w-5xl mx-auto"
-                  style={{ marginTop: '24px', marginBottom: '16px', overflow: 'visible' }}
+                  className="artis-carousel-stage relative w-full max-w-5xl mx-auto"
+                  style={{ overflow: 'visible' }}
                 >
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
@@ -954,8 +954,8 @@ export default function Home() {
               {showCarouselStage ? (
                 <div
                   ref={haloContainerRef}
-                  className="relative w-full max-w-5xl mx-auto"
-                  style={{ marginTop: '24px', marginBottom: '16px', overflow: 'visible' }}
+                  className="artis-carousel-stage relative w-full max-w-5xl mx-auto"
+                  style={{ overflow: 'visible' }}
                 >
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
@@ -1022,23 +1022,25 @@ export default function Home() {
         ) : null}
 
         {/* Band C — chat only. Poster: 100vh centered. Portal: auto height under Band A. */}
-        <div
-          className="action-section text-center relative z-10"
-          style={{
-            width: '100%',
-            maxWidth: '100%',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            minHeight: isAnonymousPoster ? '100vh' : 'auto',
-          }}
-        >
-          {!user && hydrated && (
+        {!user && hydrated ? (
+          <div
+            className={`action-section text-center relative z-10${
+              isAnonymousPoster ? '' : ' artis-anonymous-chat-stage'
+            }`}
+            style={{
+              width: '100%',
+              maxWidth: '100%',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              minHeight: isAnonymousPoster ? '100vh' : 'auto',
+            }}
+          >
             <div ref={chatRef} className="w-full flex justify-center">
               <EmeraldChat {...emeraldChatProps} />
             </div>
-          )}
-        </div>
+          </div>
+        ) : null}
 
         {/* Panels - Appear above chat, matches Zeyoda pattern (OnboardingPanel positioning) */}
         {activePanel === 'logo' && (
@@ -1150,7 +1152,7 @@ export default function Home() {
         )}
 
         {/* Chat input container - Minimal spacing, seamless from landing page (Zeyoda pattern: 16px margin) */}
-        <div className="flex justify-center" style={{ marginTop: '16px', marginBottom: '16px' }}>
+        <div className="artis-chat-stage flex justify-center">
           {loggedInReady && (
             <div ref={chatRef} className="w-full flex justify-center">
               <EmeraldChat {...emeraldChatProps} />
