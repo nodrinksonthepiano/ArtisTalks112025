@@ -1,6 +1,11 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { normalizeArtistNameSlug } from '@/lib/artistName'
+import { checkAuthRateLimit } from '@/lib/rateLimit'
 import { requireJaiAdmin } from '@/utils/supabase/requireJaiAdmin'
+import PrepareInvitation, {
+  type ArtistLookupState,
+} from './PrepareInvitation'
 
 type EventDetailPageProps = {
   params: Promise<{ eventId: string }>
@@ -19,11 +24,22 @@ type EventRow = {
   status: string
 }
 
+type ArtistLookupRow = {
+  artist_name: string | null
+  saas_subscription_status: string | null
+}
+
 const EVENT_SELECT =
   'title, description, starts_at, ends_at, timezone, location, meeting_url, status'
 
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+const EMAIL_SHAPED_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+const ARTIST_NAME_MAX_LENGTH = 200
+const INVITATION_LOOKUP_BUCKET = 'jai-invitation-artist-lookup'
+const INVITATION_LOOKUP_LIMIT = 20
+const INVITATION_LOOKUP_WINDOW_SECONDS = 10 * 60
 
 const STATUS_LABELS: Record<EventStatus, string> = {
   draft: 'Draft',
@@ -73,6 +89,97 @@ function formatEventDateTime(event: EventRow) {
   }
 }
 
+async function checkArtistForInvitation(
+  eventId: string,
+  _previousState: ArtistLookupState,
+  formData: FormData
+): Promise<ArtistLookupState> {
+  'use server'
+
+  const authorization = await requireJaiAdmin()
+  if (!authorization.ok || !UUID_V4_PATTERN.test(eventId)) {
+    return { status: 'error', message: 'Unable to prepare invitation.' }
+  }
+
+  const { data: ownedEvent, error: eventError } = await authorization.admin
+    .from('artistalks_events')
+    .select('id')
+    .eq('id', eventId)
+    .eq('created_by', authorization.userId)
+    .maybeSingle()
+
+  if (eventError) {
+    console.error('artistalks_invitation_prepare_failed')
+    return { status: 'error', message: 'Unable to prepare invitation.' }
+  }
+
+  if (!ownedEvent) {
+    return { status: 'error', message: 'Unable to prepare invitation.' }
+  }
+
+  const rawArtistName = formData.get('artistName')
+  const artistName =
+    typeof rawArtistName === 'string' ? rawArtistName.trim() : ''
+  const artistNameSlug = normalizeArtistNameSlug(artistName)
+
+  if (
+    !artistName ||
+    artistName.length > ARTIST_NAME_MAX_LENGTH ||
+    !artistNameSlug
+  ) {
+    return { status: 'error', message: 'Enter an artist name.' }
+  }
+
+  try {
+    const lookupAllowed = await checkAuthRateLimit(
+      authorization.admin,
+      INVITATION_LOOKUP_BUCKET,
+      INVITATION_LOOKUP_LIMIT,
+      INVITATION_LOOKUP_WINDOW_SECONDS
+    )
+
+    if (!lookupAllowed) {
+      return {
+        status: 'error',
+        message: 'Too many checks. Try again later.',
+      }
+    }
+  } catch {
+    console.error('artistalks_invitation_lookup_rate_limit_failed')
+    return { status: 'error', message: 'Unable to check artist.' }
+  }
+
+  const { data, error } = await authorization.admin
+    .from('profiles')
+    .select('artist_name, saas_subscription_status')
+    .eq('artist_name_slug', artistNameSlug)
+    .maybeSingle()
+
+  if (error) {
+    console.error('artistalks_invitation_artist_lookup_failed')
+    return { status: 'error', message: 'Unable to check artist.' }
+  }
+
+  if (!data) {
+    return { status: 'error', message: 'Artist not found.' }
+  }
+
+  const profile = data as ArtistLookupRow
+  const canonicalArtistName = profile.artist_name?.trim()
+
+  if (!canonicalArtistName || EMAIL_SHAPED_PATTERN.test(canonicalArtistName)) {
+    return { status: 'error', message: 'Artist not found.' }
+  }
+
+  return {
+    status: 'selected',
+    artistName: canonicalArtistName,
+    eligible:
+      profile.saas_subscription_status === 'active' ||
+      profile.saas_subscription_status === 'comped',
+  }
+}
+
 export default async function EventDetailPage({
   params,
 }: EventDetailPageProps) {
@@ -116,6 +223,9 @@ export default async function EventDetailPage({
     console.error('artistalks_event_read_failed')
     throw new Error('Unable to load event.')
   }
+
+  const eventDateTime = `${displayTime.date}, ${displayTime.time} (${event.timezone})`
+  const checkArtistForEvent = checkArtistForInvitation.bind(null, eventId)
 
   return (
     <main
@@ -189,20 +299,11 @@ export default async function EventDetailPage({
           </dl>
 
           <div className="mt-7 border-t border-[#d8ad2a]/45 pt-6">
-            <button
-              aria-describedby="prepare-invitation-help"
-              className="min-h-12 w-full cursor-not-allowed rounded-xl border border-[#8796aa] bg-[#26365f] px-5 py-3 text-base font-bold tracking-[0.08em] text-[#c5cbd7] opacity-75"
-              disabled
-              type="button"
-            >
-              PREPARE INVITATION
-            </button>
-            <p
-              className="mt-3 text-center text-sm leading-5 text-[#b9c9b8]"
-              id="prepare-invitation-help"
-            >
-              Invitation setup is not active yet.
-            </p>
+            <PrepareInvitation
+              action={checkArtistForEvent}
+              eventDateTime={eventDateTime}
+              eventTitle={event.title}
+            />
           </div>
         </section>
       </article>
