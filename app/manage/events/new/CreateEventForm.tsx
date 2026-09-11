@@ -1,6 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 type WallTime = {
   rfc3339: string
@@ -8,12 +9,16 @@ type WallTime = {
 }
 
 type SavedEvent = {
+  id: string
   title: string
   startsAt: string
   endsAt: string
   timezone: string
   status: 'draft'
 }
+
+const UUID_V4_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const INPUT_CLASS_NAME =
   'mt-2 block min-h-12 w-full rounded-xl border border-[#8796aa] bg-white px-3 py-2 text-base text-[#111827] shadow-sm outline-none transition focus-visible:border-[#d8ad2a] focus-visible:ring-3 focus-visible:ring-[#d8ad2a]/35 disabled:cursor-not-allowed disabled:opacity-70'
@@ -195,6 +200,9 @@ function readSavedEvent(payload: unknown): SavedEvent | null {
   if (
     typeof event !== 'object' ||
     event === null ||
+    !('id' in event) ||
+    typeof event.id !== 'string' ||
+    !UUID_V4_PATTERN.test(event.id) ||
     !('title' in event) ||
     typeof event.title !== 'string' ||
     !('startsAt' in event) ||
@@ -210,6 +218,7 @@ function readSavedEvent(payload: unknown): SavedEvent | null {
   }
 
   return {
+    id: event.id,
     title: event.title,
     startsAt: event.startsAt,
     endsAt: event.endsAt,
@@ -236,6 +245,7 @@ function formatSavedTime(event: SavedEvent): string {
 }
 
 export default function CreateEventForm() {
+  const router = useRouter()
   const idempotencyKey = useRef<string | null>(null)
   const [timezone, setTimezone] = useState('')
   const [timezoneOptions, setTimezoneOptions] = useState<string[]>([])
@@ -347,6 +357,7 @@ export default function CreateEventForm() {
       }
 
       setSavedEvent(nextSavedEvent)
+      router.replace(`/manage/events/${nextSavedEvent.id}`)
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
