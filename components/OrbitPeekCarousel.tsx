@@ -478,7 +478,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     // Guarantee some side margin so oval doesn't appear clipped on small screens
     const sidePad = Math.round(vw * 0.04);
     const safeW = Math.min(clampedW, vw - sidePad * 2);
-    const safeH = vw <= 767 ? Math.min(clampedH, 180) : clampedH;
+    const safeH = vw <= 767 ? Math.min(clampedH, 130) : clampedH;
     return { w: safeW, h: safeH };
   }, [naturalAspect]);
 
