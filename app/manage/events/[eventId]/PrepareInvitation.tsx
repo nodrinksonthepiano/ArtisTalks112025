@@ -7,21 +7,35 @@ export type ArtistLookupState =
   | { status: 'error'; message: string }
   | { status: 'selected'; artistName: string; eligible: boolean }
 
-type ArtistLookupAction = (
-  previousState: ArtistLookupState,
+export type InvitationPreparationState =
+  | { status: 'idle' }
+  | { status: 'error'; message: string }
+  | {
+      status: 'prepared'
+      artistName: string
+      eventTitle: string
+      rsvpStatus: 'Pending'
+      deliveryStatus: 'Not sent'
+    }
+
+type ServerFormAction<State> = (
+  previousState: State,
   formData: FormData
-) => Promise<ArtistLookupState>
+) => Promise<State>
 
 type PrepareInvitationProps = {
-  action: ArtistLookupAction
+  checkAction: ServerFormAction<ArtistLookupState>
+  createAction: ServerFormAction<InvitationPreparationState>
   eventTitle: string
   eventDateTime: string
 }
 
-const INITIAL_STATE: ArtistLookupState = { status: 'idle' }
+const INITIAL_LOOKUP_STATE: ArtistLookupState = { status: 'idle' }
+const INITIAL_PREPARATION_STATE: InvitationPreparationState = { status: 'idle' }
 
 export default function PrepareInvitation({
-  action,
+  checkAction,
+  createAction,
   eventTitle,
   eventDateTime,
 }: PrepareInvitationProps) {
@@ -29,11 +43,20 @@ export default function PrepareInvitation({
   const [artistName, setArtistName] = useState('')
   const [checkedArtistName, setCheckedArtistName] = useState('')
   const [showPreview, setShowPreview] = useState(false)
-  const [state, formAction, isPending] = useActionState(action, INITIAL_STATE)
+  const [lookupState, lookupFormAction, isLookupPending] = useActionState(
+    checkAction,
+    INITIAL_LOOKUP_STATE
+  )
+  const [preparationState, preparationFormAction, isPreparationPending] =
+    useActionState(createAction, INITIAL_PREPARATION_STATE)
 
   const resultIsCurrent =
-    state.status === 'selected' &&
+    lookupState.status === 'selected' &&
     checkedArtistName.trim() === artistName.trim()
+  const preparedResultIsCurrent =
+    resultIsCurrent &&
+    preparationState.status === 'prepared' &&
+    preparationState.artistName === lookupState.artistName
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     const formData = new FormData(event.currentTarget)
@@ -69,7 +92,7 @@ export default function PrepareInvitation({
         Check one artist by their exact artist name.
       </p>
 
-      <form action={formAction} className="mt-5" onSubmit={handleSubmit}>
+      <form action={lookupFormAction} className="mt-5" onSubmit={handleSubmit}>
         <label
           className="block text-sm font-semibold text-[#d8ad2a]"
           htmlFor="invitation-artist-name"
@@ -79,7 +102,7 @@ export default function PrepareInvitation({
         <input
           autoComplete="off"
           className="mt-2 block min-h-12 w-full rounded-xl border border-[#8796aa] bg-white px-3 py-2 text-base text-[#111827] shadow-sm outline-none transition focus-visible:border-[#d8ad2a] focus-visible:ring-3 focus-visible:ring-[#d8ad2a]/35 disabled:cursor-not-allowed disabled:opacity-70"
-          disabled={isPending}
+          disabled={isLookupPending || isPreparationPending}
           id="invitation-artist-name"
           maxLength={200}
           name="artistName"
@@ -93,20 +116,20 @@ export default function PrepareInvitation({
         />
         <button
           className="mt-4 min-h-12 w-full rounded-xl border border-[#d8ad2a] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#25b873] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-wait disabled:opacity-70"
-          disabled={isPending}
+          disabled={isLookupPending || isPreparationPending}
           type="submit"
         >
-          {isPending ? 'CHECKING…' : 'CHECK ELIGIBILITY'}
+          {isLookupPending ? 'CHECKING…' : 'CHECK ELIGIBILITY'}
         </button>
       </form>
 
       <div aria-live="polite" className="mt-5">
-        {state.status === 'error' ? (
+        {lookupState.status === 'error' ? (
           <p
             className="rounded-xl border border-[#d8ad2a] bg-[#051340] px-4 py-3 text-sm leading-6 text-[#f5f1cf]"
             role="status"
           >
-            {state.message}
+            {lookupState.message}
           </p>
         ) : null}
 
@@ -116,13 +139,13 @@ export default function PrepareInvitation({
               <div>
                 <dt className="font-semibold text-[#d8ad2a]">Artist</dt>
                 <dd className="mt-1 break-words text-[#f5f1cf]">
-                  {state.artistName}
+                  {lookupState.artistName}
                 </dd>
               </div>
               <div>
                 <dt className="font-semibold text-[#d8ad2a]">Eligible</dt>
                 <dd className="mt-1 text-[#f5f1cf]">
-                  {state.eligible ? 'Yes' : 'No'}
+                  {lookupState.eligible ? 'Yes' : 'No'}
                 </dd>
               </div>
               <div>
@@ -137,7 +160,7 @@ export default function PrepareInvitation({
               </div>
             </dl>
 
-            {state.eligible ? (
+            {lookupState.eligible ? (
               <button
                 className="mt-5 min-h-12 w-full rounded-xl border border-[#d8ad2a] bg-[#d8ad2a] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#efc748] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf]"
                 onClick={() => setShowPreview((visible) => !visible)}
@@ -150,7 +173,7 @@ export default function PrepareInvitation({
         ) : null}
       </div>
 
-      {resultIsCurrent && state.eligible && showPreview ? (
+      {resultIsCurrent && lookupState.eligible && showPreview ? (
         <section
           aria-labelledby="invitation-preview-heading"
           className="mt-5 rounded-xl border border-[#7ee2a8] bg-[#0b2458] p-4"
@@ -165,7 +188,7 @@ export default function PrepareInvitation({
             <div>
               <dt className="font-semibold text-[#d8ad2a]">For</dt>
               <dd className="mt-1 break-words text-[#f5f1cf]">
-                {state.artistName}
+                {lookupState.artistName}
               </dd>
             </div>
             <div>
@@ -181,6 +204,68 @@ export default function PrepareInvitation({
               <dd className="mt-1 font-semibold text-[#7ee2a8]">NOT SENT</dd>
             </div>
           </dl>
+
+          {preparedResultIsCurrent && preparationState.status === 'prepared' ? (
+            <div
+              className="mt-5 rounded-xl border border-[#7ee2a8] bg-[#051340] p-4"
+              role="status"
+            >
+              <h4 className="text-lg font-semibold text-[#7ee2a8]">
+                Invitation prepared
+              </h4>
+              <dl className="mt-4 space-y-3 text-base leading-6">
+                <div>
+                  <dt className="font-semibold text-[#d8ad2a]">Artist</dt>
+                  <dd className="mt-1 break-words text-[#f5f1cf]">
+                    {preparationState.artistName}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-[#d8ad2a]">Event</dt>
+                  <dd className="mt-1 break-words text-[#f5f1cf]">
+                    {preparationState.eventTitle}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-[#d8ad2a]">RSVP</dt>
+                  <dd className="mt-1 text-[#f5f1cf]">
+                    {preparationState.rsvpStatus}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-[#d8ad2a]">Delivery</dt>
+                  <dd className="mt-1 text-[#f5f1cf]">
+                    {preparationState.deliveryStatus}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          ) : (
+            <form action={preparationFormAction} className="mt-5">
+              <input
+                name="artistName"
+                type="hidden"
+                value={lookupState.artistName}
+              />
+              <button
+                className="min-h-12 w-full rounded-xl border border-[#7ee2a8] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#25b873] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-wait disabled:opacity-70"
+                disabled={isPreparationPending}
+                type="submit"
+              >
+                {isPreparationPending
+                  ? 'CREATING INVITATION…'
+                  : 'CREATE INVITATION'}
+              </button>
+              {preparationState.status === 'error' ? (
+                <p
+                  className="mt-3 rounded-xl border border-[#d8ad2a] bg-[#051340] px-4 py-3 text-sm leading-6 text-[#f5f1cf]"
+                  role="status"
+                >
+                  {preparationState.message}
+                </p>
+              ) : null}
+            </form>
+          )}
         </section>
       ) : null}
     </section>

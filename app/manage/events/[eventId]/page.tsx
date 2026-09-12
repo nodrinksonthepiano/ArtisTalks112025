@@ -1,10 +1,13 @@
+import { randomUUID } from 'crypto'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { normalizeArtistNameSlug } from '@/lib/artistName'
+import { deriveArtistTalksRsvpTokenHash } from '@/lib/artistalksRsvpToken'
 import { checkAuthRateLimit } from '@/lib/rateLimit'
 import { requireJaiAdmin } from '@/utils/supabase/requireJaiAdmin'
 import PrepareInvitation, {
   type ArtistLookupState,
+  type InvitationPreparationState,
 } from './PrepareInvitation'
 
 type EventDetailPageProps = {
@@ -25,8 +28,21 @@ type EventRow = {
 }
 
 type ArtistLookupRow = {
+  id?: string
   artist_name: string | null
   saas_subscription_status: string | null
+}
+
+type InvitationEventRow = {
+  id: string
+  title: string
+  ends_at: string
+  status: string
+}
+
+type ExistingInvitationRow = {
+  rsvp_status: string
+  delivery_status: string
 }
 
 const EVENT_SELECT =
@@ -40,6 +56,7 @@ const ARTIST_NAME_MAX_LENGTH = 200
 const INVITATION_LOOKUP_BUCKET = 'jai-invitation-artist-lookup'
 const INVITATION_LOOKUP_LIMIT = 20
 const INVITATION_LOOKUP_WINDOW_SECONDS = 10 * 60
+const RSVP_EXPIRY_BUFFER_MS = 7 * 24 * 60 * 60 * 1000
 
 const STATUS_LABELS: Record<EventStatus, string> = {
   draft: 'Draft',
@@ -180,6 +197,205 @@ async function checkArtistForInvitation(
   }
 }
 
+function preparedInvitationState(
+  artistName: string,
+  eventTitle: string
+): InvitationPreparationState {
+  return {
+    status: 'prepared',
+    artistName,
+    eventTitle,
+    rsvpStatus: 'Pending',
+    deliveryStatus: 'Not sent',
+  }
+}
+
+function invitationExpiry(endsAt: string): Date | null {
+  const eventEndsAt = new Date(endsAt).getTime()
+  if (Number.isNaN(eventEndsAt)) return null
+
+  const expiry = new Date(
+    Math.max(
+      eventEndsAt + RSVP_EXPIRY_BUFFER_MS,
+      Date.now() + RSVP_EXPIRY_BUFFER_MS
+    )
+  )
+  expiry.setMilliseconds(0)
+  return expiry
+}
+
+async function createInvitation(
+  eventId: string,
+  _previousState: InvitationPreparationState,
+  formData: FormData
+): Promise<InvitationPreparationState> {
+  'use server'
+
+  const authorization = await requireJaiAdmin()
+  if (!authorization.ok || !UUID_V4_PATTERN.test(eventId)) {
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const { data: eventData, error: eventError } = await authorization.admin
+    .from('artistalks_events')
+    .select('id, title, ends_at, status')
+    .eq('id', eventId)
+    .eq('created_by', authorization.userId)
+    .maybeSingle()
+
+  if (eventError) {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  if (!eventData) {
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const event = eventData as InvitationEventRow
+  if (event.status !== 'draft' && event.status !== 'scheduled') {
+    return {
+      status: 'error',
+      message: 'Invitations cannot be prepared for this event.',
+    }
+  }
+
+  const rawArtistName = formData.get('artistName')
+  const artistName =
+    typeof rawArtistName === 'string' ? rawArtistName.trim() : ''
+  const artistNameSlug = normalizeArtistNameSlug(artistName)
+
+  if (
+    !artistName ||
+    artistName.length > ARTIST_NAME_MAX_LENGTH ||
+    !artistNameSlug
+  ) {
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  try {
+    const lookupAllowed = await checkAuthRateLimit(
+      authorization.admin,
+      INVITATION_LOOKUP_BUCKET,
+      INVITATION_LOOKUP_LIMIT,
+      INVITATION_LOOKUP_WINDOW_SECONDS
+    )
+
+    if (!lookupAllowed) {
+      return {
+        status: 'error',
+        message: 'Too many checks. Try again later.',
+      }
+    }
+  } catch {
+    console.error('artistalks_invitation_create_rate_limit_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const { data: profileData, error: profileError } = await authorization.admin
+    .from('profiles')
+    .select('id, artist_name, saas_subscription_status')
+    .eq('artist_name_slug', artistNameSlug)
+    .maybeSingle()
+
+  if (profileError) {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const profile = profileData as ArtistLookupRow | null
+  const canonicalArtistName = profile?.artist_name?.trim()
+  const eligible =
+    profile?.saas_subscription_status === 'active' ||
+    profile?.saas_subscription_status === 'comped'
+
+  if (
+    !profile?.id ||
+    !canonicalArtistName ||
+    EMAIL_SHAPED_PATTERN.test(canonicalArtistName) ||
+    !eligible
+  ) {
+    return { status: 'error', message: 'Artist is not eligible.' }
+  }
+
+  const { data: existingData, error: existingError } =
+    await authorization.admin
+      .from('artistalks_event_invitations')
+      .select('rsvp_status, delivery_status')
+      .eq('event_id', event.id)
+      .eq('invitee_user_id', profile.id)
+      .maybeSingle()
+
+  if (existingError) {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  if (existingData) {
+    const existing = existingData as ExistingInvitationRow
+    return existing.rsvp_status === 'pending' &&
+      existing.delivery_status === 'unsent'
+      ? preparedInvitationState(canonicalArtistName, event.title)
+      : { status: 'error', message: 'An invitation already exists.' }
+  }
+
+  const expiresAt = invitationExpiry(event.ends_at)
+  if (!expiresAt) {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const invitationId = randomUUID()
+  let rsvpTokenHash: string
+
+  try {
+    rsvpTokenHash = deriveArtistTalksRsvpTokenHash(invitationId, expiresAt)
+  } catch {
+    console.error('artistalks_invitation_token_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const { error: insertError } = await authorization.admin
+    .from('artistalks_event_invitations')
+    .insert({
+      id: invitationId,
+      event_id: event.id,
+      invitee_user_id: profile.id,
+      rsvp_status: 'pending',
+      rsvp_token_hash: rsvpTokenHash,
+      rsvp_token_expires_at: expiresAt.toISOString(),
+      delivery_status: 'unsent',
+    })
+
+  if (!insertError) {
+    return preparedInvitationState(canonicalArtistName, event.title)
+  }
+
+  if ((insertError as { code?: string } | null)?.code !== '23505') {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const { data: duplicateData, error: duplicateError } =
+    await authorization.admin
+      .from('artistalks_event_invitations')
+      .select('rsvp_status, delivery_status')
+      .eq('event_id', event.id)
+      .eq('invitee_user_id', profile.id)
+      .maybeSingle()
+
+  if (duplicateError || !duplicateData) {
+    console.error('artistalks_invitation_create_failed')
+    return { status: 'error', message: 'Unable to create invitation.' }
+  }
+
+  const duplicate = duplicateData as ExistingInvitationRow
+  return duplicate.rsvp_status === 'pending' &&
+    duplicate.delivery_status === 'unsent'
+    ? preparedInvitationState(canonicalArtistName, event.title)
+    : { status: 'error', message: 'An invitation already exists.' }
+}
+
 export default async function EventDetailPage({
   params,
 }: EventDetailPageProps) {
@@ -226,6 +442,7 @@ export default async function EventDetailPage({
 
   const eventDateTime = `${displayTime.date}, ${displayTime.time} (${event.timezone})`
   const checkArtistForEvent = checkArtistForInvitation.bind(null, eventId)
+  const createInvitationForEvent = createInvitation.bind(null, eventId)
 
   return (
     <main
@@ -300,7 +517,8 @@ export default async function EventDetailPage({
 
           <div className="mt-7 border-t border-[#d8ad2a]/45 pt-6">
             <PrepareInvitation
-              action={checkArtistForEvent}
+              checkAction={checkArtistForEvent}
+              createAction={createInvitationForEvent}
               eventDateTime={eventDateTime}
               eventTitle={event.title}
             />
