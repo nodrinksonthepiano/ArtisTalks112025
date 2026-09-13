@@ -117,6 +117,24 @@ type InvitationDeliveryDependencies = {
   send: InvitationSender
 }
 type DeliveryLabel = 'Not sent' | 'Sent' | 'Needs verification' | 'Mixed'
+type InvitationSendPreflightFailure =
+  | 'authorization'
+  | 'request'
+  | 'config'
+  | 'recipient_email'
+  | 'calendar'
+  | 'rsvp'
+  | 'digest'
+  | 'database'
+
+class InvitationSendPreflightError extends Error {
+  readonly failureClass: InvitationSendPreflightFailure
+
+  constructor(failureClass: InvitationSendPreflightFailure) {
+    super('Invitation send preflight failed.')
+    this.failureClass = failureClass
+  }
+}
 
 const EVENT_SELECT =
   'title, description, starts_at, ends_at, timezone, location, meeting_url, status'
@@ -150,6 +168,44 @@ function isEventStatus(status: string): status is EventStatus {
 
 function invitationsMayBePrepared(status: string): boolean {
   return status === 'draft' || status === 'scheduled'
+}
+
+function logInvitationSendPreflightFailure(
+  failureClass: InvitationSendPreflightFailure
+): void {
+  switch (failureClass) {
+    case 'authorization':
+      console.error('artistalks_invitation_send_preflight_failed:authorization')
+      return
+    case 'request':
+      console.error('artistalks_invitation_send_preflight_failed:request')
+      return
+    case 'config':
+      console.error('artistalks_invitation_send_preflight_failed:config')
+      return
+    case 'recipient_email':
+      console.error('artistalks_invitation_send_preflight_failed:recipient_email')
+      return
+    case 'calendar':
+      console.error('artistalks_invitation_send_preflight_failed:calendar')
+      return
+    case 'rsvp':
+      console.error('artistalks_invitation_send_preflight_failed:rsvp')
+      return
+    case 'digest':
+      console.error('artistalks_invitation_send_preflight_failed:digest')
+      return
+    case 'database':
+      console.error('artistalks_invitation_send_preflight_failed:database')
+  }
+}
+
+function logInvitationSendPreflightError(error: unknown): void {
+  logInvitationSendPreflightFailure(
+    error instanceof InvitationSendPreflightError
+      ? error.failureClass
+      : 'database'
+  )
 }
 
 function formatEventDateTime(event: EventRow) {
@@ -517,7 +573,7 @@ async function loadPreparedInvitations(
       )
       .eq('event_id', eventId)
       .in('invitee_user_id', recipientIds.slice(from, from + INVITATION_QUERY_CHUNK_SIZE))
-    if (error) throw new Error('Unable to prepare invitations.')
+    if (error) throw new InvitationSendPreflightError('database')
 
     for (const row of (data ?? []) as PreparedInvitationRow[]) {
       invitations.set(row.invitee_user_id, row)
@@ -536,7 +592,7 @@ async function loadRecipientEmails(
     const lookups = await Promise.all(
       ids.map(async (recipientId) => {
         const { data, error } = await admin.auth.admin.getUserById(recipientId)
-        if (error) throw new Error('Unable to prepare invitations.')
+        if (error) throw new InvitationSendPreflightError('recipient_email')
         const email = data.user?.email?.trim().toLocaleLowerCase('en-US') ?? ''
         return {
           recipientId,
@@ -561,7 +617,7 @@ async function buildInvitationReview(
     loadRecipientEmails(admin, recipientIds),
   ])
   if (invitations.size !== recipientIds.length) {
-    throw new Error('Unable to review invitations.')
+    throw new InvitationSendPreflightError('database')
   }
 
   const safeRecipients: InvitationReview['safeRecipients'] = []
@@ -574,7 +630,7 @@ async function buildInvitationReview(
   for (const recipient of recipients) {
     const invitation = invitations.get(recipient.userId)
     if (!invitation || !UUID_V4_PATTERN.test(invitation.id)) {
-      throw new Error('Unable to review invitations.')
+      throw new InvitationSendPreflightError('database')
     }
 
     const recipientEmail = recipientEmails.get(recipient.userId) ?? null
@@ -1111,8 +1167,17 @@ async function sendInvitationRecipients(
 ): Promise<InvitationSendState> {
   'use server'
 
-  const authorization = await requireJaiAdmin()
+  let authorization: Awaited<ReturnType<typeof requireJaiAdmin>>
+  try {
+    authorization = await requireJaiAdmin()
+  } catch {
+    logInvitationSendPreflightFailure('authorization')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
   if (!authorization.ok || !UUID_V4_PATTERN.test(eventId)) {
+    logInvitationSendPreflightFailure(
+      authorization.ok ? 'request' : 'authorization'
+    )
     return { status: 'error', message: 'Unable to send invitations.' }
   }
 
@@ -1130,6 +1195,7 @@ async function sendInvitationRecipients(
   const sendReviewDigest =
     typeof sendReviewDigestValue === 'string' ? sendReviewDigestValue : ''
   if (!mode) {
+    logInvitationSendPreflightFailure('request')
     return { status: 'error', message: 'Unable to send invitations.' }
   }
 
@@ -1139,7 +1205,7 @@ async function sendInvitationRecipients(
     event = await loadOwnedEvent(authorization.admin, eventId, authorization.userId)
     artists = await loadEligibleArtists(authorization.admin)
   } catch {
-    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    logInvitationSendPreflightFailure('database')
     return { status: 'error', message: 'Unable to send invitations.' }
   }
   if (!event || !invitationsMayBePrepared(event.status)) {
@@ -1164,10 +1230,11 @@ async function sendInvitationRecipients(
       artists
     )
   } catch {
-    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    logInvitationSendPreflightFailure('database')
     return { status: 'error', message: 'Unable to send invitations.' }
   }
   if (!resolution.ok) {
+    logInvitationSendPreflightFailure('digest')
     return {
       status: 'error',
       message: 'Recipient list changed. Review the updated preview before continuing.',
@@ -1180,6 +1247,7 @@ async function sendInvitationRecipients(
     recipientIds.length === 0 ||
     !recipientSetDigestMatches(recipientSetDigest, eventId, recipientIds)
   ) {
+    logInvitationSendPreflightFailure('digest')
     return {
       status: 'error',
       message: 'Recipient list changed. Review the updated preview before continuing.',
@@ -1191,15 +1259,33 @@ async function sendInvitationRecipients(
   let emailContext: Parameters<typeof deliverInvitationPlans>[2]
   try {
     review = await buildInvitationReview(authorization.admin, eventId, recipients)
-    if (!sendReviewDigestMatches(sendReviewDigest, eventId, review.reviewRecipients)) {
-      return {
-        status: 'error',
-        message: 'Invitation status changed. Review the send list before continuing.',
-      }
-    }
+  } catch (error) {
+    logInvitationSendPreflightError(error)
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
 
+  const recipientEmailMissing = review.reviewRecipients.some(
+    (recipient) => recipient.recipientEmail === null
+  )
+  if (recipientEmailMissing) {
+    logInvitationSendPreflightFailure('recipient_email')
+    return {
+      status: 'error',
+      message: 'Invitation status changed. Review the send list before continuing.',
+    }
+  }
+  if (!sendReviewDigestMatches(sendReviewDigest, eventId, review.reviewRecipients)) {
+    logInvitationSendPreflightFailure('digest')
+    return {
+      status: 'error',
+      message: 'Invitation status changed. Review the send list before continuing.',
+    }
+  }
+
+  let googleCalendarUrl: string | null
+  try {
     const time = formatEventDateTime(event)
-    const googleCalendarUrl = buildArtistTalksGoogleCalendarUrl({
+    googleCalendarUrl = buildArtistTalksGoogleCalendarUrl({
       title: event.title,
       description: event.description,
       startsAt: event.starts_at,
@@ -1209,9 +1295,6 @@ async function sendInvitationRecipients(
       meetingUrl,
     })
     if (!googleCalendarUrl) throw new Error('Invalid calendar configuration.')
-    assertArtistTalksInvitationEmailConfigured()
-
-    plans = buildDeliveryPlans(mode, recipients, review)
     emailContext = {
       eventTitle: event.title,
       eventDescription: event.description,
@@ -1223,13 +1306,28 @@ async function sendInvitationRecipients(
       googleCalendarUrl,
     }
   } catch {
-    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    logInvitationSendPreflightFailure('calendar')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+
+  try {
+    assertArtistTalksInvitationEmailConfigured()
+  } catch {
+    logInvitationSendPreflightFailure('config')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+
+  try {
+    plans = buildDeliveryPlans(mode, recipients, review)
+  } catch {
+    logInvitationSendPreflightFailure('rsvp')
     return { status: 'error', message: 'Unable to send invitations.' }
   }
 
   const expectedProviderCallCount =
     mode === 'ready' ? review.readyToSendCount : review.retryableFailedCount
   if (plans.length !== expectedProviderCallCount || plans.length === 0) {
+    logInvitationSendPreflightFailure('digest')
     return {
       status: 'error',
       message: 'Invitation status changed. Review the send list before continuing.',
