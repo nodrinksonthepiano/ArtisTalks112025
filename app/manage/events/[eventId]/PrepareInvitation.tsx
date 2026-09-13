@@ -39,12 +39,27 @@ export type InvitationPreparationState =
       recipientCount: number
       readyCount: number
       alreadySentCount: number
+      retryableFailedCount: number
       needsVerificationCount: number
       eventTitle: string
       eventDateTime: string
       meetingUrl: string | null
       recipientSetDigest: string
       sendReviewDigest: string
+    }
+export type InvitationSendState =
+  | { status: 'idle' }
+  | { status: 'error'; message: string }
+  | {
+      status: 'complete' | 'partial'
+      sentCount: number
+      failedCount: number
+      needsVerificationCount: number
+      retryableFailedCount: number
+      recipients: Array<{
+        name: string
+        state: 'Sent' | 'Failed' | 'Needs verification'
+      }>
     }
 
 type ServerFormAction<State> = (
@@ -58,6 +73,7 @@ type PrepareInvitationProps = {
   createGroupAction: ServerFormAction<CreateGroupState>
   prepareAction: ServerFormAction<InvitationPreparationState>
   previewAction: ServerFormAction<RecipientPreviewState>
+  sendAction: ServerFormAction<InvitationSendState>
 }
 type ArtistComboboxProps = {
   label: string
@@ -71,6 +87,7 @@ type ArtistComboboxProps = {
 const INITIAL_GROUP_STATE: CreateGroupState = { status: 'idle' }
 const INITIAL_PREVIEW_STATE: RecipientPreviewState = { status: 'idle' }
 const INITIAL_PREPARATION_STATE: InvitationPreparationState = { status: 'idle' }
+const INITIAL_SEND_STATE: InvitationSendState = { status: 'idle' }
 const RECIPIENTS_CHANGED_MESSAGE =
   'Recipient list changed. Review the updated preview before continuing.'
 
@@ -251,6 +268,7 @@ export default function PrepareInvitation({
   createGroupAction,
   prepareAction,
   previewAction,
+  sendAction,
 }: PrepareInvitationProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [mode, setMode] = useState<'artist' | 'group'>('artist')
@@ -264,13 +282,17 @@ export default function PrepareInvitation({
     useState<RecipientPreviewState>(INITIAL_PREVIEW_STATE)
   const [preparationState, setPreparationState] =
     useState<InvitationPreparationState>(INITIAL_PREPARATION_STATE)
+  const [sendState, setSendState] =
+    useState<InvitationSendState>(INITIAL_SEND_STATE)
   const [isGroupPending, startGroupTransition] = useTransition()
   const [isPreviewPending, startPreviewTransition] = useTransition()
   const [isPreparationPending, startPreparationTransition] = useTransition()
+  const [isSendPending, startSendTransition] = useTransition()
 
   function clearPreview() {
     setPreviewState(INITIAL_PREVIEW_STATE)
     setPreparationState(INITIAL_PREPARATION_STATE)
+    setSendState(INITIAL_SEND_STATE)
   }
 
   function selectedRecipientFormData() {
@@ -317,6 +339,7 @@ export default function PrepareInvitation({
     event.preventDefault()
     const formData = selectedRecipientFormData()
     setPreparationState(INITIAL_PREPARATION_STATE)
+    setSendState(INITIAL_SEND_STATE)
 
     startPreviewTransition(async () => {
       try {
@@ -333,6 +356,7 @@ export default function PrepareInvitation({
 
     const formData = selectedRecipientFormData()
     formData.set('recipientSetDigest', previewState.recipientSetDigest)
+    setSendState(INITIAL_SEND_STATE)
     startPreparationTransition(async () => {
       try {
         const next = await prepareAction(preparationState, formData)
@@ -345,6 +369,40 @@ export default function PrepareInvitation({
           status: 'error',
           message: 'Unable to prepare invitations.',
         })
+      }
+    })
+  }
+
+  function submitSend(mode: 'ready' | 'retry_failed') {
+    if (preparationState.status !== 'prepared') return
+    const prepared = preparationState
+
+    const formData = selectedRecipientFormData()
+    formData.set('mode', mode)
+    formData.set('recipientSetDigest', prepared.recipientSetDigest)
+    formData.set('sendReviewDigest', prepared.sendReviewDigest)
+
+    startSendTransition(async () => {
+      try {
+        const next = await sendAction(sendState, formData)
+        setSendState(next)
+        if (next.status !== 'complete' && next.status !== 'partial') return
+
+        const refreshData = selectedRecipientFormData()
+        refreshData.set('recipientSetDigest', prepared.recipientSetDigest)
+        setPreparationState(INITIAL_PREPARATION_STATE)
+        try {
+          setPreparationState(
+            await prepareAction(INITIAL_PREPARATION_STATE, refreshData)
+          )
+        } catch {
+          setPreparationState({
+            status: 'error',
+            message: 'Review the send list again before continuing.',
+          })
+        }
+      } catch {
+        setSendState({ status: 'error', message: 'Unable to send invitations.' })
       }
     })
   }
@@ -372,6 +430,7 @@ export default function PrepareInvitation({
   const previewDisabled =
     isPreviewPending ||
     isPreparationPending ||
+    isSendPending ||
     isGroupPending ||
     (mode === 'artist' && selectedArtistHandles.length !== 1) ||
     (mode === 'group' && groupChoice === 'create')
@@ -395,6 +454,7 @@ export default function PrepareInvitation({
                 ? 'border-[#d8ad2a] bg-[#d8ad2a] text-[#051340]'
                 : 'border-[#8796aa] bg-[#051340] text-[#f5f1cf]')
             }
+            disabled={isSendPending}
             key={choice}
             onClick={() => {
               setMode(choice)
@@ -410,7 +470,12 @@ export default function PrepareInvitation({
       {mode === 'artist' ? (
         <div className="mt-5">
           <ArtistCombobox
-            disabled={isGroupPending || isPreviewPending || isPreparationPending}
+            disabled={
+              isGroupPending ||
+              isPreviewPending ||
+              isPreparationPending ||
+              isSendPending
+            }
             label="Eligible artist"
             onChange={(handles) => {
               setSelectedArtistHandles(handles.slice(0, 1))
@@ -427,7 +492,12 @@ export default function PrepareInvitation({
           </label>
           <select
             className="mt-2 block min-h-12 w-full rounded-xl border border-[#8796aa] bg-white px-3 py-2 text-base text-[#111827] shadow-sm outline-none focus-visible:border-[#d8ad2a] focus-visible:ring-3 focus-visible:ring-[#d8ad2a]/35"
-            disabled={isGroupPending || isPreviewPending || isPreparationPending}
+            disabled={
+              isGroupPending ||
+              isPreviewPending ||
+              isPreparationPending ||
+              isSendPending
+            }
             id="invitation-group"
             onChange={(event) => {
               setGroupChoice(event.target.value)
@@ -452,7 +522,7 @@ export default function PrepareInvitation({
               <input
                 autoComplete="off"
                 className="mt-2 block min-h-12 w-full rounded-xl border border-[#8796aa] bg-white px-3 py-2 text-base text-[#111827] shadow-sm outline-none focus-visible:border-[#d8ad2a] focus-visible:ring-3 focus-visible:ring-[#d8ad2a]/35"
-                disabled={isGroupPending}
+                disabled={isGroupPending || isSendPending}
                 id="new-invitation-group-name"
                 maxLength={100}
                 onChange={(event) => setGroupName(event.target.value)}
@@ -462,7 +532,7 @@ export default function PrepareInvitation({
               />
               <div className="mt-5">
                 <ArtistCombobox
-                  disabled={isGroupPending}
+                  disabled={isGroupPending || isSendPending}
                   label="Eligible artists"
                   multiple
                   onChange={setGroupMemberHandles}
@@ -472,7 +542,12 @@ export default function PrepareInvitation({
               </div>
               <button
                 className="mt-5 min-h-12 w-full rounded-xl border border-[#7ee2a8] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-wait disabled:opacity-60"
-                disabled={isGroupPending || !groupName.trim() || groupMemberHandles.length === 0}
+                disabled={
+                  isGroupPending ||
+                  isSendPending ||
+                  !groupName.trim() ||
+                  groupMemberHandles.length === 0
+                }
                 type="submit"
               >
                 {isGroupPending ? 'SAVING…' : 'SAVE GROUP'}
@@ -548,7 +623,7 @@ export default function PrepareInvitation({
             <form className="mt-5" onSubmit={submitPreparation}>
               <button
                 className="min-h-12 w-full rounded-xl border border-[#7ee2a8] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#25b873] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-wait disabled:opacity-60"
-                disabled={isPreparationPending || isPreviewPending}
+                disabled={isPreparationPending || isPreviewPending || isSendPending}
                 type="submit"
               >
                 {isPreparationPending ? 'PREPARING…' : 'CREATE INVITATIONS'}
@@ -604,6 +679,16 @@ export default function PrepareInvitation({
                   {preparationState.alreadySentCount}
                 </dd>
               </div>
+              {preparationState.retryableFailedCount > 0 ? (
+                <div>
+                  <dt className="font-semibold text-[#d8ad2a]">
+                    Retryable failed
+                  </dt>
+                  <dd className="mt-1 text-[#f5f1cf]">
+                    {preparationState.retryableFailedCount}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="font-semibold text-[#d8ad2a]">Needs verification</dt>
                 <dd className="mt-1 text-[#f5f1cf]">
@@ -611,9 +696,91 @@ export default function PrepareInvitation({
                 </dd>
               </div>
             </dl>
-            <p className="mt-4 text-sm leading-6 text-[#b9c9b8]">
-              Final send review is ready. Sending is not enabled in this step.
-            </p>
+            {!preparationState.meetingUrl &&
+            (preparationState.readyCount > 0 ||
+              preparationState.retryableFailedCount > 0) ? (
+              <p className="mt-4 rounded-xl border border-[#d8ad2a] px-4 py-3 text-sm leading-6 text-[#f5f1cf]">
+                Add a meeting link before sending.
+              </p>
+            ) : null}
+            {preparationState.readyCount > 0 ? (
+              <button
+                className="mt-5 min-h-12 w-full rounded-xl border border-[#7ee2a8] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#25b873] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSendPending || !preparationState.meetingUrl}
+                onClick={() => submitSend('ready')}
+                type="button"
+              >
+                {isSendPending
+                  ? 'SENDING…'
+                  : `CONFIRM SEND TO ${preparationState.readyCount}`}
+              </button>
+            ) : null}
+            {preparationState.retryableFailedCount > 0 ? (
+              <button
+                className="mt-3 min-h-12 w-full rounded-xl border border-[#d8ad2a] bg-[#d8ad2a] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#efc748] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSendPending || !preparationState.meetingUrl}
+                onClick={() => submitSend('retry_failed')}
+                type="button"
+              >
+                {isSendPending
+                  ? 'RETRYING…'
+                  : `RETRY FAILED ${preparationState.retryableFailedCount}`}
+              </button>
+            ) : null}
+          </section>
+        ) : null}
+        {sendState.status === 'error' ? (
+          <p
+            className="mt-5 rounded-xl border border-[#d8ad2a] bg-[#051340] px-4 py-3 text-sm leading-6 text-[#f5f1cf]"
+            role="status"
+          >
+            {sendState.message}
+          </p>
+        ) : null}
+        {sendState.status === 'complete' || sendState.status === 'partial' ? (
+          <section
+            aria-labelledby="invitation-send-result-heading"
+            className="mt-5 rounded-xl border border-[#7ee2a8] bg-[#0b2458] p-4"
+          >
+            <h3
+              className="text-lg font-semibold text-[#f5f1cf]"
+              id="invitation-send-result-heading"
+            >
+              Invitation delivery results
+            </h3>
+            <dl className="mt-4 grid grid-cols-1 gap-3 text-base leading-6 sm:grid-cols-3">
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">Sent</dt>
+                <dd className="mt-1 text-[#f5f1cf]">{sendState.sentCount}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">Failed</dt>
+                <dd className="mt-1 text-[#f5f1cf]">{sendState.failedCount}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">
+                  Needs verification
+                </dt>
+                <dd className="mt-1 text-[#f5f1cf]">
+                  {sendState.needsVerificationCount}
+                </dd>
+              </div>
+            </dl>
+            <ul className="mt-4 divide-y divide-[#7ee2a8]/25 border-t border-[#7ee2a8]/35">
+              {sendState.recipients.map((recipient, index) => (
+                <li
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 text-base"
+                  key={recipient.name + '-' + index}
+                >
+                  <span className="min-w-0 break-words text-[#f5f1cf]">
+                    {recipient.name}
+                  </span>
+                  <span className="font-semibold text-[#7ee2a8]">
+                    {recipient.state}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </section>
         ) : null}
       </div>

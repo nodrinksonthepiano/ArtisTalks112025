@@ -10,15 +10,27 @@ import {
   deriveSendReviewDigest,
   groupSelectionHandleMatches,
   recipientSetDigestMatches,
+  sendReviewDigestMatches,
   type InvitationSendReviewRecipient,
 } from '@/lib/artistalksInvitationSelection'
-import { deriveArtistTalksRsvpTokenHash } from '@/lib/artistalksRsvpToken'
+import {
+  assertArtistTalksInvitationEmailConfigured,
+  buildArtistTalksGoogleCalendarUrl,
+  buildArtistTalksRsvpUrl,
+  sendArtistTalksInvitation,
+  type SendArtistTalksInvitationResult,
+} from '@/lib/artistalksInvitationEmail'
+import {
+  deriveArtistTalksRsvpToken,
+  deriveArtistTalksRsvpTokenHash,
+} from '@/lib/artistalksRsvpToken'
 import { requireJaiAdmin } from '@/utils/supabase/requireJaiAdmin'
 import PrepareInvitation, {
   type ArtistSelectionOption,
   type CreateGroupState,
   type GroupSelectionOption,
   type InvitationPreparationState,
+  type InvitationSendState,
   type RecipientPreviewState,
 } from './PrepareInvitation'
 
@@ -50,6 +62,7 @@ type PreparedInvitationRow = ExistingInvitationRow & {
   id: string
   rsvp_token_hash: string
   rsvp_token_expires_at: string
+  updated_at: string
 }
 type RecipientSelection = {
   kind: 'artist' | 'group' | 'all_eligible'
@@ -64,6 +77,44 @@ type PreparationRpcRow = {
   inserted_count: number
 }
 type PreparedRecipientState = 'Ready' | 'Sent' | 'Needs verification'
+type InvitationSendMode = 'ready' | 'retry_failed'
+type InvitationReview = {
+  invitations: Map<string, PreparedInvitationRow>
+  recipientEmails: Map<string, string | null>
+  safeRecipients: Array<{ name: string; state: PreparedRecipientState }>
+  reviewRecipients: InvitationSendReviewRecipient[]
+  readyToSendCount: number
+  alreadySentCount: number
+  retryableFailedCount: number
+  needsVerificationCount: number
+}
+type InvitationDeliveryPlan = {
+  recipient: EligibleArtist
+  invitation: PreparedInvitationRow
+  recipientEmail: string
+  rsvpUrl: string
+}
+type ClaimedInvitation = {
+  idempotencyKey: string
+  deliveryStatus: 'unsent' | 'failed'
+}
+type InvitationDeliveryOutcome = {
+  name: string
+  state: 'Sent' | 'Failed' | 'Needs verification'
+}
+type InvitationSender = typeof sendArtistTalksInvitation
+type InvitationDeliveryDependencies = {
+  claim: (
+    plan: InvitationDeliveryPlan,
+    mode: InvitationSendMode
+  ) => Promise<ClaimedInvitation | null>
+  persist: (
+    plan: InvitationDeliveryPlan,
+    claim: ClaimedInvitation,
+    result: SendArtistTalksInvitationResult
+  ) => Promise<InvitationDeliveryOutcome['state']>
+  send: InvitationSender
+}
 type DeliveryLabel = 'Not sent' | 'Sent' | 'Needs verification' | 'Mixed'
 
 const EVENT_SELECT =
@@ -77,7 +128,9 @@ const AUTH_LOOKUP_CHUNK_SIZE = 20
 const GROUP_NAME_MAX_LENGTH = 100
 const MAX_GROUP_MEMBERS = 500
 const DELIVERY_REJECTED_CODE = 'provider_rejected'
+const DELIVERY_UNCERTAIN_CODE = 'delivery_uncertain'
 const RSVP_EXPIRY_BUFFER_MS = 7 * 24 * 60 * 60 * 1000
+const PRIVATE_BETA_SEND_LIMIT = 5
 const STATUS_LABELS: Record<EventStatus, string> = {
   draft: 'Draft',
   scheduled: 'Scheduled',
@@ -416,25 +469,37 @@ function preparedRecipientState(
   recipientEmail: string | null
 ): PreparedRecipientState {
   if (row.delivery_status === 'sent') return 'Sent'
-  if (row.rsvp_status !== 'pending' || !hasValidInvitationCredential(row)) {
-    return 'Needs verification'
-  }
-  if (!recipientEmail) return 'Needs verification'
-  if (
+  if (isReadyForInitialSend(row, recipientEmail)) return 'Ready'
+  if (isRetryableFailed(row, recipientEmail)) return 'Ready'
+  return 'Needs verification'
+}
+
+function isReadyForInitialSend(
+  row: PreparedInvitationRow,
+  recipientEmail: string | null
+): boolean {
+  return (
+    row.rsvp_status === 'pending' &&
     row.delivery_status === 'unsent' &&
     row.send_idempotency_key === null &&
-    row.last_delivery_error_code === null
-  ) {
-    return 'Ready'
-  }
-  if (
+    row.last_delivery_error_code === null &&
+    Boolean(recipientEmail) &&
+    hasValidInvitationCredential(row)
+  )
+}
+
+function isRetryableFailed(
+  row: PreparedInvitationRow,
+  recipientEmail: string | null
+): boolean {
+  return (
+    row.rsvp_status === 'pending' &&
     row.delivery_status === 'failed' &&
     row.send_idempotency_key !== null &&
-    row.last_delivery_error_code === DELIVERY_REJECTED_CODE
-  ) {
-    return 'Ready'
-  }
-  return 'Needs verification'
+    row.last_delivery_error_code === DELIVERY_REJECTED_CODE &&
+    Boolean(recipientEmail) &&
+    hasValidInvitationCredential(row)
+  )
 }
 
 async function loadPreparedInvitations(
@@ -447,7 +512,7 @@ async function loadPreparedInvitations(
     const { data, error } = await admin
       .from('artistalks_event_invitations')
       .select(
-        'id, invitee_user_id, rsvp_status, rsvp_token_hash, rsvp_token_expires_at, delivery_status, send_idempotency_key, last_delivery_error_code'
+        'id, invitee_user_id, rsvp_status, rsvp_token_hash, rsvp_token_expires_at, delivery_status, send_idempotency_key, last_delivery_error_code, updated_at'
       )
       .eq('event_id', eventId)
       .in('invitee_user_id', recipientIds.slice(from, from + INVITATION_QUERY_CHUNK_SIZE))
@@ -482,6 +547,264 @@ async function loadRecipientEmails(
     for (const lookup of lookups) emails.set(lookup.recipientId, lookup.email)
   }
   return emails
+}
+
+async function buildInvitationReview(
+  admin: SupabaseClient,
+  eventId: string,
+  recipients: readonly EligibleArtist[]
+): Promise<InvitationReview> {
+  const recipientIds = recipients.map((recipient) => recipient.userId)
+  const [invitations, recipientEmails] = await Promise.all([
+    loadPreparedInvitations(admin, eventId, recipientIds),
+    loadRecipientEmails(admin, recipientIds),
+  ])
+  if (invitations.size !== recipientIds.length) {
+    throw new Error('Unable to review invitations.')
+  }
+
+  const safeRecipients: InvitationReview['safeRecipients'] = []
+  const reviewRecipients: InvitationSendReviewRecipient[] = []
+  let readyToSendCount = 0
+  let alreadySentCount = 0
+  let retryableFailedCount = 0
+  let needsVerificationCount = 0
+
+  for (const recipient of recipients) {
+    const invitation = invitations.get(recipient.userId)
+    if (!invitation || !UUID_V4_PATTERN.test(invitation.id)) {
+      throw new Error('Unable to review invitations.')
+    }
+
+    const recipientEmail = recipientEmails.get(recipient.userId) ?? null
+    const state = preparedRecipientState(invitation, recipientEmail)
+    safeRecipients.push({ name: recipient.name, state })
+    if (isReadyForInitialSend(invitation, recipientEmail)) readyToSendCount += 1
+    else if (isRetryableFailed(invitation, recipientEmail)) {
+      retryableFailedCount += 1
+    } else if (state === 'Sent') alreadySentCount += 1
+    else needsVerificationCount += 1
+
+    reviewRecipients.push({
+      recipientUserId: recipient.userId,
+      invitationId: invitation.id,
+      tokenExpiresAt: invitation.rsvp_token_expires_at,
+      rsvpStatus: isRsvpStatus(invitation.rsvp_status)
+        ? invitation.rsvp_status
+        : 'unexpected',
+      deliveryStatus: isDeliveryStatus(invitation.delivery_status)
+        ? invitation.delivery_status
+        : 'unexpected',
+      sendKeyState: invitation.send_idempotency_key ? 'claimed' : 'unclaimed',
+      failureClassification: failureClassification(
+        invitation.last_delivery_error_code
+      ),
+      recipientEmail,
+      reviewState: state,
+    })
+  }
+
+  return {
+    invitations,
+    recipientEmails,
+    safeRecipients,
+    reviewRecipients,
+    readyToSendCount,
+    alreadySentCount,
+    retryableFailedCount,
+    needsVerificationCount,
+  }
+}
+
+function validHttpsMeetingUrl(value: string | null): string | null {
+  if (!value) return null
+
+  try {
+    const meetingUrl = new URL(value)
+    return meetingUrl.protocol === 'https:' ? meetingUrl.toString() : null
+  } catch {
+    return null
+  }
+}
+
+function buildDeliveryPlans(
+  mode: InvitationSendMode,
+  recipients: readonly EligibleArtist[],
+  review: InvitationReview
+): InvitationDeliveryPlan[] {
+  const plans: InvitationDeliveryPlan[] = []
+  for (const recipient of recipients) {
+    const invitation = review.invitations.get(recipient.userId)
+    const recipientEmail = review.recipientEmails.get(recipient.userId) ?? null
+    if (!invitation || !recipientEmail) continue
+
+    const actionable =
+      mode === 'ready'
+        ? isReadyForInitialSend(invitation, recipientEmail)
+        : isRetryableFailed(invitation, recipientEmail)
+    if (!actionable) continue
+
+    const rawRsvpToken = deriveArtistTalksRsvpToken(
+      invitation.id,
+      invitation.rsvp_token_expires_at
+    )
+    if (
+      !tokenHashMatches(
+        deriveArtistTalksRsvpTokenHash(
+          invitation.id,
+          invitation.rsvp_token_expires_at
+        ),
+        invitation.rsvp_token_hash
+      )
+    ) {
+      throw new Error('Invitation credential changed.')
+    }
+
+    const rsvpUrl = buildArtistTalksRsvpUrl(rawRsvpToken)
+    if (!rsvpUrl) throw new Error('Invitation credential changed.')
+    plans.push({ recipient, invitation, recipientEmail, rsvpUrl })
+  }
+  return plans
+}
+
+async function claimInvitationDelivery(
+  admin: SupabaseClient,
+  eventId: string,
+  plan: InvitationDeliveryPlan,
+  mode: InvitationSendMode
+): Promise<ClaimedInvitation | null> {
+  if (mode === 'ready') {
+    const idempotencyKey = randomUUID()
+    const { data, error } = await admin
+      .from('artistalks_event_invitations')
+      .update({ send_idempotency_key: idempotencyKey })
+      .eq('id', plan.invitation.id)
+      .eq('event_id', eventId)
+      .eq('invitee_user_id', plan.recipient.userId)
+      .eq('rsvp_status', 'pending')
+      .eq('delivery_status', 'unsent')
+      .is('send_idempotency_key', null)
+      .is('last_delivery_error_code', null)
+      .select('send_idempotency_key')
+      .maybeSingle()
+    if (error || data?.send_idempotency_key !== idempotencyKey) return null
+    return { idempotencyKey, deliveryStatus: 'unsent' }
+  }
+
+  const idempotencyKey = plan.invitation.send_idempotency_key
+  if (!idempotencyKey) return null
+  const { data, error } = await admin
+    .from('artistalks_event_invitations')
+    .update({ last_delivery_error_code: DELIVERY_UNCERTAIN_CODE })
+    .eq('id', plan.invitation.id)
+    .eq('event_id', eventId)
+    .eq('invitee_user_id', plan.recipient.userId)
+    .eq('rsvp_status', 'pending')
+    .eq('delivery_status', 'failed')
+    .eq('send_idempotency_key', idempotencyKey)
+    .eq('last_delivery_error_code', DELIVERY_REJECTED_CODE)
+    .eq('updated_at', plan.invitation.updated_at)
+    .select('send_idempotency_key')
+    .maybeSingle()
+  if (error || data?.send_idempotency_key !== idempotencyKey) return null
+  return { idempotencyKey, deliveryStatus: 'failed' }
+}
+
+async function persistInvitationDelivery(
+  admin: SupabaseClient,
+  eventId: string,
+  plan: InvitationDeliveryPlan,
+  claim: ClaimedInvitation,
+  result: SendArtistTalksInvitationResult
+): Promise<InvitationDeliveryOutcome['state']> {
+  const update =
+    result.status === 'accepted'
+      ? {
+          delivery_status: 'sent',
+          provider_message_id: result.providerMessageId,
+          last_delivery_error_code: null,
+        }
+      : {
+          delivery_status: 'failed',
+          last_delivery_error_code:
+            result.status === 'rejected'
+              ? DELIVERY_REJECTED_CODE
+              : DELIVERY_UNCERTAIN_CODE,
+        }
+
+  let request = admin
+    .from('artistalks_event_invitations')
+    .update(update)
+    .eq('id', plan.invitation.id)
+    .eq('event_id', eventId)
+    .eq('invitee_user_id', plan.recipient.userId)
+    .eq('rsvp_status', 'pending')
+    .eq('delivery_status', claim.deliveryStatus)
+    .eq('send_idempotency_key', claim.idempotencyKey)
+
+  if (claim.deliveryStatus === 'failed') {
+    request = request.eq(
+      'last_delivery_error_code',
+      DELIVERY_UNCERTAIN_CODE
+    )
+  }
+
+  const { data, error } = await request.select('id').maybeSingle()
+  if (error || !data) return 'Needs verification'
+  if (result.status === 'accepted') return 'Sent'
+  return result.status === 'rejected' ? 'Failed' : 'Needs verification'
+}
+
+async function deliverInvitationPlans(
+  mode: InvitationSendMode,
+  plans: readonly InvitationDeliveryPlan[],
+  emailContext: {
+    eventTitle: string
+    eventDescription: string
+    eventDate: string
+    eventTime: string
+    eventTimezone: string
+    eventLocation: string
+    meetingUrl: string
+    googleCalendarUrl: string
+  },
+  dependencies: InvitationDeliveryDependencies
+): Promise<InvitationDeliveryOutcome[]> {
+  const outcomes: InvitationDeliveryOutcome[] = []
+  for (const plan of plans) {
+    let claim: ClaimedInvitation | null
+    try {
+      claim = await dependencies.claim(plan, mode)
+    } catch {
+      claim = null
+    }
+    if (!claim) {
+      outcomes.push({ name: plan.recipient.name, state: 'Needs verification' })
+      continue
+    }
+
+    let providerResult: SendArtistTalksInvitationResult
+    try {
+      providerResult = await dependencies.send({
+        recipientEmail: plan.recipientEmail,
+        idempotencyKey: claim.idempotencyKey,
+        artistName: plan.recipient.name,
+        ...emailContext,
+        rsvpUrl: plan.rsvpUrl,
+      })
+    } catch {
+      providerResult = { status: 'uncertain' }
+    }
+
+    let state: InvitationDeliveryOutcome['state'] = 'Needs verification'
+    try {
+      state = await dependencies.persist(plan, claim, providerResult)
+    } catch {
+      // A provider may have accepted the message. Never retry automatically.
+    }
+    outcomes.push({ name: plan.recipient.name, state })
+  }
+  return outcomes
 }
 
 async function createInvitationGroup(
@@ -750,75 +1073,213 @@ async function prepareInvitationRecipients(
       throw new Error('Unable to prepare invitations.')
     }
 
-    const [invitations, recipientEmails] = await Promise.all([
-      loadPreparedInvitations(authorization.admin, eventId, recipientIds),
-      loadRecipientEmails(authorization.admin, recipientIds),
-    ])
-    if (invitations.size !== recipientIds.length) {
-      throw new Error('Unable to prepare invitations.')
-    }
-
-    const safeRecipients: Array<{
-      name: string
-      state: PreparedRecipientState
-    }> = []
-    const reviewRecipients: InvitationSendReviewRecipient[] = []
-
-    for (const recipient of recipients) {
-      const invitation = invitations.get(recipient.userId)
-      if (!invitation || !UUID_V4_PATTERN.test(invitation.id)) {
-        throw new Error('Unable to prepare invitations.')
-      }
-
-      const recipientEmail = recipientEmails.get(recipient.userId) ?? null
-      const state = preparedRecipientState(invitation, recipientEmail)
-      safeRecipients.push({ name: recipient.name, state })
-      reviewRecipients.push({
-        recipientUserId: recipient.userId,
-        invitationId: invitation.id,
-        tokenExpiresAt: invitation.rsvp_token_expires_at,
-        rsvpStatus: isRsvpStatus(invitation.rsvp_status)
-          ? invitation.rsvp_status
-          : 'unexpected',
-        deliveryStatus: isDeliveryStatus(invitation.delivery_status)
-          ? invitation.delivery_status
-          : 'unexpected',
-        sendKeyState: invitation.send_idempotency_key ? 'claimed' : 'unclaimed',
-        failureClassification: failureClassification(
-          invitation.last_delivery_error_code
-        ),
-        recipientEmail,
-        reviewState: state,
-      })
-    }
-
+    const review = await buildInvitationReview(
+      authorization.admin,
+      eventId,
+      recipients
+    )
     const time = formatEventDateTime(event)
-    const readyCount = safeRecipients.filter(
-      (recipient) => recipient.state === 'Ready'
-    ).length
-    const alreadySentCount = safeRecipients.filter(
-      (recipient) => recipient.state === 'Sent'
-    ).length
-    const needsVerificationCount = safeRecipients.filter(
-      (recipient) => recipient.state === 'Needs verification'
-    ).length
 
     return {
       status: 'prepared',
-      recipients: safeRecipients,
-      recipientCount: safeRecipients.length,
-      readyCount,
-      alreadySentCount,
-      needsVerificationCount,
+      recipients: review.safeRecipients,
+      recipientCount: review.safeRecipients.length,
+      readyCount: review.readyToSendCount,
+      alreadySentCount: review.alreadySentCount,
+      retryableFailedCount: review.retryableFailedCount,
+      needsVerificationCount: review.needsVerificationCount,
       eventTitle: event.title,
       eventDateTime: time.date + ', ' + time.time + ' (' + event.timezone + ')',
       meetingUrl: event.meeting_url,
       recipientSetDigest: deriveRecipientSetDigest(eventId, recipientIds),
-      sendReviewDigest: deriveSendReviewDigest(eventId, reviewRecipients),
+      sendReviewDigest: deriveSendReviewDigest(
+        eventId,
+        review.reviewRecipients
+      ),
     }
   } catch {
     console.error('artistalks_bulk_invitation_preparation_failed')
     return { status: 'error', message: 'Unable to prepare invitations.' }
+  }
+}
+
+async function sendInvitationRecipients(
+  eventId: string,
+  _previousState: InvitationSendState,
+  formData: FormData
+): Promise<InvitationSendState> {
+  'use server'
+
+  const authorization = await requireJaiAdmin()
+  if (!authorization.ok || !UUID_V4_PATTERN.test(eventId)) {
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+
+  const modeValue = formData.get('mode')
+  const kindValue = formData.get('selectionKind')
+  const handleValue = formData.get('selectionHandle')
+  const recipientSetDigestValue = formData.get('recipientSetDigest')
+  const sendReviewDigestValue = formData.get('sendReviewDigest')
+  const mode: InvitationSendMode | null =
+    modeValue === 'ready' || modeValue === 'retry_failed' ? modeValue : null
+  const kind = typeof kindValue === 'string' ? kindValue : ''
+  const handle = typeof handleValue === 'string' ? handleValue : ''
+  const recipientSetDigest =
+    typeof recipientSetDigestValue === 'string' ? recipientSetDigestValue : ''
+  const sendReviewDigest =
+    typeof sendReviewDigestValue === 'string' ? sendReviewDigestValue : ''
+  if (!mode) {
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+
+  let event: EventRow | null
+  let artists: EligibleArtist[]
+  try {
+    event = await loadOwnedEvent(authorization.admin, eventId, authorization.userId)
+    artists = await loadEligibleArtists(authorization.admin)
+  } catch {
+    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+  if (!event || !invitationsMayBePrepared(event.status)) {
+    return {
+      status: 'error',
+      message: 'Invitation status changed. Review the send list before continuing.',
+    }
+  }
+
+  const meetingUrl = validHttpsMeetingUrl(event.meeting_url)
+  if (!meetingUrl) {
+    return { status: 'error', message: 'Add a meeting link before sending.' }
+  }
+
+  let resolution: RecipientSelectionResult
+  try {
+    resolution = await resolveRecipientSelection(
+      authorization.admin,
+      authorization.userId,
+      kind,
+      handle,
+      artists
+    )
+  } catch {
+    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+  if (!resolution.ok) {
+    return {
+      status: 'error',
+      message: 'Recipient list changed. Review the updated preview before continuing.',
+    }
+  }
+
+  const recipients = resolution.selection.recipients
+  const recipientIds = recipients.map((recipient) => recipient.userId)
+  if (
+    recipientIds.length === 0 ||
+    !recipientSetDigestMatches(recipientSetDigest, eventId, recipientIds)
+  ) {
+    return {
+      status: 'error',
+      message: 'Recipient list changed. Review the updated preview before continuing.',
+    }
+  }
+
+  let review: InvitationReview
+  let plans: InvitationDeliveryPlan[]
+  let emailContext: Parameters<typeof deliverInvitationPlans>[2]
+  try {
+    review = await buildInvitationReview(authorization.admin, eventId, recipients)
+    if (!sendReviewDigestMatches(sendReviewDigest, eventId, review.reviewRecipients)) {
+      return {
+        status: 'error',
+        message: 'Invitation status changed. Review the send list before continuing.',
+      }
+    }
+
+    const time = formatEventDateTime(event)
+    const googleCalendarUrl = buildArtistTalksGoogleCalendarUrl({
+      title: event.title,
+      description: event.description,
+      startsAt: event.starts_at,
+      endsAt: event.ends_at,
+      timezone: event.timezone,
+      location: event.location,
+      meetingUrl,
+    })
+    if (!googleCalendarUrl) throw new Error('Invalid calendar configuration.')
+    assertArtistTalksInvitationEmailConfigured()
+
+    plans = buildDeliveryPlans(mode, recipients, review)
+    emailContext = {
+      eventTitle: event.title,
+      eventDescription: event.description,
+      eventDate: time.date,
+      eventTime: time.time,
+      eventTimezone: event.timezone,
+      eventLocation: event.location?.trim() ?? '',
+      meetingUrl,
+      googleCalendarUrl,
+    }
+  } catch {
+    console.error('artistalks_bulk_invitation_send_preflight_failed')
+    return { status: 'error', message: 'Unable to send invitations.' }
+  }
+
+  const expectedProviderCallCount =
+    mode === 'ready' ? review.readyToSendCount : review.retryableFailedCount
+  if (plans.length !== expectedProviderCallCount || plans.length === 0) {
+    return {
+      status: 'error',
+      message: 'Invitation status changed. Review the send list before continuing.',
+    }
+  }
+  if (plans.length > PRIVATE_BETA_SEND_LIMIT) {
+    return {
+      status: 'error',
+      message: 'This batch is larger than the current send limit. Send a smaller group.',
+    }
+  }
+
+  const outcomes = await deliverInvitationPlans(mode, plans, emailContext, {
+    claim: (plan, sendMode) =>
+      claimInvitationDelivery(authorization.admin, eventId, plan, sendMode),
+    persist: (plan, claim, result) =>
+      persistInvitationDelivery(
+        authorization.admin,
+        eventId,
+        plan,
+        claim,
+        result
+      ),
+    send: sendArtistTalksInvitation,
+  })
+  const sentCount = outcomes.filter((outcome) => outcome.state === 'Sent').length
+  const failedCount = outcomes.filter((outcome) => outcome.state === 'Failed').length
+  const needsVerificationCount = outcomes.filter(
+    (outcome) => outcome.state === 'Needs verification'
+  ).length
+
+  let retryableFailedCount = 0
+  try {
+    const currentReview = await buildInvitationReview(
+      authorization.admin,
+      eventId,
+      recipients
+    )
+    retryableFailedCount = currentReview.retryableFailedCount
+  } catch {
+    // The safe result never guesses that an uncertain delivery is retryable.
+  }
+
+  return {
+    status:
+      failedCount === 0 && needsVerificationCount === 0 ? 'complete' : 'partial',
+    sentCount,
+    failedCount,
+    needsVerificationCount,
+    retryableFailedCount,
+    recipients: outcomes,
   }
 }
 
@@ -942,6 +1403,7 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
               groupOptions={groups}
               prepareAction={prepareInvitationRecipients.bind(null, eventId)}
               previewAction={previewInvitationRecipients.bind(null, eventId)}
+              sendAction={sendInvitationRecipients.bind(null, eventId)}
             />
           </div>
         </section>
