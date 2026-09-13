@@ -1,3 +1,4 @@
+import { randomUUID, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
@@ -6,13 +7,18 @@ import {
   deriveArtistSelectionHandle,
   deriveGroupSelectionHandle,
   deriveRecipientSetDigest,
+  deriveSendReviewDigest,
   groupSelectionHandleMatches,
+  recipientSetDigestMatches,
+  type InvitationSendReviewRecipient,
 } from '@/lib/artistalksInvitationSelection'
+import { deriveArtistTalksRsvpTokenHash } from '@/lib/artistalksRsvpToken'
 import { requireJaiAdmin } from '@/utils/supabase/requireJaiAdmin'
 import PrepareInvitation, {
   type ArtistSelectionOption,
   type CreateGroupState,
   type GroupSelectionOption,
+  type InvitationPreparationState,
   type RecipientPreviewState,
 } from './PrepareInvitation'
 
@@ -40,18 +46,38 @@ type ExistingInvitationRow = {
   send_idempotency_key: string | null
   last_delivery_error_code: string | null
 }
+type PreparedInvitationRow = ExistingInvitationRow & {
+  id: string
+  rsvp_token_hash: string
+  rsvp_token_expires_at: string
+}
+type RecipientSelection = {
+  kind: 'artist' | 'group' | 'all_eligible'
+  selectorId: string | null
+  recipients: EligibleArtist[]
+}
+type RecipientSelectionResult =
+  | { ok: true; selection: RecipientSelection }
+  | { ok: false; message: string }
+type PreparationRpcRow = {
+  result_status: string
+  inserted_count: number
+}
+type PreparedRecipientState = 'Ready' | 'Sent' | 'Needs verification'
 type DeliveryLabel = 'Not sent' | 'Sent' | 'Needs verification' | 'Mixed'
 
 const EVENT_SELECT =
   'title, description, starts_at, ends_at, timezone, location, meeting_url, status'
 const UUID_V4_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const EMAIL_SHAPED_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+const EMAIL_ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PAGE_SIZE = 200
 const INVITATION_QUERY_CHUNK_SIZE = 100
+const AUTH_LOOKUP_CHUNK_SIZE = 20
 const GROUP_NAME_MAX_LENGTH = 100
 const MAX_GROUP_MEMBERS = 500
 const DELIVERY_REJECTED_CODE = 'provider_rejected'
+const RSVP_EXPIRY_BUFFER_MS = 7 * 24 * 60 * 60 * 1000
 const STATUS_LABELS: Record<EventStatus, string> = {
   draft: 'Draft',
   scheduled: 'Scheduled',
@@ -110,7 +136,7 @@ async function loadEligibleArtists(admin: SupabaseClient) {
     const rows = (data ?? []) as EligibleArtistRow[]
     for (const row of rows) {
       const name = row.artist_name?.trim()
-      if (UUID_V4_PATTERN.test(row.id) && name && !EMAIL_SHAPED_PATTERN.test(name)) {
+      if (UUID_V4_PATTERN.test(row.id) && name && !name.includes('@')) {
         artists.push({ userId: row.id, name })
       }
     }
@@ -196,6 +222,79 @@ function resolveGroupHandle(handle: string, groups: readonly InvitationGroup[]) 
   return resolved
 }
 
+function sortedUniqueRecipients(recipients: readonly EligibleArtist[]) {
+  return [...new Map(recipients.map((artist) => [artist.userId, artist])).values()].sort(
+    (a, b) =>
+      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
+      a.userId.localeCompare(b.userId)
+  )
+}
+
+async function resolveRecipientSelection(
+  admin: SupabaseClient,
+  userId: string,
+  kind: string,
+  handle: string,
+  artists: readonly EligibleArtist[]
+): Promise<RecipientSelectionResult> {
+  if (kind === 'artist') {
+    const artist = resolveArtistHandle(handle, artists)
+    if (!artist) {
+      return {
+        ok: false,
+        message: 'Artist eligibility changed. Refresh and try again.',
+      }
+    }
+    return {
+      ok: true,
+      selection: {
+        kind: 'artist',
+        selectorId: artist.userId,
+        recipients: [artist],
+      },
+    }
+  }
+
+  if (kind === 'group') {
+    const groups = await loadOwnedGroups(admin, userId)
+    const group = resolveGroupHandle(handle, groups)
+    if (!group) {
+      return {
+        ok: false,
+        message: 'Group not found. Refresh and try again.',
+      }
+    }
+
+    const memberIds = await loadGroupMemberIds(admin, group.groupId)
+    const eligibleById = new Map(artists.map((artist) => [artist.userId, artist]))
+    return {
+      ok: true,
+      selection: {
+        kind: 'group',
+        selectorId: group.groupId,
+        recipients: sortedUniqueRecipients(
+          memberIds
+            .map((memberId) => eligibleById.get(memberId))
+            .filter((artist): artist is EligibleArtist => Boolean(artist))
+        ),
+      },
+    }
+  }
+
+  if (kind === 'all_eligible') {
+    return {
+      ok: true,
+      selection: {
+        kind: 'all_eligible',
+        selectorId: null,
+        recipients: sortedUniqueRecipients(artists),
+      },
+    }
+  }
+
+  return { ok: false, message: 'Choose an artist or group.' }
+}
+
 function safeArtistOptions(artists: readonly EligibleArtist[]): ArtistSelectionOption[] {
   return artists.map((artist) => ({
     name: artist.name,
@@ -248,6 +347,141 @@ async function aggregateDelivery(
     recipientIds.map((id) => byRecipient.get(id) ?? ('Not sent' as const))
   )
   return states.size === 1 ? [...states][0] : 'Mixed'
+}
+
+function invitationTokenExpiry(event: EventRow): string {
+  const eventEndsAt = new Date(event.ends_at).getTime()
+  if (Number.isNaN(eventEndsAt)) {
+    throw new Error('Unable to prepare invitations.')
+  }
+
+  return new Date(
+    Math.max(Date.now() + RSVP_EXPIRY_BUFFER_MS, eventEndsAt + RSVP_EXPIRY_BUFFER_MS)
+  ).toISOString()
+}
+
+function tokenHashMatches(expected: string, supplied: string): boolean {
+  if (!/^[0-9a-f]{64}$/.test(expected) || !/^[0-9a-f]{64}$/.test(supplied)) {
+    return false
+  }
+
+  return timingSafeEqual(
+    Buffer.from(expected, 'utf8'),
+    Buffer.from(supplied, 'utf8')
+  )
+}
+
+function hasValidInvitationCredential(row: PreparedInvitationRow): boolean {
+  const expiresAt = new Date(row.rsvp_token_expires_at)
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+    return false
+  }
+
+  try {
+    return tokenHashMatches(
+      deriveArtistTalksRsvpTokenHash(row.id, expiresAt),
+      row.rsvp_token_hash
+    )
+  } catch {
+    return false
+  }
+}
+
+function isRsvpStatus(
+  value: string
+): value is 'pending' | 'accepted' | 'maybe' | 'declined' {
+  return (
+    value === 'pending' ||
+    value === 'accepted' ||
+    value === 'maybe' ||
+    value === 'declined'
+  )
+}
+
+function isDeliveryStatus(
+  value: string
+): value is 'unsent' | 'sent' | 'failed' {
+  return value === 'unsent' || value === 'sent' || value === 'failed'
+}
+
+function failureClassification(
+  code: string | null
+): InvitationSendReviewRecipient['failureClassification'] {
+  if (code === null) return 'none'
+  return code === DELIVERY_REJECTED_CODE ? 'provider_rejected' : 'uncertain'
+}
+
+function preparedRecipientState(
+  row: PreparedInvitationRow,
+  recipientEmail: string | null
+): PreparedRecipientState {
+  if (row.delivery_status === 'sent') return 'Sent'
+  if (row.rsvp_status !== 'pending' || !hasValidInvitationCredential(row)) {
+    return 'Needs verification'
+  }
+  if (!recipientEmail) return 'Needs verification'
+  if (
+    row.delivery_status === 'unsent' &&
+    row.send_idempotency_key === null &&
+    row.last_delivery_error_code === null
+  ) {
+    return 'Ready'
+  }
+  if (
+    row.delivery_status === 'failed' &&
+    row.send_idempotency_key !== null &&
+    row.last_delivery_error_code === DELIVERY_REJECTED_CODE
+  ) {
+    return 'Ready'
+  }
+  return 'Needs verification'
+}
+
+async function loadPreparedInvitations(
+  admin: SupabaseClient,
+  eventId: string,
+  recipientIds: readonly string[]
+) {
+  const invitations = new Map<string, PreparedInvitationRow>()
+  for (let from = 0; from < recipientIds.length; from += INVITATION_QUERY_CHUNK_SIZE) {
+    const { data, error } = await admin
+      .from('artistalks_event_invitations')
+      .select(
+        'id, invitee_user_id, rsvp_status, rsvp_token_hash, rsvp_token_expires_at, delivery_status, send_idempotency_key, last_delivery_error_code'
+      )
+      .eq('event_id', eventId)
+      .in('invitee_user_id', recipientIds.slice(from, from + INVITATION_QUERY_CHUNK_SIZE))
+    if (error) throw new Error('Unable to prepare invitations.')
+
+    for (const row of (data ?? []) as PreparedInvitationRow[]) {
+      invitations.set(row.invitee_user_id, row)
+    }
+  }
+  return invitations
+}
+
+async function loadRecipientEmails(
+  admin: SupabaseClient,
+  recipientIds: readonly string[]
+) {
+  const emails = new Map<string, string | null>()
+  for (let from = 0; from < recipientIds.length; from += AUTH_LOOKUP_CHUNK_SIZE) {
+    const ids = recipientIds.slice(from, from + AUTH_LOOKUP_CHUNK_SIZE)
+    const lookups = await Promise.all(
+      ids.map(async (recipientId) => {
+        const { data, error } = await admin.auth.admin.getUserById(recipientId)
+        if (error) throw new Error('Unable to prepare invitations.')
+        const email = data.user?.email?.trim().toLocaleLowerCase('en-US') ?? ''
+        return {
+          recipientId,
+          email:
+            email.length <= 320 && EMAIL_ADDRESS_PATTERN.test(email) ? email : null,
+        }
+      })
+    )
+    for (const lookup of lookups) emails.set(lookup.recipientId, lookup.email)
+  }
+  return emails
 }
 
 async function createInvitationGroup(
@@ -370,41 +604,22 @@ async function previewInvitationRecipients(
   const handleValue = formData.get('selectionHandle')
   const kind = typeof kindValue === 'string' ? kindValue : ''
   const handle = typeof handleValue === 'string' ? handleValue : ''
-  let recipients: EligibleArtist[] = []
-
-  if (kind === 'artist') {
-    const artist = resolveArtistHandle(handle, artists)
-    if (!artist) {
-      return { status: 'error', message: 'Artist eligibility changed. Refresh and try again.' }
-    }
-    recipients = [artist]
-  } else if (kind === 'group') {
-    let groups: InvitationGroup[]
-    let memberIds: string[]
-    try {
-      groups = await loadOwnedGroups(authorization.admin, authorization.userId)
-      const group = resolveGroupHandle(handle, groups)
-      if (!group) return { status: 'error', message: 'Group not found. Refresh and try again.' }
-      memberIds = await loadGroupMemberIds(authorization.admin, group.groupId)
-    } catch {
-      console.error('artistalks_invitation_recipient_preview_failed')
-      return { status: 'error', message: 'Unable to preview invitations.' }
-    }
-    const eligibleById = new Map(artists.map((artist) => [artist.userId, artist]))
-    recipients = memberIds
-      .map((memberId) => eligibleById.get(memberId))
-      .filter((artist): artist is EligibleArtist => Boolean(artist))
-  } else if (kind === 'all_eligible') {
-    recipients = artists
-  } else {
-    return { status: 'error', message: 'Choose an artist or group.' }
+  let resolution: RecipientSelectionResult
+  try {
+    resolution = await resolveRecipientSelection(
+      authorization.admin,
+      authorization.userId,
+      kind,
+      handle,
+      artists
+    )
+  } catch {
+    console.error('artistalks_invitation_recipient_preview_failed')
+    return { status: 'error', message: 'Unable to preview invitations.' }
   }
+  if (!resolution.ok) return { status: 'error', message: resolution.message }
 
-  recipients = [...new Map(recipients.map((artist) => [artist.userId, artist])).values()].sort(
-    (a, b) =>
-      a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
-      a.userId.localeCompare(b.userId)
-  )
+  const recipients = resolution.selection.recipients
   if (recipients.length === 0) {
     return { status: 'error', message: 'No currently eligible artists are in this selection.' }
   }
@@ -424,6 +639,186 @@ async function previewInvitationRecipients(
   } catch {
     console.error('artistalks_invitation_recipient_preview_failed')
     return { status: 'error', message: 'Unable to preview invitations.' }
+  }
+}
+
+async function prepareInvitationRecipients(
+  eventId: string,
+  _previousState: InvitationPreparationState,
+  formData: FormData
+): Promise<InvitationPreparationState> {
+  'use server'
+
+  const authorization = await requireJaiAdmin()
+  if (!authorization.ok || !UUID_V4_PATTERN.test(eventId)) {
+    return { status: 'error', message: 'Unable to prepare invitations.' }
+  }
+
+  let event: EventRow | null
+  let artists: EligibleArtist[]
+  try {
+    event = await loadOwnedEvent(authorization.admin, eventId, authorization.userId)
+    artists = await loadEligibleArtists(authorization.admin)
+  } catch {
+    console.error('artistalks_bulk_invitation_preparation_failed')
+    return { status: 'error', message: 'Unable to prepare invitations.' }
+  }
+  if (!event || !invitationsMayBePrepared(event.status)) {
+    return { status: 'error', message: 'Invitations cannot be prepared for this event.' }
+  }
+
+  const kindValue = formData.get('selectionKind')
+  const handleValue = formData.get('selectionHandle')
+  const digestValue = formData.get('recipientSetDigest')
+  const kind = typeof kindValue === 'string' ? kindValue : ''
+  const handle = typeof handleValue === 'string' ? handleValue : ''
+  const previewDigest = typeof digestValue === 'string' ? digestValue : ''
+
+  let resolution: RecipientSelectionResult
+  try {
+    resolution = await resolveRecipientSelection(
+      authorization.admin,
+      authorization.userId,
+      kind,
+      handle,
+      artists
+    )
+  } catch {
+    console.error('artistalks_bulk_invitation_preparation_failed')
+    return { status: 'error', message: 'Unable to prepare invitations.' }
+  }
+  if (!resolution.ok) {
+    return {
+      status: 'error',
+      message: 'Recipient list changed. Review the updated preview before continuing.',
+    }
+  }
+
+  const recipients = resolution.selection.recipients
+  const recipientIds = recipients.map((recipient) => recipient.userId)
+  if (
+    recipientIds.length === 0 ||
+    !recipientSetDigestMatches(previewDigest, eventId, recipientIds)
+  ) {
+    return {
+      status: 'error',
+      message: 'Recipient list changed. Review the updated preview before continuing.',
+    }
+  }
+
+  try {
+    const tokenExpiresAt = invitationTokenExpiry(event)
+    const candidates = recipientIds.map((recipientId) => {
+      const invitationId = randomUUID()
+      return {
+        invitation_id: invitationId,
+        invitee_user_id: recipientId,
+        rsvp_token_hash: deriveArtistTalksRsvpTokenHash(
+          invitationId,
+          tokenExpiresAt
+        ),
+      }
+    })
+
+    const { data, error } = await authorization.admin.rpc(
+      'prepare_artistalks_event_invitations',
+      {
+        p_created_by: authorization.userId,
+        p_event_id: eventId,
+        p_selector_kind: resolution.selection.kind,
+        p_selector_id: resolution.selection.selectorId,
+        p_expected_recipient_user_ids: recipientIds,
+        p_rsvp_token_expires_at: tokenExpiresAt,
+        p_invitation_candidates: candidates,
+      }
+    )
+    if (error) throw new Error('Unable to prepare invitations.')
+
+    const rpcRows = Array.isArray(data) ? data : [data]
+    const rpcResult = rpcRows[0] as PreparationRpcRow | null
+    if (rpcResult?.result_status === 'recipient_set_changed') {
+      return {
+        status: 'error',
+        message: 'Recipient list changed. Review the updated preview before continuing.',
+      }
+    }
+    if (
+      rpcResult?.result_status !== 'prepared' ||
+      !Number.isInteger(rpcResult.inserted_count) ||
+      rpcResult.inserted_count < 0
+    ) {
+      throw new Error('Unable to prepare invitations.')
+    }
+
+    const [invitations, recipientEmails] = await Promise.all([
+      loadPreparedInvitations(authorization.admin, eventId, recipientIds),
+      loadRecipientEmails(authorization.admin, recipientIds),
+    ])
+    if (invitations.size !== recipientIds.length) {
+      throw new Error('Unable to prepare invitations.')
+    }
+
+    const safeRecipients: Array<{
+      name: string
+      state: PreparedRecipientState
+    }> = []
+    const reviewRecipients: InvitationSendReviewRecipient[] = []
+
+    for (const recipient of recipients) {
+      const invitation = invitations.get(recipient.userId)
+      if (!invitation || !UUID_V4_PATTERN.test(invitation.id)) {
+        throw new Error('Unable to prepare invitations.')
+      }
+
+      const recipientEmail = recipientEmails.get(recipient.userId) ?? null
+      const state = preparedRecipientState(invitation, recipientEmail)
+      safeRecipients.push({ name: recipient.name, state })
+      reviewRecipients.push({
+        recipientUserId: recipient.userId,
+        invitationId: invitation.id,
+        tokenExpiresAt: invitation.rsvp_token_expires_at,
+        rsvpStatus: isRsvpStatus(invitation.rsvp_status)
+          ? invitation.rsvp_status
+          : 'unexpected',
+        deliveryStatus: isDeliveryStatus(invitation.delivery_status)
+          ? invitation.delivery_status
+          : 'unexpected',
+        sendKeyState: invitation.send_idempotency_key ? 'claimed' : 'unclaimed',
+        failureClassification: failureClassification(
+          invitation.last_delivery_error_code
+        ),
+        recipientEmail,
+        reviewState: state,
+      })
+    }
+
+    const time = formatEventDateTime(event)
+    const readyCount = safeRecipients.filter(
+      (recipient) => recipient.state === 'Ready'
+    ).length
+    const alreadySentCount = safeRecipients.filter(
+      (recipient) => recipient.state === 'Sent'
+    ).length
+    const needsVerificationCount = safeRecipients.filter(
+      (recipient) => recipient.state === 'Needs verification'
+    ).length
+
+    return {
+      status: 'prepared',
+      recipients: safeRecipients,
+      recipientCount: safeRecipients.length,
+      readyCount,
+      alreadySentCount,
+      needsVerificationCount,
+      eventTitle: event.title,
+      eventDateTime: time.date + ', ' + time.time + ' (' + event.timezone + ')',
+      meetingUrl: event.meeting_url,
+      recipientSetDigest: deriveRecipientSetDigest(eventId, recipientIds),
+      sendReviewDigest: deriveSendReviewDigest(eventId, reviewRecipients),
+    }
+  } catch {
+    console.error('artistalks_bulk_invitation_preparation_failed')
+    return { status: 'error', message: 'Unable to prepare invitations.' }
   }
 }
 
@@ -545,6 +940,7 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
               canPrepare={canPrepare}
               createGroupAction={createInvitationGroup.bind(null, eventId)}
               groupOptions={groups}
+              prepareAction={prepareInvitationRecipients.bind(null, eventId)}
               previewAction={previewInvitationRecipients.bind(null, eventId)}
             />
           </div>

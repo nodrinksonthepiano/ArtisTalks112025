@@ -27,6 +27,25 @@ export type RecipientPreviewState =
       delivery: 'Not sent' | 'Sent' | 'Needs verification' | 'Mixed'
       recipientSetDigest: string
     }
+export type InvitationPreparationState =
+  | { status: 'idle' }
+  | { status: 'error'; message: string }
+  | {
+      status: 'prepared'
+      recipients: Array<{
+        name: string
+        state: 'Ready' | 'Sent' | 'Needs verification'
+      }>
+      recipientCount: number
+      readyCount: number
+      alreadySentCount: number
+      needsVerificationCount: number
+      eventTitle: string
+      eventDateTime: string
+      meetingUrl: string | null
+      recipientSetDigest: string
+      sendReviewDigest: string
+    }
 
 type ServerFormAction<State> = (
   previousState: State,
@@ -37,6 +56,7 @@ type PrepareInvitationProps = {
   groupOptions: GroupSelectionOption[]
   canPrepare: boolean
   createGroupAction: ServerFormAction<CreateGroupState>
+  prepareAction: ServerFormAction<InvitationPreparationState>
   previewAction: ServerFormAction<RecipientPreviewState>
 }
 type ArtistComboboxProps = {
@@ -50,6 +70,9 @@ type ArtistComboboxProps = {
 
 const INITIAL_GROUP_STATE: CreateGroupState = { status: 'idle' }
 const INITIAL_PREVIEW_STATE: RecipientPreviewState = { status: 'idle' }
+const INITIAL_PREPARATION_STATE: InvitationPreparationState = { status: 'idle' }
+const RECIPIENTS_CHANGED_MESSAGE =
+  'Recipient list changed. Review the updated preview before continuing.'
 
 function ArtistCombobox({
   label,
@@ -226,6 +249,7 @@ export default function PrepareInvitation({
   groupOptions,
   canPrepare,
   createGroupAction,
+  prepareAction,
   previewAction,
 }: PrepareInvitationProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -238,11 +262,29 @@ export default function PrepareInvitation({
   const [groupState, setGroupState] = useState<CreateGroupState>(INITIAL_GROUP_STATE)
   const [previewState, setPreviewState] =
     useState<RecipientPreviewState>(INITIAL_PREVIEW_STATE)
+  const [preparationState, setPreparationState] =
+    useState<InvitationPreparationState>(INITIAL_PREPARATION_STATE)
   const [isGroupPending, startGroupTransition] = useTransition()
   const [isPreviewPending, startPreviewTransition] = useTransition()
+  const [isPreparationPending, startPreparationTransition] = useTransition()
 
   function clearPreview() {
     setPreviewState(INITIAL_PREVIEW_STATE)
+    setPreparationState(INITIAL_PREPARATION_STATE)
+  }
+
+  function selectedRecipientFormData() {
+    const formData = new FormData()
+    if (mode === 'artist') {
+      formData.set('selectionKind', 'artist')
+      formData.set('selectionHandle', selectedArtistHandles[0] ?? '')
+    } else if (groupChoice === 'all_eligible') {
+      formData.set('selectionKind', 'all_eligible')
+    } else {
+      formData.set('selectionKind', 'group')
+      formData.set('selectionHandle', groupChoice)
+    }
+    return formData
   }
 
   function submitGroup(event: FormEvent<HTMLFormElement>) {
@@ -273,22 +315,36 @@ export default function PrepareInvitation({
 
   function submitPreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const formData = new FormData()
-    if (mode === 'artist') {
-      formData.set('selectionKind', 'artist')
-      formData.set('selectionHandle', selectedArtistHandles[0] ?? '')
-    } else if (groupChoice === 'all_eligible') {
-      formData.set('selectionKind', 'all_eligible')
-    } else {
-      formData.set('selectionKind', 'group')
-      formData.set('selectionHandle', groupChoice)
-    }
+    const formData = selectedRecipientFormData()
+    setPreparationState(INITIAL_PREPARATION_STATE)
 
     startPreviewTransition(async () => {
       try {
         setPreviewState(await previewAction(previewState, formData))
       } catch {
         setPreviewState({ status: 'error', message: 'Unable to preview invitations.' })
+      }
+    })
+  }
+
+  function submitPreparation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (previewState.status !== 'preview') return
+
+    const formData = selectedRecipientFormData()
+    formData.set('recipientSetDigest', previewState.recipientSetDigest)
+    startPreparationTransition(async () => {
+      try {
+        const next = await prepareAction(preparationState, formData)
+        if (next.status === 'error' && next.message === RECIPIENTS_CHANGED_MESSAGE) {
+          setPreviewState(INITIAL_PREVIEW_STATE)
+        }
+        setPreparationState(next)
+      } catch {
+        setPreparationState({
+          status: 'error',
+          message: 'Unable to prepare invitations.',
+        })
       }
     })
   }
@@ -315,6 +371,7 @@ export default function PrepareInvitation({
 
   const previewDisabled =
     isPreviewPending ||
+    isPreparationPending ||
     isGroupPending ||
     (mode === 'artist' && selectedArtistHandles.length !== 1) ||
     (mode === 'group' && groupChoice === 'create')
@@ -353,7 +410,7 @@ export default function PrepareInvitation({
       {mode === 'artist' ? (
         <div className="mt-5">
           <ArtistCombobox
-            disabled={isGroupPending || isPreviewPending}
+            disabled={isGroupPending || isPreviewPending || isPreparationPending}
             label="Eligible artist"
             onChange={(handles) => {
               setSelectedArtistHandles(handles.slice(0, 1))
@@ -370,7 +427,7 @@ export default function PrepareInvitation({
           </label>
           <select
             className="mt-2 block min-h-12 w-full rounded-xl border border-[#8796aa] bg-white px-3 py-2 text-base text-[#111827] shadow-sm outline-none focus-visible:border-[#d8ad2a] focus-visible:ring-3 focus-visible:ring-[#d8ad2a]/35"
-            disabled={isGroupPending || isPreviewPending}
+            disabled={isGroupPending || isPreviewPending || isPreparationPending}
             id="invitation-group"
             onChange={(event) => {
               setGroupChoice(event.target.value)
@@ -488,8 +545,74 @@ export default function PrepareInvitation({
                 <dd className="mt-1 font-semibold text-[#7ee2a8]">{previewState.delivery}</dd>
               </div>
             </dl>
+            <form className="mt-5" onSubmit={submitPreparation}>
+              <button
+                className="min-h-12 w-full rounded-xl border border-[#7ee2a8] bg-[#1a9f62] px-5 py-3 text-base font-bold tracking-[0.06em] text-[#051340] transition hover:bg-[#25b873] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#f5f1cf] disabled:cursor-wait disabled:opacity-60"
+                disabled={isPreparationPending || isPreviewPending}
+                type="submit"
+              >
+                {isPreparationPending ? 'PREPARING…' : 'CREATE INVITATIONS'}
+              </button>
+            </form>
             <p className="mt-4 text-sm leading-6 text-[#b9c9b8]">
-              Preview only. No invitations were created or sent.
+              Nothing is sent until a separate send step is approved.
+            </p>
+          </section>
+        ) : null}
+        {preparationState.status === 'error' ? (
+          <p
+            className="mt-5 rounded-xl border border-[#d8ad2a] bg-[#051340] px-4 py-3 text-sm leading-6 text-[#f5f1cf]"
+            role="status"
+          >
+            {preparationState.message}
+          </p>
+        ) : null}
+        {preparationState.status === 'prepared' ? (
+          <section
+            aria-labelledby="invitation-preparation-heading"
+            className="mt-5 rounded-xl border border-[#7ee2a8] bg-[#0b2458] p-4"
+          >
+            <h3
+              className="text-lg font-semibold text-[#f5f1cf]"
+              id="invitation-preparation-heading"
+            >
+              Invitations prepared: {preparationState.recipientCount}
+            </h3>
+            <ul className="mt-4 divide-y divide-[#7ee2a8]/25">
+              {preparationState.recipients.map((recipient, index) => (
+                <li
+                  className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 text-base"
+                  key={recipient.name + '-' + index}
+                >
+                  <span className="min-w-0 break-words text-[#f5f1cf]">
+                    {recipient.name}
+                  </span>
+                  <span className="font-semibold text-[#7ee2a8]">
+                    {recipient.state}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <dl className="mt-4 space-y-3 border-t border-[#7ee2a8]/35 pt-4 text-base leading-6">
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">Ready to send</dt>
+                <dd className="mt-1 text-[#f5f1cf]">{preparationState.readyCount}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">Already sent</dt>
+                <dd className="mt-1 text-[#f5f1cf]">
+                  {preparationState.alreadySentCount}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-[#d8ad2a]">Needs verification</dt>
+                <dd className="mt-1 text-[#f5f1cf]">
+                  {preparationState.needsVerificationCount}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-4 text-sm leading-6 text-[#b9c9b8]">
+              Final send review is ready. Sending is not enabled in this step.
             </p>
           </section>
         ) : null}
