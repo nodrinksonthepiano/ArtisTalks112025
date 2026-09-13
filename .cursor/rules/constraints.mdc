@@ -16,8 +16,24 @@ alwaysApply: true
 
 - **Never** touch wallet-signing code or re-enable `fundWallet` — see SEC-001 in `AGENT_NOTES.md`
 - **Never** expose an email address in UI, network responses, logs, or error messages. No masked emails either (no `j•••@gmail.com`)
-- **Never** ship an artist list, cohort list, or whitelist to the client. Artist-name recognition is server-side only
-- Any artist-name recognition endpoint **must** ship with rate limiting in the same commit — it creates an enumeration surface that does not currently exist
+- Public and non-Jai clients must never receive an artist directory, cohort list, or whitelist. Public artist-name recognition remains server-side only and rate-limited.
+- A server-gated Jai-only event-management UI may receive only:
+  - canonical artist names
+  - opaque selection handles for currently eligible artists
+  - custom group names
+  - opaque group handles
+- The Jai-only event-management UI must never receive:
+  - artist email
+  - auth/profile/user IDs
+  - raw entitlement status
+  - payment data
+  - provider data
+  - environment values
+- Every preview, invitation creation, or send action must:
+  - reauthorize Jai
+  - re-resolve the opaque handles server-side
+  - recheck current eligibility
+- Any public artist-name recognition endpoint **must** ship with rate limiting in the same commit — it creates an enumeration surface that does not currently exist
 
 ## Language
 
@@ -81,6 +97,10 @@ alwaysApply: true
   → report implementation
   → upload a new version or proof
   → choose the next action.
+
+## Jai primary source
+
+- Jai’s recorded words are immutable. Never rewrite, sanitize, paraphrase, or silently correct them. Full policy: `.cursor/rules/jai-primary-source.mdc`
 
 ## Current plan
 

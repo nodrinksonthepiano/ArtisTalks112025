@@ -273,7 +273,11 @@ The artist name renders **live at the top of the page as they type** — before 
 
 ### Recognition is server-side only
 
-When an artist name is entered, the server checks its status. The artist list never ships to the client.
+Public artist-name recognition remains server-side only. No public or non-Jai client receives an artist directory.
+
+A server-gated Jai-only event-management UI may receive canonical artist names, opaque selection handles for currently eligible artists, custom group names, and opaque group handles. It must never receive artist email, auth/profile/user IDs, raw entitlement status, payment data, provider data, or environment values.
+
+Every preview, invitation creation, or send action must reauthorize Jai, re-resolve the opaque handles server-side, and recheck current eligibility.
 
 ### If the artist name is unclaimed
 
@@ -302,7 +306,7 @@ A locked door reveals that a name is claimed. That is the chosen tradeoff: prote
 
 The mitigation is **not** the response copy. It is the rate limit. Requirements for the recognition / claim-challenge endpoint:
 
-- server-side only; no cohort or artist list in any client bundle
+- server-side only; no cohort or artist list in any public or non-Jai client bundle
 - returns `{ claimed: boolean }` (and send ack when claimed) — never email
 - no email in the response body, the UI, error messages, or logs
 - normalized artist name/slug with a unique index
