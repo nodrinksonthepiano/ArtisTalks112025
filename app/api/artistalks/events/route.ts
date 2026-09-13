@@ -15,6 +15,29 @@ type CreateEventBody = {
   meetingUrl?: unknown
 }
 
+type PatchEventBody = {
+  eventId?: unknown
+  expectedUpdatedAt?: unknown
+  title?: unknown
+  description?: unknown
+  startsAt?: unknown
+  endsAt?: unknown
+  timezone?: unknown
+  location?: unknown
+  meetingUrl?: unknown
+}
+
+type EventFieldsBody = Pick<
+  CreateEventBody,
+  | 'title'
+  | 'description'
+  | 'startsAt'
+  | 'endsAt'
+  | 'timezone'
+  | 'location'
+  | 'meetingUrl'
+>
+
 type EventRow = {
   id: string
   title: string
@@ -40,11 +63,31 @@ type NormalizedEvent = {
   meetingUrl: string | null
 }
 
+type NormalizedEventFields = Omit<NormalizedEvent, 'id'>
+
+type InvitationLifecycleRow = {
+  rsvp_status: string
+  delivery_status: string
+  send_idempotency_key: string | null
+  last_delivery_error_code: string | null
+}
+
 const EVENT_SELECT =
   'id, title, description, starts_at, ends_at, timezone, location, meeting_url, status, created_at, updated_at'
 
-const ALLOWED_BODY_KEYS = new Set([
+const CREATE_ALLOWED_BODY_KEYS = new Set([
   'idempotencyKey',
+  'title',
+  'description',
+  'startsAt',
+  'endsAt',
+  'timezone',
+  'location',
+  'meetingUrl',
+])
+const PATCH_ALLOWED_BODY_KEYS = new Set([
+  'eventId',
+  'expectedUpdatedAt',
   'title',
   'description',
   'startsAt',
@@ -71,12 +114,15 @@ function characterCount(value: string): number {
   return Array.from(value).length
 }
 
-function isRequestBody(value: unknown): value is CreateEventBody {
+function isRequestBody(
+  value: unknown,
+  allowedKeys: ReadonlySet<string>
+): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&
     value !== null &&
     !Array.isArray(value) &&
-    Object.keys(value).every((key) => ALLOWED_BODY_KEYS.has(key))
+    Object.keys(value).every((key) => allowedKeys.has(key))
   )
 }
 
@@ -155,6 +201,99 @@ function timestampMatchesTimezone(
   return timestampOffset !== null && timestampOffset === timezoneOffset
 }
 
+function normalizeEventFields(
+  untrustedBody: EventFieldsBody
+):
+  | { ok: true; event: NormalizedEventFields }
+  | { ok: false; message: string } {
+  const title =
+    typeof untrustedBody.title === 'string' ? untrustedBody.title.trim() : ''
+  if (characterCount(title) < 1 || characterCount(title) > 200) {
+    return { ok: false, message: 'Enter an event title.' }
+  }
+
+  const description =
+    untrustedBody.description === undefined
+      ? ''
+      : typeof untrustedBody.description === 'string'
+        ? untrustedBody.description.trim()
+        : null
+  if (description === null || characterCount(description) > 10000) {
+    return { ok: false, message: 'Check the event description.' }
+  }
+
+  const startsAt = parseTimestamp(untrustedBody.startsAt)
+  const endsAt = parseTimestamp(untrustedBody.endsAt)
+  if (!startsAt || !endsAt || endsAt.date.getTime() <= startsAt.date.getTime()) {
+    return { ok: false, message: 'Check the event date and time.' }
+  }
+
+  const timezone =
+    typeof untrustedBody.timezone === 'string'
+      ? untrustedBody.timezone.trim()
+      : ''
+  if (
+    characterCount(timezone) < 1 ||
+    characterCount(timezone) > 100 ||
+    !isIanaTimezone(timezone)
+  ) {
+    return { ok: false, message: 'Check the event timezone.' }
+  }
+
+  if (
+    !timestampMatchesTimezone(startsAt, timezone) ||
+    !timestampMatchesTimezone(endsAt, timezone)
+  ) {
+    return { ok: false, message: 'Check the event date and time.' }
+  }
+
+  const location = optionalTrimmedString(untrustedBody.location)
+  if (location === undefined || (location && characterCount(location) > 500)) {
+    return { ok: false, message: 'Check the event location.' }
+  }
+
+  const meetingUrl = optionalTrimmedString(untrustedBody.meetingUrl)
+  if (
+    meetingUrl === undefined ||
+    (meetingUrl && characterCount(meetingUrl) > 2048)
+  ) {
+    return { ok: false, message: 'Check the meeting link.' }
+  }
+
+  if (meetingUrl) {
+    try {
+      const parsedMeetingUrl = new URL(meetingUrl)
+      if (parsedMeetingUrl.protocol !== 'https:') {
+        return { ok: false, message: 'Check the meeting link.' }
+      }
+    } catch {
+      return { ok: false, message: 'Check the meeting link.' }
+    }
+  }
+
+  return {
+    ok: true,
+    event: {
+      title,
+      description,
+      startsAt: startsAt.date.toISOString(),
+      endsAt: endsAt.date.toISOString(),
+      timezone,
+      location,
+      meetingUrl,
+    },
+  }
+}
+
+function invitationBlocksEditing(row: InvitationLifecycleRow): boolean {
+  return (
+    row.rsvp_status !== 'pending' ||
+    row.delivery_status !== 'unsent' ||
+    row.send_idempotency_key !== null ||
+    row.last_delivery_error_code !== null
+  )
+}
+
 function serializeEvent(row: EventRow) {
   return {
     id: row.id,
@@ -197,7 +336,7 @@ export async function POST(request: Request) {
       return noStoreJson({ error: 'Invalid request.' }, 400)
     }
 
-    if (!isRequestBody(untrustedBody)) {
+    if (!isRequestBody(untrustedBody, CREATE_ALLOWED_BODY_KEYS)) {
       return noStoreJson({ error: 'Invalid request.' }, 400)
     }
 
@@ -209,80 +348,14 @@ export async function POST(request: Request) {
       return noStoreJson({ error: 'Invalid save request.' }, 400)
     }
 
-    const title =
-      typeof untrustedBody.title === 'string' ? untrustedBody.title.trim() : ''
-    if (characterCount(title) < 1 || characterCount(title) > 200) {
-      return noStoreJson({ error: 'Enter an event title.' }, 400)
-    }
-
-    const description =
-      untrustedBody.description === undefined
-        ? ''
-        : typeof untrustedBody.description === 'string'
-          ? untrustedBody.description.trim()
-          : null
-    if (description === null || characterCount(description) > 10000) {
-      return noStoreJson({ error: 'Check the event description.' }, 400)
-    }
-
-    const startsAt = parseTimestamp(untrustedBody.startsAt)
-    const endsAt = parseTimestamp(untrustedBody.endsAt)
-    if (!startsAt || !endsAt || endsAt.date.getTime() <= startsAt.date.getTime()) {
-      return noStoreJson({ error: 'Check the event date and time.' }, 400)
-    }
-
-    const timezone =
-      typeof untrustedBody.timezone === 'string'
-        ? untrustedBody.timezone.trim()
-        : ''
-    if (
-      characterCount(timezone) < 1 ||
-      characterCount(timezone) > 100 ||
-      !isIanaTimezone(timezone)
-    ) {
-      return noStoreJson({ error: 'Check the event timezone.' }, 400)
-    }
-
-    if (
-      !timestampMatchesTimezone(startsAt, timezone) ||
-      !timestampMatchesTimezone(endsAt, timezone)
-    ) {
-      return noStoreJson({ error: 'Check the event date and time.' }, 400)
-    }
-
-    const location = optionalTrimmedString(untrustedBody.location)
-    if (location === undefined || (location && characterCount(location) > 500)) {
-      return noStoreJson({ error: 'Check the event location.' }, 400)
-    }
-
-    const meetingUrl = optionalTrimmedString(untrustedBody.meetingUrl)
-    if (
-      meetingUrl === undefined ||
-      (meetingUrl && characterCount(meetingUrl) > 2048)
-    ) {
-      return noStoreJson({ error: 'Check the meeting link.' }, 400)
-    }
-
-    if (meetingUrl) {
-      try {
-        const parsedMeetingUrl = new URL(meetingUrl)
-        if (parsedMeetingUrl.protocol !== 'https:') {
-          return noStoreJson({ error: 'Check the meeting link.' }, 400)
-        }
-      } catch {
-        return noStoreJson({ error: 'Check the meeting link.' }, 400)
-      }
+    const normalized = normalizeEventFields(untrustedBody)
+    if (!normalized.ok) {
+      return noStoreJson({ error: normalized.message }, 400)
     }
 
     const event: NormalizedEvent = {
       id: idempotencyKey,
-      title,
-      description,
-      startsAt: startsAt.date.toISOString(),
-      endsAt: endsAt.date.toISOString(),
-      timezone,
-      location,
-      meetingUrl,
+      ...normalized.event,
     }
 
     const { data: inserted, error: insertError } = await authorization.admin
@@ -331,5 +404,137 @@ export async function POST(request: Request) {
   } catch {
     console.error('artistalks_event_create_failed')
     return noStoreJson({ error: 'Unable to save event.' }, 500)
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const authorization = await requireJaiAdmin()
+    if (!authorization.ok) return authorization.response
+
+    let untrustedBody: unknown
+    try {
+      untrustedBody = await request.json()
+    } catch {
+      return noStoreJson({ error: 'Invalid request.' }, 400)
+    }
+
+    if (!isRequestBody(untrustedBody, PATCH_ALLOWED_BODY_KEYS)) {
+      return noStoreJson({ error: 'Invalid request.' }, 400)
+    }
+
+    const body = untrustedBody as PatchEventBody
+    const eventId = typeof body.eventId === 'string' ? body.eventId.trim() : ''
+    const expectedUpdatedAt = parseTimestamp(body.expectedUpdatedAt)
+    if (!UUID_V4_PATTERN.test(eventId) || !expectedUpdatedAt) {
+      return noStoreJson({ error: 'Invalid request.' }, 400)
+    }
+
+    const normalized = normalizeEventFields(body)
+    if (!normalized.ok) {
+      return noStoreJson({ error: normalized.message }, 400)
+    }
+
+    const { data: existing, error: existingError } = await authorization.admin
+      .from('artistalks_events')
+      .select(EVENT_SELECT)
+      .eq('id', eventId)
+      .eq('created_by', authorization.userId)
+      .maybeSingle()
+
+    if (existingError) {
+      console.error('artistalks_event_update_failed')
+      return noStoreJson({ error: 'Unable to save event changes.' }, 500)
+    }
+    if (!existing) return noStoreJson({}, 404)
+
+    const current = existing as EventRow
+    if (current.status === 'canceled') {
+      return noStoreJson({ error: 'Canceled events cannot be edited.' }, 409)
+    }
+    if (current.status !== 'draft' && current.status !== 'scheduled') {
+      return noStoreJson({ error: 'Unable to save event changes.' }, 409)
+    }
+    if (
+      new Date(current.updated_at).getTime() !==
+      expectedUpdatedAt.date.getTime()
+    ) {
+      return noStoreJson(
+        { error: 'Event changed. Reload it and review your changes.' },
+        409
+      )
+    }
+
+    const { data: invitationRows, error: invitationError } =
+      await authorization.admin
+        .from('artistalks_event_invitations')
+        .select(
+          'rsvp_status, delivery_status, send_idempotency_key, last_delivery_error_code'
+        )
+        .eq('event_id', eventId)
+
+    if (invitationError) {
+      console.error('artistalks_event_update_failed')
+      return noStoreJson({ error: 'Unable to save event changes.' }, 500)
+    }
+
+    const invitations = (invitationRows ?? []) as InvitationLifecycleRow[]
+    if (invitations.some(invitationBlocksEditing)) {
+      return noStoreJson(
+        {
+          error:
+            'This event may already have reached an artist. Review its delivery before changing event details.',
+        },
+        409
+      )
+    }
+
+    const timingLocked = invitations.length > 0
+    if (
+      timingLocked &&
+      (new Date(current.starts_at).getTime() !==
+        new Date(normalized.event.startsAt).getTime() ||
+        new Date(current.ends_at).getTime() !==
+          new Date(normalized.event.endsAt).getTime() ||
+        current.timezone !== normalized.event.timezone)
+    ) {
+      return noStoreJson(
+        { error: 'Timing is locked because invitations have already been prepared.' },
+        409
+      )
+    }
+
+    const { data: updated, error: updateError } = await authorization.admin
+      .from('artistalks_events')
+      .update({
+        title: normalized.event.title,
+        description: normalized.event.description,
+        starts_at: normalized.event.startsAt,
+        ends_at: normalized.event.endsAt,
+        timezone: normalized.event.timezone,
+        location: normalized.event.location,
+        meeting_url: normalized.event.meetingUrl,
+      })
+      .eq('id', eventId)
+      .eq('created_by', authorization.userId)
+      .eq('updated_at', current.updated_at)
+      .select('id')
+      .maybeSingle()
+
+    if (updateError) {
+      console.error('artistalks_event_update_failed')
+      return noStoreJson({ error: 'Unable to save event changes.' }, 500)
+    }
+    if (!updated) {
+      return noStoreJson(
+        { error: 'Event changed. Reload it and review your changes.' },
+        409
+      )
+    }
+
+    return noStoreJson({ saved: true })
+  } catch {
+    console.error('artistalks_event_update_failed')
+    return noStoreJson({ error: 'Unable to save event changes.' }, 500)
   }
 }

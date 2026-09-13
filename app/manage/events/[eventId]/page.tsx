@@ -1,6 +1,7 @@
 import { randomUUID, timingSafeEqual } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
   artistSelectionHandleMatches,
@@ -1344,9 +1345,18 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#f5f1cf] sm:text-4xl">
             {event.title}
           </h1>
-          <p className="mt-3 inline-flex rounded-full border border-[#d8ad2a] bg-[#091b54] px-3 py-1 text-sm font-semibold text-[#f5f1cf]">
-            Status: {STATUS_LABELS[event.status]}
-          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="inline-flex rounded-full border border-[#d8ad2a] bg-[#091b54] px-3 py-1 text-sm font-semibold text-[#f5f1cf]">
+              Status: {STATUS_LABELS[event.status]}
+            </p>
+            <Link
+              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#62d391] px-4 py-2 text-sm font-semibold text-[#62d391] outline-none transition hover:bg-[#091b54] focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[#d8ad2a]"
+              href={`/manage/events/${eventId}/edit`}
+              prefetch={false}
+            >
+              EDIT EVENT
+            </Link>
+          </div>
         </header>
 
         <section className="rounded-2xl border border-[#d8ad2a] bg-[#091b54] p-5 shadow-[0_16px_50px_rgba(0,0,0,0.3)] sm:p-7">
