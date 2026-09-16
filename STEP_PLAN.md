@@ -1,6 +1,8 @@
 # STEP_PLAN.md — ArtisTalks Launch Plan
 
-**Status:** Private beta at `artistalks8526.vercel.app`.
+**Status:** ArtisTalks private beta. The Jai-only Mastermind invitation workflow
+is human-QA proven in Preview. This document does not assert a Production
+deployment.
 
 Sprint 1 save-and-restore proven:
 - first OTP saves profile + free-taste `curriculum_answers`;
@@ -9,8 +11,12 @@ Sprint 1 save-and-restore proven:
 - resume at the first genuinely unanswered step;
 - new answers after login persist across Data Reset and return.
 
-**Code baseline:** `ef49879` — Add PayPal subscription entitlement flow
-**Last updated:** 2026-08-25
+**Historical payment checkpoint:** `ef49879` — Add PayPal subscription
+entitlement flow
+**Current checkpoint:** 2026-09-13 — the first real Mastermind invitation send
+for PEMF Nashville reached provider-accepted and persisted `Sent` state in
+Preview.
+**Last updated:** 2026-09-13
 
 **MVP authority:** ArtisTalks is one page. The curriculum is the experience.
 Coaching language inspires curriculum copy. Product behavior comes from this
@@ -26,6 +32,19 @@ file and explicit approval.
 **The artist answers the emerald chat, and the page comes alive.**
 
 Everything in this plan serves that one sentence. If a proposed feature does not make the page come alive for an artist answering the chat, it is not in this lane.
+
+**Experience principle (preserved):** One chat. One featured focus/content. One
+question or objective at a time. Move one needle. Remove overwhelm.
+
+**Curriculum phase framing (preserved):**
+
+- PRE — artist first; prime yourself.
+- PROD — make the work.
+- POST — audience, release, and promotion. Audience research belongs in POST,
+  not PRE.
+- LEGACY — alignment, feedback, and the next loop.
+
+These phases form a feedback loop, not a rigid straight line.
 
 ### Chargeable path (locked)
 
@@ -515,9 +534,16 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current objective:** PayPal `$8` button funding cleanup (later code — not this
-docs checkpoint), then Venmo surface QA on eligible US/mobile, then Jai decides
-launch payment order. Sprint 5 Orbit tuition stays later.
+**Current objective:** Complete recipient-side Mastermind QA:
+
+1. confirm exactly one delivered email;
+2. test the real emailed RSVP link;
+3. verify the Zoom waiting-room and artist-name experience;
+4. verify Add to Google Calendar;
+5. reload the event and confirm `Sent` persists with no duplicate-send action.
+
+These checks remain `REQUIRES HUMAN VERIFICATION`. Production deployment is
+also unverified by this document. Sprint 5 Orbit tuition stays later.
 
 **Shipped through Sprint 4 flow QA (`6596ad0`) plus `$8` rails (`ef49879`):**
 - MVP core free-taste → save → restore → continue
@@ -537,11 +563,83 @@ launch payment order. Sprint 5 Orbit tuition stays later.
   (not a new subscription status)
 - Phase coin polish
 - Journey fork branching in spine
-- Admin dashboard (private beta uses Supabase Table Editor / SQL only)
+- General-purpose admin dashboard. A narrow Jai-only event-management workflow
+  now exists; Orbit application review still uses Supabase Table Editor / SQL.
 - Sprint 5 Orbit tuition after approval
 
 Code authority: `lib/curriculum.ts`, `app/page.tsx`, `components/EmeraldChat.tsx`, `components/ArtisTalksOrbitRenderer.tsx`.
 `$8` PayPal: `lib/paypal.ts`, `lib/saasPaypalDb.ts`, `app/api/webhooks/paypal/route.ts`, `components/SaasPaypalButtons.tsx`.
+
+### Jai-only Mastermind event and invitation workflow
+
+The Mastermind invitation MVP is functionally complete for the first private
+beta in Preview. This is a private ArtisTalks operations workflow, not a public
+artist directory or a general-purpose admin dashboard.
+
+Current flow:
+
+```text
+NEW EVENT
+→ save private draft
+→ reopen or edit event
+→ choose one artist, a saved group, or All eligible artists
+→ preview exact recipient names and count
+→ create missing invitation rows atomically
+→ review Ready / Sent / Needs verification
+→ explicit CONFIRM SEND
+→ individual Resend delivery
+→ persist each recipient's result
+→ artist explicitly chooses Accept / Maybe / Decline
+```
+
+Current rules:
+
+- Event management is Jai-only and server-authorized.
+- Eligible means current `active` or `comped`; every later action rechecks.
+- “All eligible artists” is a live virtual group and is not stored.
+- Custom groups are organizational only and do not grant eligibility.
+- Browser-visible artist selection uses canonical names and opaque HMAC handles
+  only.
+- `recipientSetDigest` protects the exact reviewed audience.
+- `sendReviewDigest` protects the exact reviewed invitation and delivery state.
+- A changed recipient set or changed send state causes zero sends and requires
+  another review.
+- Invitation preparation preserves existing rows and RSVP credentials.
+- Sending requires a valid HTTPS meeting URL. A reusable room link is event
+  data, not hardcoded email-template content.
+- The private-beta limit is five provider sends per explicit confirmation.
+- Sent invitations are never resent.
+- A definitive provider rejection is explicitly retryable with the same
+  immutable logical send identity.
+- Uncertain delivery becomes `Needs verification` and is not blindly retried.
+- Email is never triggered by payment, webhook, page load, preview, or
+  preparation.
+- Google Calendar currently uses a user-clicked prefilled URL. No Google OAuth
+  or Calendar API is used.
+
+Current tables:
+
+- `artistalks_events`
+- `artistalks_event_invitations`
+- `artistalks_invitation_groups`
+- `artistalks_invitation_group_members`
+
+Installed service-only functions:
+
+- `public.create_artistalks_invitation_group`
+- `public.prepare_artistalks_event_invitations`
+- `public.respond_to_artistalks_event_invitation`
+
+Code authority for this subsystem:
+
+- `app/manage/events/new/*`
+- `app/manage/events/[eventId]/*`
+- `app/rsvp/*`
+- `utils/supabase/requireJaiAdmin.ts`
+- `lib/artistalksInvitationSelection.ts`
+- `lib/artistalksRsvpToken.ts`
+- `lib/artistalksInvitationEmail.ts`
+- `scripts/add_artistalks_*.sql`
 
 ---
 
@@ -565,8 +663,9 @@ Real artist usage during the warm beta helps guide further curriculum work.
 
 Paid SaaS access (Slice E) shipped at `fe8d869`; conversational Orbit + flow QA
 complete at `6596ad0`; Stripe Card + PayPal `$8` sandbox proven at `ef49879`
-(Locked 2026-08-25). Next: PayPal funding cleanup, then Venmo surface QA;
-launch payment order undecided. Orbit tuition/payment remains Sprint 5.
+(Locked 2026-08-25). Venmo remains unproven and launch payment order remains
+undecided. The current recipient-side Mastermind QA objective is recorded in
+§8. Orbit tuition/payment remains Sprint 5.
 
 ---
 
@@ -699,8 +798,9 @@ Proven conversational scope:
 - Temporary product copy stays plain — do not invent Guide “apply yourself”
   poetry (`ARTISTALKS_GUIDE_VOICE.md` §6 remains `[NEEDS JAI]`)
 
-**Next objective:** PayPal `$8` funding cleanup, then Venmo surface QA ← current
-(see Locked 2026-08-25). Not Orbit tuition. Launch payment order undecided.
+**Historical next objective at this checkpoint:** PayPal `$8` funding cleanup,
+then Venmo surface QA (see Locked 2026-08-25). Not Orbit tuition. Launch payment
+order was undecided and remains undecided. The current objective is in §8.
 
 ### Payments — SaaS `$8` (after Sprint 4; before Sprint 5)
 
@@ -712,9 +812,9 @@ Proven conversational scope:
 3. PayPal `$8` sandbox on the same entitlement architecture:
    subscription → verified `PAYMENT.SALE.COMPLETED` → `provider='paypal'` →
    `provider_status='ACTIVE'` → `saas_subscription_status='active'`. **Proven.**
-   Venmo remains unproven. Next: funding cleanup (disable PayPal card, credit,
-   paylater; keep PayPal wallet + eligible Venmo), then real-phone Venmo
-   surface QA, then Jai decides launch UX order.
+   Venmo remains unproven. At the 2026-08-25 payment checkpoint, the planned
+   payment follow-up was funding cleanup, real-phone Venmo surface QA, and then
+   a Jai decision on launch UX order.
 4. `cancakes` remains permanently invisible (silent EmeraldChat recognition).
 5. Zero Orbit tuition code in this lane.
 
@@ -929,8 +1029,9 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 4. Unlock rules: `draft` = resume apply only (no deeper unlock);
    `submitted` | `approved` = Orbit-route curriculum continuation;
    `declined` = no Orbit entitlement (DIY `$8` still available).
-5. Payments assessment complete. Current objective: `$8` Stripe sandbox test
-   implementation — see Locked 2026-08-09 — Real payments decisions.
+5. Payments assessment was complete. The objective at this historical
+   checkpoint was `$8` Stripe sandbox test implementation — see Locked
+   2026-08-09 — Real payments decisions.
 6. Sprint 5 Orbit tuition stays later (`$500/mo × 6` or `$2,000`). Active Orbit
    includes ArtisTalks — no double `$8`. SaaS / Orbit application / Orbit
    tuition remain separate concepts. No Orbit fields in `curriculum_answers`.
@@ -938,8 +1039,8 @@ Jai has more curriculum arriving from other chats. Routing per `ECOSYSTEM_MEMORY
 
 ### Locked 2026-08-09 — Real payments decisions
 
-1. Payments **assessment complete**. Current objective: `$8` Stripe sandbox
-   test implementation, then PayPal / Venmo.
+1. Payments **assessment complete**. The objective at this historical
+   checkpoint was `$8` Stripe sandbox test implementation, then PayPal / Venmo.
 2. **Build/test order:** Stripe `$8` first (checkout, webhook, DB subscription
    record, `active` → `FAN_CONNECTION`, failed-payment → `past_due`). Then
    PayPal / Venmo on the same entitlement architecture.
@@ -991,10 +1092,12 @@ Checkpoint: `ef49879 — Add PayPal subscription entitlement flow`.
    `credit`, and `paylater`; keep the PayPal wallet path and any eligible
    Venmo funding source if/when PayPal surfaces it. Stripe already owns
    the Card experience inside EmeraldChat.
-7. Current objective after this checkpoint: that funding cleanup, then
+7. Historical objective after this checkpoint: that funding cleanup, then
    Venmo surface QA on eligible US/mobile, then Jai decides launch order.
-   Sprint 5 Orbit tuition stays later.
-8. Supersedes Locked 2026-08-09 items 1–2 as the **current objective**
+   The current objective is maintained in §8. Sprint 5 Orbit tuition stays
+   later.
+8. Superseded Locked 2026-08-09 items 1–2 as the **current objective** at that
+   checkpoint
    (those rails are now proven). Does not rewrite 2026-08-09. Items 4–8
    of that note remain in force (webhook-only access, `past_due` keeps
    access, invisible `cancakes`, no Orbit/SaaS/tuition collapse).

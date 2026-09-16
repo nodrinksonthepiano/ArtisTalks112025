@@ -136,6 +136,18 @@ Zeyoda (foundation)          ArtisTalks (UI)
 - `components/ArtisTalksOrbitRenderer.tsx` — orbit tokens
 - `hooks/useCarouselItems.ts` — card generation
 - `lib/curriculum.ts` — steps
+- `app/manage/events/new/*` — Jai-only draft event creation
+- `app/manage/events/[eventId]/*` — event detail, edit, recipient selection,
+  preparation, and explicit send
+- `app/rsvp/*` — public token-held RSVP display and explicit response
+- `utils/supabase/requireJaiAdmin.ts` — Jai authorization boundary
+- `lib/artistalksInvitationSelection.ts` — opaque selection handles and review
+  digests
+- `lib/artistalksRsvpToken.ts` — deterministic RSVP credentials and hashing
+- `lib/artistalksInvitationEmail.ts` — server-only template delivery and
+  calendar/RSVP URL creation
+- `scripts/add_artistalks_*.sql` — additive event, group, preparation, and RSVP
+  database contracts
 
 ---
 
@@ -144,3 +156,4 @@ Zeyoda (foundation)          ArtisTalks (UI)
 | Date | Session |
 |------|---------|
 | 2026-02-22 | Initial AGENT_NOTES.md. Full codebase read. Created AGENT_NOTES, ROADMAP, PRD v3, updated ZEYODA_KNOWLEDGE_BASE. |
+| 2026-09-13 | Jai-only Mastermind event/invitation workflow reached provider-accepted and persisted `Sent` state for PEMF Nashville in Preview. Earlier generic send failure led to fixed, non-sensitive preflight diagnostic classes. Recipient inbox, RSVP, Zoom, Calendar, reload/no-duplicate-send, and Production QA remain unverified. |

@@ -33,6 +33,10 @@ alwaysApply: true
   - reauthorize Jai
   - re-resolve the opaque handles server-side
   - recheck current eligibility
+- Jai event-management actions must reauthorize Jai before using the server-only admin client. Service-role access alone is never authorization.
+- Previewing or preparing invitations sends nothing. An invitation email may be sent only after an explicit Jai confirmation.
+- Sent invitations must never be resent. A definitive provider rejection may be explicitly retried with the same immutable logical send identity. Uncertain delivery is `Needs verification` and must never be blindly retried.
+- RSVP credentials are bearer secrets. Store only their SHA-256 hashes; never persist or log the raw credential. Opening an RSVP page must not mutate state; only an explicit Accept, Maybe, or Decline action may do so.
 - Any public artist-name recognition endpoint **must** ship with rate limiting in the same commit — it creates an enumeration surface that does not currently exist
 
 ## Language
@@ -85,7 +89,7 @@ alwaysApply: true
 
 - Artists may apply for Orbit without first subscribing to the $8/month SaaS.
 
-- Venmo comes before Stripe for the ArtisTalks private beta. Manual review is acceptable. Do not route ArtisTalks payments through Artistocks wallet/token rails.
+- Stripe Card and PayPal `$8` sandbox rails are proven. Venmo remains unproven. Do not describe the private-beta launch payment order as decided; current payment status and next work live in `STEP_PLAN.md`. Do not route ArtisTalks payments through Artistocks wallet/token rails.
 
 - The first launch is a private beta, not a broad `artistalks.org` public launch.
 

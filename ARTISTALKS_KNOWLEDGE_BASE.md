@@ -4,14 +4,15 @@
 1. [Product Boundary & Memory Routing](#product-boundary--memory-routing)
 2. [System Architecture Overview](#system-architecture-overview)
 3. [Database Schema & Structure](#database-schema--structure)
-4. [Curriculum Flow System](#curriculum-flow-system)
-5. [How to Add/Reorder Questions](#how-to-addreorder-questions)
-6. [Inline Picker System](#inline-picker-system)
-7. [Card Generation Logic](#card-generation-logic)
-8. [Live Preview System](#live-preview-system)
-9. [Critical Patterns & Gotchas](#critical-patterns--gotchas)
-10. [Known Issues & Fixes Needed](#known-issues--fixes-needed)
-11. [Upstream: Zeyoda](#upstream-zeyoda-foundation)
+4. [Jai-Only Event and Invitation Subsystem](#jai-only-event-and-invitation-subsystem)
+5. [Curriculum Flow System](#curriculum-flow-system)
+6. [How to Add/Reorder Questions](#how-to-addreorder-questions)
+7. [Inline Picker System](#inline-picker-system)
+8. [Card Generation Logic](#card-generation-logic)
+9. [Live Preview System](#live-preview-system)
+10. [Critical Patterns & Gotchas](#critical-patterns--gotchas)
+11. [Known Issues & Fixes Needed](#known-issues--fixes-needed)
+12. [Upstream: Zeyoda](#upstream-zeyoda-foundation)
 
 ---
 
@@ -130,6 +131,84 @@ user_id: abc123, question_key: 'logo_uploaded', answer_data: {"text": "Logo uplo
 
 ---
 
+## Jai-Only Event and Invitation Subsystem
+
+This is a private ArtisTalks operations subsystem, not part of the public
+curriculum flow.
+
+### Authority boundary
+
+All management pages and actions use `requireJaiAdmin()`. The browser never
+receives recipient email, internal user/profile/invitation IDs, raw entitlement
+status, provider identifiers, environment values, RSVP credentials, or send
+keys. Service-role access does not replace application authorization.
+
+### Data model
+
+- `artistalks_events`
+- `artistalks_event_invitations`
+- `artistalks_invitation_groups`
+- `artistalks_invitation_group_members`
+
+Installed service-only functions:
+
+- `public.create_artistalks_invitation_group`
+- `public.prepare_artistalks_event_invitations`
+- `public.respond_to_artistalks_event_invitation`
+
+The event and invitation tables allow invited artists to read only their own
+delivered records through RLS. The group tables have no normal browser read or
+write policies. Browser mutations do not bypass the authorized server flow.
+
+### Selection and preparation
+
+Eligible recipients are current `active` or `comped` artists. Artist handles,
+group handles, recipient-set digests, and send-review digests are deterministic
+HMAC values with separate domains. They reveal no underlying ID and grant no
+authority by themselves. Every preview, preparation, and send reauthorizes Jai,
+re-resolves the selection, and rechecks current eligibility.
+
+Preparation is atomic, creates only missing invitations, preserves existing
+invitation identities and RSVP credentials, and inserts nothing when the
+expected recipient set is stale.
+
+### Delivery lifecycle
+
+- `Ready` — pending, unsent, unclaimed, valid credential
+- `Sent` — provider accepted and persisted; never resend
+- retryable failure — definitive provider rejection; reuse the same immutable
+  logical send identity
+- `Needs verification` — claimed, uncertain, expired, invalid, or unexpected
+  state; do not blindly retry
+
+The current private-beta limit is five provider calls per explicit Jai
+confirmation. Preview and preparation send nothing. Payment, webhook, page
+load, and event creation do not send invitations.
+
+### RSVP
+
+The invitation link carries a bearer credential in the URL fragment. The raw
+credential is removed from the visible URL after load, remains only in browser
+memory for the RSVP interaction, and is never stored or logged. Server lookup
+uses its SHA-256 hash and requires a delivered, unexpired invitation. Opening
+the page never changes RSVP state; Accept, Maybe, and Decline are explicit
+mutations.
+
+### Server-only configuration names
+
+These names may be referenced in source and documentation; their values must
+never be recorded:
+
+- `ARTISTALKS_JAI_USER_ID`
+- `ARTISTALKS_RSVP_TOKEN_SECRET`
+- `ARTISTALKS_SELECTION_HANDLE_SECRET`
+- `RESEND_API_KEY`
+- `ARTISTALKS_MASTERMIND_INVITATION_TEMPLATE_ID`
+- `ARTISTALKS_WELCOME_TEMPLATE_ID` — reserved for future Welcome-email wiring;
+  the current event invitation flow does not use it
+
+---
+
 ## Curriculum Flow System
 
 ### Step Definition Structure
@@ -143,7 +222,7 @@ STEP_ID: {
   nextStep: 'NEXT_STEP_ID',        // Where to go after this step
   key: 'question_key',             // Database key (curriculum_answers.question_key)
   placeholder?: "Placeholder...",  // Input placeholder (optional)
-  triggersPanel?: 'colors' | 'asset',  // Inline picker type (optional)
+  triggersPanel?: BrandPanelKind | 'asset',  // Inline picker type (optional)
   input?: StepInput,               // Typed input descriptor (optional)
   phase?: 'pre' | 'prod' | 'post' | 'legacy'  // Phase for progress tracking
 }
@@ -154,14 +233,17 @@ STEP_ID: {
 ```typescript
 | { kind: 'text'; placeholder?: string }
 | { kind: 'select'; options: { label: string; value: PillarChoice }[] }
-| { kind: 'panel'; panel: 'colors' | 'asset' }
+| { kind: 'panel'; panel: BrandPanelKind | 'asset' }
 ```
 
-**Only two panel types exist:** `colors` and `asset`. There is no separate `logo` or `font` panel type in the step schema — logo and font are handled inside the inline colors picker, which saves the `logo_uploaded` and `font_set` answer keys on Send (see `components/EmeraldChat.tsx:602-641`). The standalone `LogoPanel` and `FontPanel` components still exist and are reachable via `activePanel`, but the main V2 flow does not route through them.
+**Four panel kinds currently exist:** `logo`, `colors`, `font`, and `asset`.
+`BrandPanelKind` covers the three visual brand panels, and the current main
+source flow routes through separate Logo, Colors, and Font steps.
 
-### Current Flow Order (Curriculum V2 spine)
+### Historical Flow Order Snapshot (Curriculum V2 spine)
 
-This is the flow the code actually implements. Verified against `lib/curriculum.ts` on 2026-08-01.
+The table below is retained as historical evidence from the 2026-08-01 audit.
+It is not current implementation authority.
 
 | # | Step ID | Key | `phase` tag |
 |---|---------|-----|-------------|
@@ -188,7 +270,21 @@ This is the flow the code actually implements. Verified against `lib/curriculum.
 | 21 | `GRATITUDE_MOMENTUM` | `gratitude_momentum` | `legacy` |
 | 22 | `COMPLETE` | `completed` | `legacy` (end state) |
 
-Steps 1–8 are the **free taste**: 8 steps, 7 questions (step 2 is a panel, not a question). The living affirmation completes at step 8, followed by the email save/apply gate. See `STEP_PLAN.md` §5.
+At the time of this historical snapshot, steps 1–8 were described as the free
+taste. That count is not current authority.
+
+> **Source-drift notice:** Current `lib/curriculum.ts` includes a `SYMBOL`
+> question and separate Logo, Colors, and Font panel steps. That source path
+> does not match the locked 10-step / 7-question / 3-panel wording in
+> `STEP_PLAN.md` and `.cursor/rules/constraints.mdc`. This documentation ticket
+> does not decide which count is intended. Raise the mismatch with Jai before
+> changing curriculum code or locked product language.
+
+> **Phase-policy drift notice:** `CURRICULUM_V2.md` retains an older broad
+> `audience` bullet under PRE. Current Jai-approved framing places audience
+> research in POST with release and promotion. Do not move audience research to
+> PRE; this notice does not reassign any active question or resolve the separate
+> curriculum-count disagreement.
 
 ⚠️ **Known issue — scrambled phase tags.** Steps 4 and 6 jump the orbit tokens out of the `pre` lane and back for a single step, which makes the token fill look random during the free taste. A fix is documented as Sprint 4 in `STEP_PLAN.md` and has **not** been applied. Also flagged in `ARTISTALKS_EXPERIENCE_ARCHITECTURE.md` §1.4.
 
@@ -758,7 +854,4 @@ Zeyoda references here are shared ecosystem patterns for UI, theming, events, an
 
 **Critical Fix Needed:**
 - PRE_COMPLETE should check if logo exists before showing
-
-
-
 
