@@ -157,7 +157,37 @@ Ticket 0 must prove:
 3. keyboard-open answering;
 4. keyboard-open lower-artifact editing.
 
-The prototype’s exact location remains an OPEN PRODUCT DECISION.
+Ticket 0 prototype location: isolated development-only route inside the
+ArtisTalks repository. This decision is now resolved.
+
+#### Ticket 0 QA checkpoint — 2026-09-17
+
+Status: PROVISIONALLY CLOSED for forward progress.
+
+PROVEN BY HUMAN QA — iPhone Safari
+- Stage root-relative position remains stable.
+- Stage height remains stable.
+- Active Stage item remains unchanged.
+- Composer remains usable above the native keyboard.
+- Active edit target remains usable.
+- Native keyboard editing works.
+
+OBSERVED BROWSER BEHAVIOR
+- Safari `visualViewport.offsetTop` may vary independently from root-relative layout.
+- No 51px Stage compensation is justified.
+
+PARKED
+- Focus Lab and one-tap textarea behavior.
+- The working two-tap prototype behavior is acceptable for this experiment.
+
+PENDING HUMAN QA
+- One Android Chrome closed/open/type/dismiss cycle.
+- Android QA is not blocking continued front-end work.
+
+Ticket 0 is not fully cross-browser proven.
+
+Next planning priority: persistent collapsed Emerald and stable page shell.
+Ticket 1 persistence remains pending and unchanged.
 
 Every ticket requires separate approval. Section 11 remains in force. Ticket 3
 is the coordinated ownership ticket; no partial curriculum/viewed-work split
