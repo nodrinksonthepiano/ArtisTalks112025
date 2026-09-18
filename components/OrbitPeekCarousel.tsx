@@ -106,6 +106,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
   const pinnedActiveRef = useRef<boolean>(false);
   const pinnedWRef = useRef<number>(0);
   const pinnedHRef = useRef<number>(0);
+  const pinnedViewportWidthRef = useRef<number>(0);
   const videoRefs = useRef<Map<number, HTMLVideoElement>>(new Map()); // keyed by itemIdx
   const imageRefs = useRef<Map<number, HTMLImageElement>>(new Map()); // keyed by itemIdx
   const audioRefs = useRef<Map<number, HTMLAudioElement>>(new Map()); // keyed by itemIdx
@@ -159,6 +160,19 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
   const prevItem = items[prevIndex] || items[effectiveIndex];
   const currItem = items[effectiveIndex];
   const nextItem = items[nextIndex] || items[effectiveIndex];
+  const activeMediaSignature = currItem
+    ? [
+        currItem.id,
+        currItem.videoUrl || '',
+        currItem.imageUrl || '',
+        currItem.audioUrl || '',
+      ].join('|')
+    : '';
+  const activeItemHasMedia = !!(
+    currItem?.videoUrl ||
+    currItem?.imageUrl ||
+    currItem?.audioUrl
+  );
 
   useEffect(() => { effectiveIndexRef.current = effectiveIndex; }, [effectiveIndex]);
   useEffect(() => { isHeroMutedRef.current = isHeroMuted; }, [isHeroMuted]);
@@ -293,6 +307,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     // Reset pinning and cached measurements
     pinnedActiveRef.current = false;
     pinnedWRef.current = 0; pinnedHRef.current = 0;
+    pinnedViewportWidthRef.current = 0;
     cachedHRef.current = null; lastWRef.current = null;
     if (root) { try { (root as HTMLDivElement).style.width = ''; (root as HTMLDivElement).style.height = ''; } catch {} }
     // Accept external index immediately for new dataset
@@ -723,6 +738,12 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
           pinnedActiveRef.current = true;
           pinnedWRef.current = w;
           pinnedHRef.current = h;
+          pinnedViewportWidthRef.current = Math.max(
+            320,
+            Math.round(
+              window.visualViewport?.width || window.innerWidth || 0
+            )
+          );
           (root as HTMLDivElement).style.width = `${w}px`;
           (root as HTMLDivElement).style.height = `${h}px`;
         cachedHRef.current = pinnedHRef.current;
@@ -746,15 +767,34 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     };
     raf = requestAnimationFrame(tryPin);
     timeoutId = window.setTimeout(() => { timeoutFired = true; }, 300) as unknown as number;
-    const onReflow = () => {
-      // Only react to real layout changes (>10% width delta)
+    const onReflow = (force: boolean = false) => {
+      const viewportWidth = Math.max(
+        320,
+        Math.round(
+          window.visualViewport?.width || window.innerWidth || 0
+        )
+      );
+      const previousViewportWidth = pinnedViewportWidthRef.current;
+      const viewportWidthDelta = previousViewportWidth
+        ? Math.abs(viewportWidth - previousViewportWidth) /
+          previousViewportWidth
+        : 1;
+
+      // Mobile keyboard and browser-toolbar changes can alter viewport height
+      // and offset independently from the Stage's root-relative layout. Keep
+      // the existing pin unless width/orientation meaningfully changed.
+      if (!force && pinnedActiveRef.current && viewportWidthDelta <= 0.03) {
+        return;
+      }
+
       if (pinnedActiveRef.current) {
         const { w, h } = computeFitBox();
         const dw = Math.abs(w - pinnedWRef.current) / (pinnedWRef.current || 1);
         const dh = Math.abs(h - pinnedHRef.current) / (pinnedHRef.current || 1);
-        if (dw > 0.03 || dh > 0.03) {
+        if (force || dw > 0.03 || dh > 0.03) {
           // Re-pin width and height to new layout using fit-box
           pinnedWRef.current = w; pinnedHRef.current = h;
+          pinnedViewportWidthRef.current = viewportWidth;
           try {
             (root as HTMLDivElement).style.width = `${w}px`;
             (root as HTMLDivElement).style.height = `${h}px`;
@@ -771,6 +811,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
           } catch {}
         } else {
           // Ignore minor viewport jitters
+          pinnedViewportWidthRef.current = viewportWidth;
           return;
         }
       } else {
@@ -778,6 +819,8 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
       }
       dirtyRef.current = true; startLoop();
     };
+    const onWindowResize = () => onReflow(false);
+    const onOrientationChange = () => onReflow(true);
     // Visibility guard: if carousel is mostly off-screen, snap to rest and ignore wheel deltas
     const io = new IntersectionObserver((entries) => {
       const ent = entries[0];
@@ -839,8 +882,8 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
         }
       } catch {}
     }, { passive: false });
-    window.addEventListener('resize', onReflow);
-    window.addEventListener('orientationchange', onReflow);
+    window.addEventListener('resize', onWindowResize);
+    window.addEventListener('orientationchange', onOrientationChange);
     return () => {
       if (raf) cancelAnimationFrame(raf);
       if (timeoutId) window.clearTimeout(timeoutId);
@@ -849,8 +892,8 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
       root.removeEventListener('touchend', te as any);
       root.removeEventListener('touchcancel', tc as any);
       root.removeEventListener('wheel', onWheel as any);
-      window.removeEventListener('resize', onReflow);
-      window.removeEventListener('orientationchange', onReflow);
+      window.removeEventListener('resize', onWindowResize);
+      window.removeEventListener('orientationchange', onOrientationChange);
       window.removeEventListener('scroll', onScroll as any);
       try { io.disconnect(); } catch {}
       if (vv) { try { vv.removeEventListener('resize', onVV); vv.removeEventListener('scroll', onVV); } catch {} }
@@ -863,9 +906,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     if (!root) return;
     try {
       // For text cards (no media), set square aspect immediately
-      const currentItem = items[effectiveIndex];
-      const hasMedia = !!(currentItem?.videoUrl || currentItem?.imageUrl || currentItem?.audioUrl);
-      if (!hasMedia && !naturalAspect) {
+      if (!activeItemHasMedia && !naturalAspect) {
         setNaturalAspect(1.0);
         return;
       }
@@ -873,6 +914,12 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
       const { w, h } = computeFitBox();
       pinnedActiveRef.current = true;
       pinnedWRef.current = w; pinnedHRef.current = h;
+      pinnedViewportWidthRef.current = Math.max(
+        320,
+        Math.round(
+          window.visualViewport?.width || window.innerWidth || 0
+        )
+      );
       (root as HTMLDivElement).style.width = `${w}px`;
       (root as HTMLDivElement).style.height = `${h}px`;
       cachedHRef.current = pinnedHRef.current; lastWRef.current = w;
@@ -887,7 +934,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
         });
       } catch {}
     } catch {}
-  }, [naturalAspect, items, effectiveIndex, startLoop, computeFitBox]);
+  }, [naturalAspect, activeMediaSignature, activeItemHasMedia, startLoop, computeFitBox]);
 
   // Trigger animation when index changes or items load (Zeyoda pattern: ensure initial render)
   useEffect(() => { 

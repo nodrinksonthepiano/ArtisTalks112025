@@ -153,7 +153,7 @@ export default function Home() {
 
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
-    { id: 'pre' as const, label: 'PRE', progress: progress.preProgress },
+    { id: 'pre' as const, label: 'PREPRO', progress: progress.preProgress },
     { id: 'prod' as const, label: 'PROD', progress: progress.proProgress },
     { id: 'post' as const, label: 'POST', progress: progress.postProgress },
     { id: 'legacy' as const, label: 'LEGACY', progress: progress.loopProgress },
@@ -951,7 +951,7 @@ export default function Home() {
                 </p>
               )}
 
-              {showCarouselStage ? (
+              {showCarouselStage && activeStepId !== 'INIT' ? (
                 <div
                   ref={haloContainerRef}
                   className="artis-carousel-stage relative w-full max-w-5xl mx-auto"

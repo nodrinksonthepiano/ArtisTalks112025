@@ -96,9 +96,11 @@ interface EmeraldChatProps {
   onDraftRefresh?: () => void
   affirmationReadyToSave?: boolean
   onSaasAccessActivated?: () => Promise<void> | void
+  /** Presentation only: use the persistent compact/expanded Emerald shell. */
+  isDocked?: boolean
 }
 
-const INIT_WELCOME_HEADLINE = 'Welcome, My Champion...'
+const INIT_WELCOME_HEADLINE = 'Welcome, my champion...'
 
 export default function EmeraldChat({
   onProfileUpdate,
@@ -114,6 +116,7 @@ export default function EmeraldChat({
   onDraftRefresh,
   affirmationReadyToSave = true,
   onSaasAccessActivated,
+  isDocked = false,
 }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
@@ -123,6 +126,7 @@ export default function EmeraldChat({
   const [history, setHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([])
   const [fullHistory, setFullHistory] = useState<Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>>([]) // Full history for history button
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
+  const [isSurfaceExpanded, setIsSurfaceExpanded] = useState(() => !isDocked)
   
   // Live panel drafts (profile still updates on each change for preview)
   const [currentPickerState, setCurrentPickerState] = useState<{
@@ -487,6 +491,31 @@ export default function EmeraldChat({
     isBrandStep &&
     (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
   const showBrandSummary = isBrandStep && !showBrandPicker
+  const requiresExpandedSurface =
+    !isDocked ||
+    showClaimedGate ||
+    showGateUI ||
+    showContinuationChoice ||
+    showOrbitChat ||
+    showSaasPayment ||
+    showBrandPicker ||
+    isSelectInputStep ||
+    showHistory ||
+    isSubmitting ||
+    !!input.trim() ||
+    !!saveError ||
+    !!claimError ||
+    currentStepId === 'COMPLETE' ||
+    currentStepId.includes('_COMPLETE')
+  const emeraldExpanded = !isDocked || isSurfaceExpanded || requiresExpandedSurface
+
+  // Active flows may wake Emerald, but this ticket never collapses it
+  // automatically. Returning to compact mode is always an explicit action.
+  useEffect(() => {
+    if (requiresExpandedSurface) {
+      setIsSurfaceExpanded(true)
+    }
+  }, [requiresExpandedSurface])
   
   // Notify parent of current step change (for carousel)
   // CRITICAL: Always notify parent when currentStepId changes
@@ -2127,7 +2156,13 @@ export default function EmeraldChat({
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mx-auto rounded-lg overflow-hidden"
+      className={`artis-emerald mx-auto rounded-lg overflow-hidden${
+        isDocked ? ' artis-emerald--docked' : ''
+      }${emeraldExpanded ? ' artis-emerald--expanded' : ' artis-emerald--collapsed'}`}
+      data-emerald-state={emeraldExpanded ? 'expanded' : 'collapsed'}
+      onFocusCapture={() => {
+        if (isDocked) setIsSurfaceExpanded(true)
+      }}
       style={{
         backgroundImage: 'url(/IMG_723E215270D1-1.jpeg)',
         backgroundSize: 'cover',
@@ -2139,10 +2174,32 @@ export default function EmeraldChat({
         textAlign: 'center', /* EXACT from nodrinks */
         color: 'white', /* EXACT from nodrinks */
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
-        minHeight: showBrandPicker ? '500px' : 'auto'
       }}
     >
-      <div>
+      {isDocked ? (
+        <div className="artis-emerald-controls">
+          <span className="artis-emerald-future-edit-slot" aria-hidden="true" />
+          <button
+            type="button"
+            className="artis-emerald-toggle"
+            onClick={() => {
+              if (emeraldExpanded) {
+                if (!requiresExpandedSurface) setIsSurfaceExpanded(false)
+              } else {
+                setIsSurfaceExpanded(true)
+              }
+            }}
+            disabled={emeraldExpanded && requiresExpandedSurface}
+            aria-expanded={emeraldExpanded}
+            aria-label={emeraldExpanded ? 'Collapse Emerald' : 'Expand Emerald'}
+            title={emeraldExpanded ? 'Collapse Emerald' : 'Expand Emerald'}
+          >
+            <span aria-hidden="true">{emeraldExpanded ? '⌄' : '⌃'}</span>
+          </button>
+        </div>
+      ) : null}
+
+      <div className="artis-emerald-body">
         {/* Current Question OR Inline Picker OR anonymous gate OR claimed sanctuary */}
         {showClaimedGate ? (
           <ClaimedArtistGate
@@ -2530,12 +2587,39 @@ export default function EmeraldChat({
                     {orbitReceiptLine}
                   </p>
                 ) : null}
-                <h1 className="gold-etched" style={{ marginTop: '0', marginBottom: '20px' }}>
+                <h1
+                  className="gold-etched"
+                  style={{
+                    marginTop: '0',
+                    marginBottom:
+                      isAnonymous && currentStepId === 'INIT' && input.length > 0
+                        ? '8px'
+                        : '20px',
+                  }}
+                >
                   {currentStepId === 'INIT'
                     ? INIT_WELCOME_HEADLINE
                     : currentStep.question
                   }
                 </h1>
+                {isAnonymous && currentStepId === 'INIT' && input.length > 0 ? (
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    style={{
+                      margin: '0 0 20px',
+                      color: '#fff4b8',
+                      fontSize: 'clamp(1rem, 4.2vw, 1.15rem)',
+                      fontWeight: 700,
+                      lineHeight: 1.35,
+                      letterSpacing: '0.01em',
+                      textShadow: '0 1px 2px rgba(0, 0, 0, 0.95)',
+                    }}
+                  >
+                    {currentStep.question}
+                  </motion.p>
+                ) : null}
               </>
             )}
           </>
@@ -2603,7 +2687,9 @@ export default function EmeraldChat({
             </div>
           </div>
         )}
-        
+      </div>
+
+      <div className="artis-emerald-composer">
         {/* Input Area — claimed sanctuary / gate OTP / post-pillar forks are separate from curriculum submit */}
         {showClaimedGate || showContinuationChoice ? null : showSaasPayment ? (
           <form
