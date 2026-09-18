@@ -2,6 +2,15 @@
 
 **Status:** Draft for review — revised after lived test (Jun 2026). No code changes implied by this document.
 
+> **Target-direction notice — 2026-09-17:** This document remains evidence for
+> current implemented swipe-sync behavior and the failed June partial split. Its
+> future target is superseded by the current front-end UX checkpoint in
+> `STEP_PLAN.md`.
+>
+> Adaptive Stage intends to separate curriculum position, viewed work, and edit
+> target. Current swipe-sync remains unchanged until the coordinated ownership
+> ticket is separately approved. Do not implement that split piecemeal.
+
 **Agent note:** Swipe **must** dispatch `cardNavigate` and sync chat to the visible card. Do **not** remove that dispatch unless the full focus/objective split (`focusStepId`, "Answer this" promotion, browse-mode UI) ships together. A partial split feels broken: carousel moves, Emerald stays on a different question.
 
 **Purpose:** Settle the "room rules" so chat, carousel, cards, panels, and tokens stop arguing over who owns the artist's focus. Everything downstream — branching, living cards, lessons, park-for-later — depends on these rules being decided first.

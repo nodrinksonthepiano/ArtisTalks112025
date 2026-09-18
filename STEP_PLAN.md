@@ -16,7 +16,7 @@ entitlement flow
 **Current checkpoint:** 2026-09-13 — the first real Mastermind invitation send
 for PEMF Nashville reached provider-accepted and persisted `Sent` state in
 Preview.
-**Last updated:** 2026-09-13
+**Last updated:** 2026-09-17
 
 **MVP authority:** ArtisTalks is one page. The curriculum is the experience.
 Coaching language inspires curriculum copy. Product behavior comes from this
@@ -36,15 +36,16 @@ Everything in this plan serves that one sentence. If a proposed feature does not
 **Experience principle (preserved):** One chat. One featured focus/content. One
 question or objective at a time. Move one needle. Remove overwhelm.
 
-**Curriculum phase framing (preserved):**
+**Current curriculum display phases:**
 
-- PRE — artist first; prime yourself.
-- PROD — make the work.
-- POST — audience, release, and promotion. Audience research belongs in POST,
-  not PRE.
-- LEGACY — alignment, feedback, and the next loop.
+- PREPRO — prime, prepare, plan, clarify the artist and the work.
+- PROD — create the work.
+- POST — edit, mix, master, professionally package, create supporting
+  materials, market, prepare release, and post the work into the world.
+- LEGACY — results, reflection, alignment, evidence, growth, feedback,
+  and the next loop.
 
-These phases form a feedback loop, not a rigid straight line.
+Internal phase IDs remain `pre`, `prod`, `post`, and `legacy`.
 
 ### Chargeable path (locked)
 
@@ -63,6 +64,104 @@ EmeraldChat
 Parked for now: Final Cut, Blender, workshop automation, NFC coin claim port,
 LLM Guide (last), dreamboard/tesseract, Google working studio.
 (DIY `$8` Stripe/PayPal rails are proven — see Locked 2026-08-25. Launch payment order waits on Venmo evidence.)
+
+### Current front-end UX checkpoint — 2026-09-17
+
+This checkpoint records product direction. It does not authorize implementation.
+
+#### Parallel work lanes
+
+- Mastermind recipient-side QA remains open as the operations QA lane.
+- Front-end UX proceeds separately, beginning with documentation and then the
+  separately approved keyboard/focus prototype.
+- Neither lane is erased or declared complete by progress in the other.
+
+#### Artist universe
+
+ArtisTalks remains one stable artist universe:
+
+- Stage — featured artist work or a temporary visual/interactive curriculum
+  module or edit target.
+- Lower artist world — Sanctuary, results, and evolving landing-page material.
+- Emerald — the persistent coaching and control surface.
+
+Adaptive Stage is the intended model. Real artist work becomes the default
+Stage content once it exists. The exact Stage home state before real work
+exists remains an OPEN PRODUCT DECISION.
+
+Curriculum retains one authority. Keep these meanings distinct:
+
+1. curriculum position;
+2. viewed work;
+3. edit target.
+
+Browsing work must not silently change the pending curriculum question.
+
+#### Emerald direction
+
+Emerald’s intended states are:
+
+- collapsed — compact input, Send, Edit, and an optional quiet next-question helper;
+- active coaching — question, relevant action, and input;
+- edit — one compact editing group at a time;
+- keyboard-open — composer meets the native keyboard while Stage context and
+  position remain stable.
+
+A next question may be ready without automatically reopening the keyboard.
+
+#### Phase teaching and progressive reveal
+
+Phase coins reveal progressively, one at a time, as the artist moves through
+questions associated with PREPRO, PROD, POST, and LEGACY.
+
+Do not show all four initially.
+
+The reveal is part of teaching the ArtisTalks framework. By
+`CURRENT_FOCUS_PILLAR`, the artist should have been introduced to the phase
+system clearly enough that the four-part loop can be laid out together and
+understood.
+
+This checkpoint does not change current phase-tag mapping. Phase alignment
+requires a separate curriculum ticket.
+
+#### SYMBOL and free-taste count
+
+Keep `SYMBOL` in the live curriculum. Do not remove it merely to restore the
+older 10-step / 7-question / 3-panel count.
+
+The current live spine contains 11 total steps, 8 written questions, and
+3 visual brand panels through `BUSINESS_OFFERING`. Existing locked 10/7/3
+documentation requires separate reconciliation.
+
+#### Saved playground boundary
+
+The exact limited saved-playground boundary remains an OPEN PRODUCT DECISION.
+
+It does not block the isolated keyboard prototype. No UX ticket is authorized
+to change post-save access, curriculum routing, subscriptions, or Orbit behavior
+while that boundary remains unresolved.
+
+#### Current front-end ticket sequence
+
+0. isolated keyboard/focus prototype;
+1. trustworthy persistence with Saving, Saved, failure, Retry, and Undo;
+2. persistent collapsed Emerald and compact editing;
+3. curriculum position versus viewed work versus edit target;
+4. lower-artifact promotion and Mad-Lib Living Affirmation;
+5. one real artist work and one real demo.
+
+Ticket 0 must prove:
+
+1. ordinary viewing;
+2. compact color editing;
+3. keyboard-open answering;
+4. keyboard-open lower-artifact editing.
+
+The prototype’s exact location remains an OPEN PRODUCT DECISION.
+
+Every ticket requires separate approval. Section 11 remains in force. Ticket 3
+is the coordinated ownership ticket; no partial curriculum/viewed-work split
+is authorized.
 
 ---
 
@@ -534,7 +633,8 @@ Approved invariants:
 
 ### Known gaps before warm beta MVP
 
-**Current objective:** Complete recipient-side Mastermind QA:
+**Current operations QA objective — parallel lane:** Complete recipient-side
+Mastermind QA:
 
 1. confirm exactly one delivered email;
 2. test the real emailed RSVP link;
