@@ -2154,8 +2154,14 @@ export default function EmeraldChat({
 
   return (
     <motion.div 
+      layout="position"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={{
+        opacity: { duration: 0.2 },
+        y: { duration: 0.2 },
+        layout: { duration: 0.36, ease: 'easeOut' },
+      }}
       className={`artis-emerald mx-auto rounded-lg overflow-hidden${
         isDocked ? ' artis-emerald--docked' : ''
       }${emeraldExpanded ? ' artis-emerald--expanded' : ' artis-emerald--collapsed'}`}
@@ -2176,7 +2182,7 @@ export default function EmeraldChat({
         margin: '0 auto', /* Zeyoda pattern: no extra margin, parent handles spacing */
       }}
     >
-      {isDocked ? (
+      {isDocked && !(isAnonymous && currentStepId === 'INIT') ? (
         <div className="artis-emerald-controls">
           <span className="artis-emerald-future-edit-slot" aria-hidden="true" />
           <button

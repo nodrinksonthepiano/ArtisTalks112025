@@ -67,6 +67,83 @@ body {
   margin-bottom: 16px;
 }
 
+.artis-page-shell {
+  --artis-visual-bottom-offset: 0px;
+  width: 100%;
+}
+
+.artis-page-shell.artis-page-shell--awake {
+  padding-bottom: clamp(14rem, 34vh, 22rem);
+}
+
+.artis-emerald {
+  transition:
+    width 360ms ease,
+    max-width 360ms ease,
+    padding 360ms ease,
+    border-radius 360ms ease,
+    box-shadow 360ms ease;
+}
+
+.artis-emerald--docked {
+  position: fixed;
+  right: 12px;
+  bottom: calc(
+    var(--artis-visual-bottom-offset, 0px) +
+      max(10px, env(safe-area-inset-bottom, 0px))
+  );
+  left: 12px;
+  z-index: 1000;
+  width: calc(100% - 24px) !important;
+  max-width: 450px !important;
+  max-height: calc(
+    100dvh - var(--artis-visual-bottom-offset, 0px) -
+      max(20px, env(safe-area-inset-top, 0px))
+  );
+  margin: 0 auto !important;
+  padding: 14px 16px !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.artis-emerald-controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 28px;
+  margin-bottom: 6px;
+}
+
+.artis-emerald-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(253, 230, 138, 0.45);
+  border-radius: 999px;
+  color: #fff4b8;
+  background: rgba(6, 78, 59, 0.72);
+  cursor: pointer;
+}
+
+.artis-emerald-toggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.artis-emerald--collapsed {
+  padding: 8px 12px !important;
+}
+
+.artis-emerald--collapsed .artis-emerald-body {
+  display: none;
+}
+
+.artis-emerald--collapsed .artis-emerald-controls {
+  margin-bottom: 2px;
+}
+
 @media (max-width: 767px) {
   .artis-page-shell {
     min-height: 100vh;

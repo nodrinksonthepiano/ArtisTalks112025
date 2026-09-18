@@ -35,6 +35,7 @@ import {
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 
 export default function Home() {
+  const pageShellRef = useRef<HTMLDivElement | null>(null)
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [migrating, setMigrating] = useState(false)
@@ -46,6 +47,38 @@ export default function Home() {
   const { profile, updateProfile, loading: profileLoading, reloadProfile } = useProfile(user?.id ?? null)
 
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
+
+  useEffect(() => {
+    const shell = pageShellRef.current
+    if (!shell) return
+
+    const syncVisualViewport = () => {
+      const viewport = window.visualViewport
+      const viewportHeight = viewport?.height ?? window.innerHeight
+      const viewportOffsetTop = viewport?.offsetTop ?? 0
+      const bottomOffset = Math.max(
+        0,
+        window.innerHeight - viewportHeight - viewportOffsetTop
+      )
+
+      shell.style.setProperty(
+        '--artis-visual-bottom-offset',
+        `${Math.round(bottomOffset)}px`
+      )
+    }
+
+    syncVisualViewport()
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', syncVisualViewport)
+    viewport?.addEventListener('scroll', syncVisualViewport)
+    window.addEventListener('resize', syncVisualViewport)
+
+    return () => {
+      viewport?.removeEventListener('resize', syncVisualViewport)
+      viewport?.removeEventListener('scroll', syncVisualViewport)
+      window.removeEventListener('resize', syncVisualViewport)
+    }
+  }, [])
 
   const [answeredKeys, setAnsweredKeys, reloadAnsweredKeys, answeredKeysReady] =
     useAnsweredKeys(user?.id ?? null)
@@ -519,7 +552,9 @@ export default function Home() {
 
   const showCarouselStage = (() => {
     if (activeStepId === 'INIT') {
-      return currentTypingInput.length > 0 || (carouselItems && carouselItems.length >= 1)
+      // Typing wakes the artist identity and docks Emerald, but INIT must be
+      // successfully submitted before the Stage is unveiled.
+      return false
     }
     return activeStepId || (carouselItems && carouselItems.length >= 1)
   })()
@@ -655,6 +690,7 @@ export default function Home() {
     setAnsweredKeys,
     answeredKeysReady,
     isAnonymous: !user,
+    isDocked: !isAnonymousPoster,
     onDraftRefresh: handleDraftRefresh,
     affirmationReadyToSave: persistentAffirmationReady,
     onSaasAccessActivated: async () => {
@@ -792,7 +828,10 @@ export default function Home() {
 
   return (
     <div
-      className="artis-page-shell flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30"
+      ref={pageShellRef}
+      className={`artis-page-shell flex min-h-screen flex-col items-center pt-10 px-6 pb-6 relative text-zinc-50 font-sans selection:bg-emerald-500/30${
+        isAnonymousPoster ? '' : ' artis-page-shell--awake'
+      }`}
     >
       <DataReset isAnonymous={!user} />
       {user && sanctuarySaveError ? (
