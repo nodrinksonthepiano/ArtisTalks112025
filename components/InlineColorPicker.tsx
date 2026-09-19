@@ -320,6 +320,124 @@ export default function InlineColorPicker({
       // User cancelled
     }
   }
+
+  if (!showExtras) {
+    return (
+      <div className="artis-color-picker--compact">
+        <div className="artis-color-picker-group">
+          <p className="artis-color-picker-label" title="Primary Color (Background)">
+            Primary
+          </p>
+          <div className="artis-color-picker-swatches" role="group" aria-label="Primary color presets">
+            {Object.entries(COLOR_PRESETS).map(([key, preset]) => {
+              const selected = primaryColor === preset.primary
+              return (
+                <button
+                  key={`primary-${key}`}
+                  type="button"
+                  className={`artis-color-picker-swatch${selected ? ' is-selected' : ''}`}
+                  onClick={() => applyPrimaryPreset(key)}
+                  title={`${preset.name} Primary`}
+                  aria-label={`${preset.name} Primary`}
+                  aria-pressed={selected}
+                >
+                  <span
+                    className="artis-color-picker-chip"
+                    style={{ backgroundColor: preset.primary }}
+                  />
+                </button>
+              )
+            })}
+          </div>
+          <div className="artis-color-picker-controls">
+            <input
+              type="color"
+              value={primaryColor}
+              onChange={(e) => updatePrimaryColor(e.target.value)}
+              className="artis-color-picker-native"
+              aria-label="Primary color picker"
+            />
+            {eyeDropperSupported && (
+              <button
+                type="button"
+                onClick={() => handleEyeDropper('primary')}
+                className="artis-color-picker-eyedropper"
+                title="Pick color from screen"
+                aria-label="Pick primary color from screen"
+              >
+                🎨
+              </button>
+            )}
+            <input
+              type="text"
+              value={primaryColor}
+              onChange={(e) => updatePrimaryColor(e.target.value)}
+              className="artis-color-picker-hex"
+              placeholder="#RRGGBB"
+              spellCheck={false}
+              aria-label="Primary hex"
+            />
+          </div>
+        </div>
+
+        <div className="artis-color-picker-group">
+          <p className="artis-color-picker-label" title="Accent Color (Text/Highlights)">
+            Accent
+          </p>
+          <div className="artis-color-picker-swatches" role="group" aria-label="Accent color presets">
+            {Object.entries(COLOR_PRESETS).map(([key, preset]) => {
+              const selected = accentColor === preset.accent
+              return (
+                <button
+                  key={`accent-${key}`}
+                  type="button"
+                  className={`artis-color-picker-swatch${selected ? ' is-selected' : ''}`}
+                  onClick={() => applyAccentPreset(key)}
+                  title={`${preset.name} Accent`}
+                  aria-label={`${preset.name} Accent`}
+                  aria-pressed={selected}
+                >
+                  <span
+                    className="artis-color-picker-chip"
+                    style={{ backgroundColor: preset.accent }}
+                  />
+                </button>
+              )
+            })}
+          </div>
+          <div className="artis-color-picker-controls">
+            <input
+              type="color"
+              value={accentColor}
+              onChange={(e) => updateAccentColor(e.target.value)}
+              className="artis-color-picker-native"
+              aria-label="Accent color picker"
+            />
+            {eyeDropperSupported && (
+              <button
+                type="button"
+                onClick={() => handleEyeDropper('accent')}
+                className="artis-color-picker-eyedropper"
+                title="Pick color from screen"
+                aria-label="Pick accent color from screen"
+              >
+                🎨
+              </button>
+            )}
+            <input
+              type="text"
+              value={accentColor}
+              onChange={(e) => updateAccentColor(e.target.value)}
+              className="artis-color-picker-hex"
+              placeholder="#RRGGBB"
+              spellCheck={false}
+              aria-label="Accent hex"
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
   
   return (
     <div className="space-y-4">

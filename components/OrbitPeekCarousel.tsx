@@ -482,9 +482,8 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
 
   // Compute a pixel-true fit-box so the hero occupies ~50% of the viewport in both axes
   const computeFitBox = useCallback(() => {
-    const vv = (window as any).visualViewport as VisualViewport | undefined;
-    const vw = Math.max(320, Math.round(vv?.width || window.innerWidth || 0));
-    const vh = Math.max(320, Math.round(vv?.height || window.innerHeight || 0));
+    const vw = Math.max(320, Math.round(window.innerWidth || 0));
+    const vh = Math.max(320, Math.round(window.innerHeight || 0));
     const r = Math.max(0.2, Math.min(5, naturalAspect || 16 / 9)); // guard extreme ratios
     const targetW = Math.min(Math.round(0.5 * vw), Math.round(0.5 * vh * r));
     const targetH = Math.round(targetW / r);

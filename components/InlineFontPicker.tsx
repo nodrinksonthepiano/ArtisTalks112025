@@ -56,9 +56,9 @@ function FontChoiceRow({
   }
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-white">{label}</h3>
-      <div className="grid grid-cols-3 gap-2 mb-2">
+    <div className="artis-font-picker-group">
+      <p className="artis-font-picker-label">{label}</p>
+      <div className="artis-font-picker-featured" role="group" aria-label={`${label} featured fonts`}>
         {FEATURED_FONTS.map((font) => {
           const selected = isSameCatalogFont(value, font.value)
           return (
@@ -67,32 +67,31 @@ function FontChoiceRow({
               type="button"
               onClick={() => void pick(font.value)}
               disabled={fontLoading}
-              className={`p-3 rounded-lg border-2 transition-all ${
-                selected
-                  ? 'border-emerald-500 bg-emerald-500 bg-opacity-20 ring-2 ring-emerald-400/60'
-                  : 'border-gray-600 bg-gray-700 hover:border-gray-500'
-              }`}
+              className={`artis-font-picker-choice${selected ? ' is-selected' : ''}`}
               style={{ fontFamily: canShow(font) ? font.value : undefined }}
+              title={font.name}
+              aria-label={`${label} ${font.name}`}
               aria-pressed={selected}
             >
-              <div className="text-white font-bold text-sm">{font.name}</div>
+              <span className="artis-font-picker-choice-name">{font.name}</span>
             </button>
           )
         })}
       </div>
-      <div className="relative">
+      <div className="artis-font-picker-search-wrap">
         <input
           type="text"
           value={fontSearch}
           onChange={(e) => setFontSearch(e.target.value)}
           onFocus={() => setShowDropdown(true)}
           placeholder="Search fonts…"
-          className="w-full p-2 bg-gray-700 text-white rounded border border-gray-600 text-sm focus:border-emerald-500"
+          className="artis-font-picker-search"
           style={{ fontFamily: value }}
+          aria-label={`Search ${label} fonts`}
         />
         {showDropdown && (
           <>
-            <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-600 rounded max-h-40 overflow-y-auto z-50">
+            <div className="artis-font-picker-dropdown">
               {searchCatalogFonts(fontSearch).map((font) => {
                 const selected = isSameCatalogFont(value, font.value)
                 return (
@@ -101,16 +100,12 @@ function FontChoiceRow({
                     type="button"
                     onClick={() => void pick(font.value)}
                     disabled={fontLoading}
-                    className={`w-full text-left p-2 text-white text-sm transition-colors flex items-center justify-between gap-2 ${
-                      selected
-                        ? 'bg-emerald-900/40 border-l-2 border-emerald-400'
-                        : 'hover:bg-gray-700'
-                    }`}
+                    className={`artis-font-picker-option${selected ? ' is-selected' : ''}`}
                     style={{ fontFamily: canShow(font) ? font.value : undefined }}
                   >
-                    <span>{font.name}</span>
+                    <span className="artis-font-picker-option-name">{font.name}</span>
                     {selected ? (
-                      <span className="text-emerald-400 text-xs shrink-0">Selected</span>
+                      <span className="artis-font-picker-option-selected">Selected</span>
                     ) : null}
                   </button>
                 )
@@ -120,8 +115,12 @@ function FontChoiceRow({
           </>
         )}
       </div>
-      {fontLoading ? <p className="text-sm text-zinc-400">Loading font…</p> : null}
-      {fontError ? <p className="text-sm text-red-400">{fontError}</p> : null}
+      {fontLoading ? (
+        <p className="artis-font-picker-status is-loading">Loading font…</p>
+      ) : null}
+      {fontError ? (
+        <p className="artis-font-picker-status is-error">{fontError}</p>
+      ) : null}
     </div>
   )
 }
@@ -171,9 +170,9 @@ export default function InlineFontPicker({ profile, onFontChange }: InlineFontPi
   )
 
   return (
-    <div className="space-y-6">
+    <div className="artis-font-picker--compact">
       <FontChoiceRow
-        label="Headline font"
+        label="Headline"
         value={headlineFont}
         featuredReady={featuredReady}
         onPick={(fontValue) => {
@@ -183,7 +182,7 @@ export default function InlineFontPicker({ profile, onFontChange }: InlineFontPi
         }}
       />
       <FontChoiceRow
-        label="Body font"
+        label="Body"
         value={bodyFont}
         featuredReady={featuredReady}
         onPick={(fontValue) => {
@@ -192,17 +191,6 @@ export default function InlineFontPicker({ profile, onFontChange }: InlineFontPi
           onFontChange({ body_font_family: fontValue })
         }}
       />
-      <div className="rounded-lg border border-emerald-500/30 bg-black/20 p-4 text-left">
-        <p
-          className="text-lg text-white font-semibold"
-          style={{ fontFamily: headlineFont }}
-        >
-          {profile?.artist_name?.trim() || 'Your artist name'}
-        </p>
-        <p className="text-sm text-zinc-300 mt-2" style={{ fontFamily: bodyFont }}>
-          Your words and longer answers will read in this lettering.
-        </p>
-      </div>
     </div>
   )
 }

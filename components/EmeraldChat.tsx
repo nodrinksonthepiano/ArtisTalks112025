@@ -169,6 +169,9 @@ export default function EmeraldChat({
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
   const skipCompactRestOnArrivalRef = useRef(false)
+  const writingSessionRef = useRef(false)
+  const ignoreInputBlurRef = useRef(false)
+  const isSubmittingRef = useRef(false)
 
   const setCurrentStepIdSync = useCallback((stepId: StepId) => {
     currentStepIdRef.current = stepId
@@ -178,6 +181,13 @@ export default function EmeraldChat({
   useEffect(() => {
     currentStepIdRef.current = currentStepId
   }, [currentStepId])
+
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting
+    if (!isSubmitting) {
+      ignoreInputBlurRef.current = false
+    }
+  }, [isSubmitting])
   const [anonymousGateView, setAnonymousGateView] = useState(false)
   const [saasPaymentPhase, setSaasPaymentPhase] = useState<SaasPaymentPhase | null>(
     null
@@ -523,6 +533,24 @@ export default function EmeraldChat({
     !emeraldExpanded &&
     isEligibleCompactRestStep(currentStepId) &&
     !!currentStep.question
+  const isSpecialLongContentSurface =
+    showClaimedGate ||
+    showGateUI ||
+    showContinuationChoice ||
+    showOrbitChat ||
+    showSaasPayment ||
+    showHistory ||
+    currentStepId === 'COMPLETE' ||
+    currentStepId.includes('_COMPLETE')
+  const pinEmeraldShell = isDocked && !isSpecialLongContentSurface
+  const showBrandEditNav = showNavToolbar && !showBrandPicker
+  const showWrittenUtilityNav =
+    showBrandEditNav &&
+    !showClaimedGate &&
+    !showContinuationChoice &&
+    !showSaasPayment &&
+    !showOrbitChat &&
+    !showGateUI
 
   useEffect(() => {
     if (requiresExpandedSurface) {
@@ -531,9 +559,14 @@ export default function EmeraldChat({
   }, [requiresExpandedSurface])
 
   // Compact rest is a step-arrival transition, not empty-input / blur / error-clear.
+  // An active writing session keeps the expanded shell across consecutive written Sends.
   useEffect(() => {
     if (!isDocked) return
-    if (!isEligibleCompactRestStep(currentStepId)) return
+    if (!isEligibleCompactRestStep(currentStepId)) {
+      writingSessionRef.current = false
+      skipCompactRestOnArrivalRef.current = false
+      return
+    }
     if (
       showClaimedGate ||
       showGateUI ||
@@ -541,11 +574,17 @@ export default function EmeraldChat({
       showOrbitChat ||
       showSaasPayment
     ) {
+      writingSessionRef.current = false
       return
     }
     if (saasTransitionLockRef.current) return
+    if (writingSessionRef.current) {
+      skipCompactRestOnArrivalRef.current = false
+      return
+    }
     if (skipCompactRestOnArrivalRef.current) {
       skipCompactRestOnArrivalRef.current = false
+      writingSessionRef.current = true
       return
     }
 
@@ -742,6 +781,9 @@ export default function EmeraldChat({
     
     if (focusInput) {
       skipCompactRestOnArrivalRef.current = true
+      if (isEligibleCompactRestStep(stepId)) {
+        writingSessionRef.current = true
+      }
     }
 
     // Pencil-editing a brand card is an EXPLICIT request to open that step's editor
@@ -1463,6 +1505,12 @@ export default function EmeraldChat({
     if (previousStepId && !isSubmitting) {
       setAnonymousGateView(false)
       setSaasPaymentPhase(null)
+      if (isDocked && writingSessionRef.current && isEligibleCompactRestStep(previousStepId)) {
+        skipCompactRestOnArrivalRef.current = true
+        ignoreInputBlurRef.current = true
+      } else {
+        writingSessionRef.current = false
+      }
       const prevStep = getStep(previousStepId)
       setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
       // Find the step before previous for new previousStepId
@@ -1474,6 +1522,11 @@ export default function EmeraldChat({
       setHistory([prevMessage])
       // Don't add to fullHistory - it's navigation, not new content
       setInput('')
+      if (writingSessionRef.current) {
+        requestAnimationFrame(() => {
+          inputRef.current?.focus()
+        })
+      }
     }
   }
   
@@ -1495,6 +1548,12 @@ export default function EmeraldChat({
       return
     }
     const nextStep = getStep(firstUnanswered)
+    if (isDocked && writingSessionRef.current && isEligibleCompactRestStep(firstUnanswered)) {
+      skipCompactRestOnArrivalRef.current = true
+      ignoreInputBlurRef.current = true
+    } else {
+      writingSessionRef.current = false
+    }
     
     // Move to next unanswered question without saving
     setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
@@ -1504,6 +1563,11 @@ export default function EmeraldChat({
     setHistory([nextMessage])
     // Don't add to fullHistory - skipping doesn't create history entry
     setInput('')
+    if (writingSessionRef.current) {
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+      })
+    }
   }
 
   const handleBack = async () => {
@@ -1904,6 +1968,10 @@ export default function EmeraldChat({
 
     const answer = isSelectSubmit ? displayAnswer : input.trim()
     setIsSubmitting(true)
+    isSubmittingRef.current = true
+    if (!isSelectSubmit) {
+      ignoreInputBlurRef.current = true
+    }
     setClaimError('')
 
     // Returning-artist recognition — only after Submit on artist_name (anonymous)
@@ -2184,15 +2252,39 @@ export default function EmeraldChat({
         setCurrentStepIdSync('COMPLETE')
       }
       setIsSubmitting(false)
-      if (!(isDocked && isEligibleCompactRestStep(nextStepId))) {
-        setTimeout(() => {
-          inputRef.current?.focus()
-        }, 100)
+      isSubmittingRef.current = false
+      const keepWritingSession =
+        isDocked &&
+        !isSelectSubmit &&
+        isEligibleCompactRestStep(currentStepId) &&
+        isEligibleCompactRestStep(nextStepId)
+      if (keepWritingSession) {
+        writingSessionRef.current = true
+        skipCompactRestOnArrivalRef.current = true
+        ignoreInputBlurRef.current = true
+        setIsSurfaceExpanded(true)
+        const node = inputRef.current
+        if (node && document.activeElement !== node) {
+          node.focus()
+        }
+        queueMicrotask(() => {
+          ignoreInputBlurRef.current = false
+        })
+      } else {
+        writingSessionRef.current = false
+        ignoreInputBlurRef.current = false
+        if (!(isDocked && isEligibleCompactRestStep(nextStepId))) {
+          setTimeout(() => {
+            inputRef.current?.focus()
+          }, 100)
+        }
       }
 
     } catch (error) {
       console.error("Error in submit flow:", error)
       setIsSubmitting(false)
+      isSubmittingRef.current = false
+      ignoreInputBlurRef.current = false
       // Refocus input on error too
       setTimeout(() => {
         inputRef.current?.focus()
@@ -2212,17 +2304,31 @@ export default function EmeraldChat({
       }}
       className={`artis-emerald mx-auto rounded-lg overflow-hidden${
         isDocked ? ' artis-emerald--docked' : ''
-      }${emeraldExpanded ? ' artis-emerald--expanded' : ' artis-emerald--collapsed'}`}
-      data-emerald-state={emeraldExpanded ? 'expanded' : 'collapsed'}
+      }${emeraldExpanded ? ' artis-emerald--expanded' : ' artis-emerald--collapsed'}${
+        isDocked && showBrandPicker && (isLogoStep || isColorsStep || isFontStep)
+          ? ' artis-emerald--brand-edit'
+          : ''
+      }${pinEmeraldShell ? ' artis-emerald--pinned-shell' : ''}`}
+      data-emerald-state={
+        isDocked && showBrandPicker && (isLogoStep || isColorsStep || isFontStep)
+          ? 'brand-edit'
+          : emeraldExpanded
+            ? 'expanded'
+            : 'collapsed'
+      }
       onFocusCapture={(event) => {
         if (!isDocked) return
         const target = event.target
         if (!(target instanceof Element)) return
         if (target.closest('.artis-emerald-controls')) return
-        if (
-          target.closest('.artis-emerald-composer') ||
-          target.closest('.artis-emerald-body')
-        ) {
+        if (target.closest('.artis-emerald-composer')) {
+          setIsSurfaceExpanded(true)
+          if (isEligibleCompactRestStep(currentStepId)) {
+            writingSessionRef.current = true
+          }
+          return
+        }
+        if (target.closest('.artis-emerald-body')) {
           setIsSurfaceExpanded(true)
         }
       }}
@@ -2240,14 +2346,92 @@ export default function EmeraldChat({
       }}
     >
       {isDocked && !(isAnonymous && currentStepId === 'INIT') ? (
-        <div className="artis-emerald-controls">
+        <div
+          className="artis-emerald-controls"
+          onPointerDown={() => {
+            ignoreInputBlurRef.current = true
+            window.setTimeout(() => {
+              ignoreInputBlurRef.current = false
+            }, 300)
+          }}
+        >
+          {showWrittenUtilityNav ? (
+            <div className="artis-emerald-nav">
+              {hasUserHistory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const opening = !showHistory
+                    setShowHistory(opening)
+                    if (opening) {
+                      writingSessionRef.current = false
+                      inputRef.current?.blur()
+                    }
+                  }}
+                  className="artis-emerald-nav-btn"
+                  title="View history"
+                  aria-label="View history"
+                >
+                  <span className="text-xs font-medium" aria-hidden="true">H</span>
+                </button>
+              )}
+              {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+                <button
+                  type="button"
+                  onClick={handleLast}
+                  className="artis-emerald-nav-btn"
+                  title="Previous question"
+                  aria-label="Go back to previous question"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              )}
+              {!isSubmitting && currentStepId !== 'COMPLETE' && !(isAnonymous && isGated) && (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="artis-emerald-nav-btn"
+                  title="Skip to next question"
+                  aria-label="Skip to next question"
+                >
+                  <ChevronLeft size={16} className="rotate-180" />
+                </button>
+              )}
+              {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+                <button
+                  type="button"
+                  onClick={handleUndo}
+                  className="artis-emerald-nav-btn"
+                  title="Undo last step"
+                  aria-label="Undo last action"
+                >
+                  <Undo2 size={16} />
+                </button>
+              )}
+              {redoStack.length > 0 && !isSubmitting && (
+                <button
+                  type="button"
+                  onClick={handleRedo}
+                  className="artis-emerald-nav-btn"
+                  title="Redo last undone step"
+                  aria-label="Redo last undone action"
+                >
+                  <Redo2 size={16} />
+                </button>
+              )}
+            </div>
+          ) : null}
           <span className="artis-emerald-future-edit-slot" aria-hidden="true" />
           <button
             type="button"
             className="artis-emerald-toggle"
             onClick={() => {
               if (emeraldExpanded) {
-                if (!requiresExpandedSurface) setIsSurfaceExpanded(false)
+                if (!requiresExpandedSurface) {
+                  writingSessionRef.current = false
+                  setIsSurfaceExpanded(false)
+                  inputRef.current?.blur()
+                }
               } else {
                 setIsSurfaceExpanded(true)
               }
@@ -2415,167 +2599,176 @@ export default function EmeraldChat({
               </div>
             ) : null}
             {showBrandPicker && isLogoStep ? (
-              <div className="mb-4">
-                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+              <div className="artis-emerald-brand-shell">
+                <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
                   {currentStep.question}
                 </h2>
-                <InlineLogoPicker
-                  profile={profile || null}
-                  onLogoChange={async (updates) => {
-                    setCurrentPickerState((prev) => ({
-                      ...prev,
-                      logo: {
-                        logo_url:
-                          updates.logo_url !== undefined
-                            ? updates.logo_url
-                            : prev.logo?.logo_url,
-                        logo_use_background:
-                          updates.logo_use_background !== undefined
-                            ? updates.logo_use_background
-                            : prev.logo?.logo_use_background,
-                      },
-                    }))
-                    if (onProfileUpdate) await onProfileUpdate(updates)
-                  }}
-                  onPreviewChange={(previewUrl, useBackground) => {
-                    // previewUrl is null when background is unchecked — keep the logo choice.
-                    setCurrentPickerState((prev) => ({
-                      ...prev,
-                      logo: {
-                        logo_url:
-                          previewUrl != null
-                            ? previewUrl
-                            : prev.logo?.logo_url,
-                        logo_use_background: useBackground,
-                      },
-                    }))
-                  }}
-                />
-                <textarea
-                  value={logoDescription}
-                  onChange={(e) => setLogoDescription(e.target.value)}
-                  placeholder="Or describe the logo you imagine…"
-                  rows={3}
-                  className="w-full mt-3 p-3 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm"
-                  disabled={isSubmitting}
-                />
-                {saveError && (
-                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void completeLogoPanel('save')}
-                  disabled={isSubmitting}
-                  style={{
-                    marginTop: '10px',
-                    padding: '10px',
-                    backgroundColor: '#047857',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '5px',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
-                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
-                    width: '100%',
-                  }}
-                >
-                  {isSubmitting ? 'Saving...' : 'Save logo'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void completeLogoPanel('skip')}
-                  disabled={isSubmitting}
-                  className="mt-2 w-full px-4 py-2 rounded-lg border border-emerald-400/40 text-emerald-200 hover:bg-emerald-500/10 transition-colors text-sm"
-                >
-                  Skip for now
-                </button>
+                <div className="artis-emerald-editor">
+                  <InlineLogoPicker
+                    profile={profile || null}
+                    onLogoChange={async (updates) => {
+                      setCurrentPickerState((prev) => ({
+                        ...prev,
+                        logo: {
+                          logo_url:
+                            updates.logo_url !== undefined
+                              ? updates.logo_url
+                              : prev.logo?.logo_url,
+                          logo_use_background:
+                            updates.logo_use_background !== undefined
+                              ? updates.logo_use_background
+                              : prev.logo?.logo_use_background,
+                        },
+                      }))
+                      if (onProfileUpdate) await onProfileUpdate(updates)
+                    }}
+                    onPreviewChange={(previewUrl, useBackground) => {
+                      // previewUrl is null when background is unchecked — keep the logo choice.
+                      setCurrentPickerState((prev) => ({
+                        ...prev,
+                        logo: {
+                          logo_url:
+                            previewUrl != null
+                              ? previewUrl
+                              : prev.logo?.logo_url,
+                          logo_use_background: useBackground,
+                        },
+                      }))
+                    }}
+                  />
+                  <textarea
+                    value={logoDescription}
+                    onChange={(e) => setLogoDescription(e.target.value)}
+                    placeholder="Or describe the logo you imagine…"
+                    rows={1}
+                    className="artis-emerald-brand-describe w-full mt-2 px-3 py-2 rounded-lg bg-gray-800/80 border border-gray-600 text-white text-sm"
+                    disabled={isSubmitting}
+                  />
+                  {saveError && (
+                    <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                  )}
+                </div>
+                <div className="artis-emerald-actions artis-emerald-brand-actions">
+                  <button
+                    type="button"
+                    className="artis-emerald-brand-save"
+                    onClick={() => void completeLogoPanel('save')}
+                    disabled={isSubmitting}
+                    style={{
+                      padding: '10px',
+                      backgroundColor: '#047857',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: isSubmitting ? 'wait' : 'pointer',
+                      boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    }}
+                  >
+                    {isSubmitting ? 'Saving...' : 'Save logo'}
+                  </button>
+                  <button
+                    type="button"
+                    className="artis-emerald-brand-skip"
+                    onClick={() => void completeLogoPanel('skip')}
+                    disabled={isSubmitting}
+                  >
+                    Skip for now
+                  </button>
+                </div>
               </div>
             ) : showBrandPicker && isColorsStep ? (
-              <div className="mb-4">
-                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+              <div className="artis-emerald-brand-shell">
+                <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
                   {currentStep.question}
                 </h2>
-                <InlineColorPicker
-                  variant="colors"
-                  profile={profile || null}
-                  onColorChange={async (updates) => {
-                    setCurrentPickerState((prev) => ({
-                      ...prev,
-                      colors: {
-                        primary_color: updates.primary_color ?? prev.colors?.primary_color,
-                        accent_color: updates.accent_color ?? prev.colors?.accent_color,
-                        brand_color: updates.brand_color ?? prev.colors?.brand_color,
-                      },
-                    }))
-                    if (onProfileUpdate) await onProfileUpdate(updates)
-                  }}
-                />
-                {saveError && (
-                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void completeColorsPanel()}
-                  disabled={isSubmitting}
-                  style={{
-                    marginTop: '10px',
-                    padding: '10px',
-                    backgroundColor: '#047857',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '5px',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
-                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
-                    width: '100%',
-                  }}
-                >
-                  {isSubmitting ? 'Saving...' : 'Save colors'}
-                </button>
+                <div className="artis-emerald-editor">
+                  <InlineColorPicker
+                    variant="colors"
+                    profile={profile || null}
+                    onColorChange={async (updates) => {
+                      setCurrentPickerState((prev) => ({
+                        ...prev,
+                        colors: {
+                          primary_color: updates.primary_color ?? prev.colors?.primary_color,
+                          accent_color: updates.accent_color ?? prev.colors?.accent_color,
+                          brand_color: updates.brand_color ?? prev.colors?.brand_color,
+                        },
+                      }))
+                      if (onProfileUpdate) await onProfileUpdate(updates)
+                    }}
+                  />
+                  {saveError && (
+                    <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                  )}
+                </div>
+                <div className="artis-emerald-actions artis-emerald-brand-actions">
+                  <button
+                    type="button"
+                    className="artis-emerald-brand-save"
+                    onClick={() => void completeColorsPanel()}
+                    disabled={isSubmitting}
+                    style={{
+                      padding: '10px',
+                      backgroundColor: '#047857',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: isSubmitting ? 'wait' : 'pointer',
+                      boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    }}
+                  >
+                    {isSubmitting ? 'Saving...' : 'Save colors'}
+                  </button>
+                </div>
               </div>
             ) : showBrandPicker && isFontStep ? (
-              <div className="mb-4">
-                <h2 className="gold-etched text-lg mb-3" style={{ marginTop: '0', marginBottom: '12px' }}>
+              <div className="artis-emerald-brand-shell">
+                <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
                   {currentStep.question}
                 </h2>
-                <InlineFontPicker
-                  profile={profile || null}
-                  onFontChange={async (updates) => {
-                    setCurrentPickerState((prev) => ({
-                      ...prev,
-                      font: {
-                        font_family:
-                          updates.font_family !== undefined
-                            ? updates.font_family
-                            : prev.font?.font_family,
-                        body_font_family:
-                          updates.body_font_family !== undefined
-                            ? updates.body_font_family
-                            : prev.font?.body_font_family,
-                      },
-                    }))
-                    if (onProfileUpdate) await onProfileUpdate(updates)
-                  }}
-                />
-                {saveError && (
-                  <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void completeFontPanel()}
-                  disabled={isSubmitting}
-                  style={{
-                    marginTop: '10px',
-                    padding: '10px',
-                    backgroundColor: '#047857',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '5px',
-                    cursor: isSubmitting ? 'wait' : 'pointer',
-                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
-                    width: '100%',
-                  }}
-                >
-                  {isSubmitting ? 'Saving...' : 'Save fonts'}
-                </button>
+                <div className="artis-emerald-editor">
+                  <InlineFontPicker
+                    profile={profile || null}
+                    onFontChange={async (updates) => {
+                      setCurrentPickerState((prev) => ({
+                        ...prev,
+                        font: {
+                          font_family:
+                            updates.font_family !== undefined
+                              ? updates.font_family
+                              : prev.font?.font_family,
+                          body_font_family:
+                            updates.body_font_family !== undefined
+                              ? updates.body_font_family
+                              : prev.font?.body_font_family,
+                        },
+                      }))
+                      if (onProfileUpdate) await onProfileUpdate(updates)
+                    }}
+                  />
+                  {saveError && (
+                    <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
+                  )}
+                </div>
+                <div className="artis-emerald-actions artis-emerald-brand-actions">
+                  <button
+                    type="button"
+                    className="artis-emerald-brand-save"
+                    onClick={() => void completeFontPanel()}
+                    disabled={isSubmitting}
+                    style={{
+                      padding: '10px',
+                      backgroundColor: '#047857',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: isSubmitting ? 'wait' : 'pointer',
+                      boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    }}
+                  >
+                    {isSubmitting ? 'Saving...' : 'Save fonts'}
+                  </button>
+                </div>
               </div>
             ) : showBrandSummary ? (
               <div className="mb-4">
@@ -2959,105 +3152,6 @@ export default function EmeraldChat({
           </div>
         ) : (
       <form onSubmit={handleSubmit} id="artistForm">
-        {/* Navigation Buttons - Back/Next/Undo/Redo */}
-        {showNavToolbar && (
-        <div className="artis-emerald-nav flex items-center justify-center gap-2 mb-2">
-          {/* History Button - View full conversation */}
-          {hasUserHistory && (
-            <button
-              type="button"
-              onClick={() => setShowHistory(!showHistory)}
-              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
-              style={{
-                color: '#fffacd',
-                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'bold'
-              }}
-              title="View history"
-            >
-              <span className="text-xs font-medium">H</span>
-            </button>
-          )}
-          
-          {/* Back Button - Go back to previous question */}
-          {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
-            <button
-              type="button"
-              onClick={handleLast}
-              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
-              style={{
-                color: '#fffacd',
-                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'bold'
-              }}
-              title="Previous question"
-              aria-label="Go back to previous question"
-            >
-              <ChevronLeft size={20} />
-            </button>
-          )}
-          
-          {/* Next Button - Skip current question */}
-          {!isSubmitting && currentStepId !== 'COMPLETE' && !(isAnonymous && isGated) && (
-            <button
-              type="button"
-              onClick={handleNext}
-              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
-              style={{
-                color: '#fffacd',
-                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'bold'
-              }}
-              title="Skip to next question"
-              aria-label="Skip to next question"
-            >
-              <ChevronLeft size={20} className="rotate-180" />
-            </button>
-          )}
-          
-          {/* Undo Button - Undo last step */}
-          {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
-            <button
-              type="button"
-              onClick={handleUndo}
-              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
-              style={{
-                color: '#fffacd',
-                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'bold'
-              }}
-              title="Undo last step"
-              aria-label="Undo last action"
-            >
-              <Undo2 size={20} />
-            </button>
-          )}
-          
-          {/* Redo Button - Redo last undone step */}
-          {redoStack.length > 0 && !isSubmitting && (
-            <button
-              type="button"
-              onClick={handleRedo}
-              className="p-2 rounded-lg transition-colors hover:bg-emerald-500/10"
-              style={{
-                color: '#fffacd',
-                textShadow: '0 0 5px rgba(255, 215, 0, 0.8), 2px 2px 4px rgba(0, 0, 0, 0.7)',
-                fontFamily: 'Arial, sans-serif',
-                fontWeight: 'bold'
-              }}
-              title="Redo last undone step"
-              aria-label="Redo last undone action"
-            >
-              <Redo2 size={20} />
-            </button>
-          )}
-        </div>
-        )}
-
         {/* CRITICAL: All celebration steps show Continue button instead of input */}
         {/* Celebration cards are temporary - disappear immediately when Continue is clicked */}
         {currentStepId.includes('_COMPLETE') && currentStepId !== 'COMPLETE' ? (
@@ -3095,15 +3189,45 @@ export default function EmeraldChat({
                   ref={inputRef}
                   type="text"
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    if (isSubmitting) {
+                      e.currentTarget.value = input
+                      return
+                    }
+                    setInput(e.target.value)
+                  }}
+                  onKeyDown={(e) => {
+                    if (isSubmitting) e.preventDefault()
+                  }}
+                  onPaste={(e) => {
+                    if (isSubmitting) e.preventDefault()
+                  }}
+                  onBlur={() => {
+                    if (ignoreInputBlurRef.current) return
+                    if (isSubmittingRef.current) return
+                    if (!writingSessionRef.current) return
+                    window.setTimeout(() => {
+                      if (ignoreInputBlurRef.current) return
+                      if (isSubmittingRef.current) return
+                      if (!writingSessionRef.current) return
+                      if (document.activeElement === inputRef.current) return
+                      if (!isEligibleCompactRestStep(currentStepIdRef.current)) return
+                      writingSessionRef.current = false
+                      setIsSurfaceExpanded(false)
+                    }, 50)
+                  }}
                   placeholder={stepInputPlaceholder}
-                  disabled={currentStepId === 'COMPLETE' || isSubmitting}
+                  disabled={currentStepId === 'COMPLETE'}
                   className="email-input"
                   autoFocus={!(isDocked && isEligibleCompactRestStep(currentStepId))}
                 />
                 <button
                   type="submit"
                   className="artis-emerald-send"
+                  onPointerDown={() => {
+                    if (!input.trim() || isSubmitting) return
+                    ignoreInputBlurRef.current = true
+                  }}
                   disabled={
                     !input.trim() ||
                     isSubmitting ||

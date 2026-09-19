@@ -196,7 +196,7 @@ PROVEN BY HUMAN IPHONE QA — 2026-09-18
 - visualViewport listeners now attach after the real page shell mounts
 - proven INIT sequence remains intact:
   centered welcome → first keystroke docks Emerald → Stage after successful Send
-- Logo / Colors / Font remain expanded
+- Logo / Colors / Font remain expanded *(superseded by Ticket 2b-D)*
 - eligible written curriculum steps arrive in compact resting Emerald
 - compact rest keeps a one-line question cue + input + Send
 - engaging a written question expands Emerald for coaching/input
@@ -208,8 +208,45 @@ PROVEN BY HUMAN IPHONE QA — 2026-09-18
 
 Ticket 2a is complete for current iPhone QA.
 
-Next front-end item:
-2b — compact editing groups / live page preview.
+#### Ticket 2b-D QA checkpoint — 2026-09-18
+
+Ticket 2b-D — Shared Emerald shell: non-scrolling + persistent primary-action zone
+
+PROVEN BY HUMAN IPHONE QA — 2026-09-18
+
+- Emerald does not scroll as a container for ordinary written + Logo / Colors / Font interactions
+- Question and a persistent bottom primary-action zone remain visible
+- Primary actions are Send / Save logo / Save colors / Save fonts
+- Loading/saving changes the label, not the button position
+- Logo / Colors / Font hide brand-edit nav (`H ‹ › undo`) and the disabled collapse chevron
+- Existing brand-edit height clamp remains unchanged (`clamp(13rem, 38dvh, 20rem)`)
+- Special long-content surfaces (gate / Orbit / SaaS / celebration / history) retain their scoped scrolling behavior; history keeps inner scroll
+- Page remains the live preview
+- Font uses the compact Headline / Body picker; live Headline preview is the artist-name `h1`
+- Compact Logo / Colors / Font pickers sit inside that shell
+- INIT, expanded written/SYMBOL with keyboard, Logo Save/Skip, Save colors, and Save fonts were visible together with the question on real iPhone
+
+Ticket 2b-D is complete for current iPhone QA.
+This supersedes Ticket 2a “Logo / Colors / Font remain expanded.”
+
+#### Ticket 2b-E QA checkpoint — 2026-09-18
+
+Ticket 2b-E — Expanded written visual hierarchy: Question → Answer → Send
+
+PROVEN BY HUMAN IPHONE QA — 2026-09-18
+
+- expanded ordinary written reads Question → Answer → Send
+- `H ‹ › Undo / Redo` live in `.artis-emerald-controls`
+- compact rest unchanged
+- INIT unchanged
+- 2b-D brand-edit unchanged
+- Stage/carousel ownership unchanged
+
+Ticket 2b-E is complete for current iPhone QA.
+This supersedes the parked 2b-D note that the next item was expanded written `H ‹ › undo` hierarchy.
+
+Parked visual polish (not 2b-D blockers; separate ticket required):
+- Logo checkbox label contrast
 
 Ticket 1 trustworthy persistence remains separately pending.
 STEP_PLAN §11 remains in force.

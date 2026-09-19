@@ -74,15 +74,12 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
   };
   
   return (
-    <div className="space-y-4">
-      {/* Logo Upload Section - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 525-726 */}
+    <div className="space-y-2">
       <div>
-        <h3 className="text-sm font-semibold text-white mb-2">Logo Upload</h3>
-        
-        {/* Current logo preview */}
         {logoPreview && (
-          <div className="mb-3 relative">
+          <div className="mb-2 relative inline-block">
             <button
+              type="button"
               onClick={() => {
                 if (confirm('Are you sure you want to remove the logo?')) {
                   if (logoPreview.startsWith('blob:')) {
@@ -95,7 +92,7 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
                   applyLogoBackground(profile, null, false);
                 }
               }}
-              className="absolute top-2 right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-8 h-8 flex items-center justify-center text-lg font-bold transition-colors shadow-lg z-10"
+              className="absolute -top-1 -right-1 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold transition-colors shadow-lg z-10"
               title="Remove logo"
             >
               ×
@@ -103,7 +100,7 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
             <img 
               src={logoPreview} 
               alt="Logo preview" 
-              className="w-full h-64 object-contain rounded border border-gray-600 bg-gray-800"
+              className="h-12 w-12 object-contain rounded border border-gray-600 bg-gray-800"
             />
           </div>
         )}
@@ -154,7 +151,7 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
               onLogoChange({ logo_url: preview });
             }
           }}
-          className="w-full p-3 bg-gray-700 text-white rounded-lg border border-gray-600 mb-3 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-yellow-500 file:text-white hover:file:bg-yellow-600"
+          className="w-full p-2 bg-gray-700 text-white rounded-lg border border-gray-600 mb-2 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-yellow-500 file:text-white hover:file:bg-yellow-600"
           disabled={isUploading}
         />
         

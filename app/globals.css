@@ -78,8 +78,13 @@ body {
 
 .artis-page-shell.artis-page-shell--awake:has(.artis-emerald--collapsed) {
   padding-bottom: calc(
-    8.25rem +
-      var(--artis-visual-bottom-offset, 0px) +
+    8.25rem + max(10px, env(safe-area-inset-bottom, 0px))
+  );
+}
+
+.artis-page-shell.artis-page-shell--awake:has(.artis-emerald--brand-edit) {
+  padding-bottom: calc(
+    clamp(13rem, 38dvh, 20rem) +
       max(10px, env(safe-area-inset-bottom, 0px))
   );
 }
@@ -117,10 +122,49 @@ body {
 
 .artis-emerald-controls {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-height: 28px;
   margin-bottom: 6px;
+  column-gap: 6px;
+}
+
+.artis-emerald--expanded .artis-emerald-controls:has(.artis-emerald-nav) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.artis-emerald-nav {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.artis-emerald-nav-btn {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  color: rgba(255, 244, 184, 0.7);
+  background: transparent;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.artis-emerald-nav-btn:hover,
+.artis-emerald-nav-btn:focus-visible {
+  color: rgba(255, 244, 184, 0.95);
+  background: rgba(16, 185, 129, 0.12);
 }
 
 .artis-emerald-toggle {
@@ -189,6 +233,363 @@ body {
   margin-top: 0 !important;
   padding: 10px 12px !important;
   flex: 0 0 auto;
+}
+
+.artis-emerald--docked.artis-emerald--pinned-shell {
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
+}
+
+.artis-emerald--pinned-shell .artis-emerald-controls,
+.artis-emerald--pinned-shell .artis-emerald-cue {
+  flex: 0 0 auto;
+}
+
+.artis-emerald--pinned-shell .artis-emerald-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.artis-emerald--pinned-shell .artis-emerald-composer {
+  flex: 0 0 auto;
+}
+
+.artis-emerald--pinned-shell.artis-emerald--expanded .artis-emerald-send {
+  min-height: 44px;
+}
+
+.artis-emerald--docked.artis-emerald--brand-edit {
+  padding: 10px 12px !important;
+  max-height: clamp(13rem, 38dvh, 20rem);
+}
+
+.artis-emerald--brand-edit .artis-emerald-controls,
+.artis-emerald--brand-edit .artis-emerald-composer,
+.artis-emerald--brand-edit .artis-emerald-nav {
+  display: none;
+}
+
+.artis-emerald--brand-edit .artis-emerald-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.artis-emerald-brand-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.artis-emerald-question {
+  flex: 0 0 auto;
+}
+
+.artis-emerald-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.artis-emerald-actions {
+  flex: 0 0 auto;
+}
+
+.artis-emerald--brand-edit .gold-etched {
+  font-size: 0.95rem;
+  line-height: 1.25;
+  margin-bottom: 8px !important;
+}
+
+.artis-emerald--brand-edit .artis-emerald-brand-describe {
+  min-height: 40px;
+  max-height: 40px;
+  resize: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  line-height: 1.3;
+}
+
+.artis-emerald--brand-edit .artis-emerald-brand-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.artis-emerald--brand-edit .artis-emerald-brand-save {
+  flex: 1 1 auto;
+  min-height: 44px;
+}
+
+.artis-emerald--brand-edit .artis-emerald-brand-skip {
+  flex: 0 1 auto;
+  min-height: 44px;
+  margin: 0;
+  width: auto;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  color: #a7f3d0;
+  background: transparent;
+  font-size: 0.875rem;
+}
+
+.artis-emerald--brand-edit .artis-emerald-brand-skip:hover {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.artis-color-picker--compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artis-color-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.artis-color-picker-label {
+  margin: 0;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.artis-color-picker-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+  align-items: stretch;
+}
+
+.artis-color-picker-swatch {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  padding: 0;
+  place-items: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.artis-color-picker-chip {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid rgba(156, 163, 175, 0.9);
+  box-sizing: border-box;
+}
+
+.artis-color-picker-swatch.is-selected .artis-color-picker-chip {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.65);
+}
+
+.artis-color-picker-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.artis-color-picker-native {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+  background: #374151;
+  cursor: pointer;
+}
+
+.artis-color-picker-eyedropper {
+  flex: 0 0 36px;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  background: #374151;
+  cursor: pointer;
+}
+
+.artis-color-picker-hex {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+  color: #fff;
+  background: #374151;
+  font-size: 0.875rem;
+}
+
+.artis-font-picker--compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artis-font-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.artis-font-picker-label {
+  margin: 0;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.artis-font-picker-featured {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px;
+  align-items: stretch;
+}
+
+.artis-font-picker-choice {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 2px;
+  place-items: center;
+  border: 2px solid #4b5563;
+  border-radius: 6px;
+  color: #fff;
+  background: #374151;
+  cursor: pointer;
+}
+
+.artis-font-picker-choice.is-selected {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.2);
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.6);
+}
+
+.artis-font-picker-choice-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.artis-font-picker-search-wrap {
+  position: relative;
+}
+
+.artis-font-picker-search {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+  color: #fff;
+  background: #374151;
+  font-size: 0.875rem;
+}
+
+.artis-font-picker-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  max-height: 7rem;
+  overflow-y: auto;
+  z-index: 50;
+  background: #1f2937;
+  border: 1px solid #4b5563;
+  border-radius: 6px;
+}
+
+.artis-emerald--brand-edit .artis-font-picker-dropdown {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.artis-font-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: none;
+  text-align: left;
+  color: #fff;
+  background: transparent;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.artis-font-picker-option:hover {
+  background: #374151;
+}
+
+.artis-font-picker-option.is-selected {
+  background: rgba(6, 78, 59, 0.4);
+  box-shadow: inset 2px 0 0 #34d399;
+}
+
+.artis-font-picker-option.is-selected:hover {
+  background: rgba(6, 78, 59, 0.4);
+}
+
+.artis-font-picker-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artis-font-picker-option-selected {
+  flex-shrink: 0;
+  color: #34d399;
+  font-size: 0.625rem;
+}
+
+.artis-font-picker-status {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.artis-font-picker-status.is-loading {
+  color: #a1a1aa;
+}
+
+.artis-font-picker-status.is-error {
+  color: #f87171;
 }
 
 @media (max-width: 767px) {
