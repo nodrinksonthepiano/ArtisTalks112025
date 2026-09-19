@@ -48,7 +48,15 @@ export default function Home() {
 
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
 
+  const shellMounted = !(
+    loading ||
+    migrating ||
+    (user && profileLoading && !profile)
+  )
+
   useEffect(() => {
+    if (!shellMounted) return
+
     const shell = pageShellRef.current
     if (!shell) return
 
@@ -78,7 +86,7 @@ export default function Home() {
       viewport?.removeEventListener('scroll', syncVisualViewport)
       window.removeEventListener('resize', syncVisualViewport)
     }
-  }, [])
+  }, [shellMounted])
 
   const [answeredKeys, setAnsweredKeys, reloadAnsweredKeys, answeredKeysReady] =
     useAnsweredKeys(user?.id ?? null)

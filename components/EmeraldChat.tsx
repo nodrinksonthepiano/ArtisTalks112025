@@ -102,6 +102,14 @@ interface EmeraldChatProps {
 
 const INIT_WELCOME_HEADLINE = 'Welcome, my champion...'
 
+function isEligibleCompactRestStep(stepId: StepId): boolean {
+  if (stepId === 'INIT' || stepId === 'COMPLETE') return false
+  if (stepId.includes('_COMPLETE')) return false
+  const step = getStep(stepId)
+  if (isBrandPanelStep(step) || isSelectStep(step)) return false
+  return true
+}
+
 export default function EmeraldChat({
   onProfileUpdate,
   onTriggerPanel,
@@ -160,6 +168,7 @@ export default function EmeraldChat({
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const hasInitializedRef = useRef(false)
+  const skipCompactRestOnArrivalRef = useRef(false)
 
   const setCurrentStepIdSync = useCallback((stepId: StepId) => {
     currentStepIdRef.current = stepId
@@ -499,6 +508,7 @@ export default function EmeraldChat({
     showOrbitChat ||
     showSaasPayment ||
     showBrandPicker ||
+    showBrandSummary ||
     isSelectInputStep ||
     showHistory ||
     isSubmitting ||
@@ -508,14 +518,45 @@ export default function EmeraldChat({
     currentStepId === 'COMPLETE' ||
     currentStepId.includes('_COMPLETE')
   const emeraldExpanded = !isDocked || isSurfaceExpanded || requiresExpandedSurface
+  const showCompactQuestionCue =
+    isDocked &&
+    !emeraldExpanded &&
+    isEligibleCompactRestStep(currentStepId) &&
+    !!currentStep.question
 
-  // Active flows may wake Emerald, but this ticket never collapses it
-  // automatically. Returning to compact mode is always an explicit action.
   useEffect(() => {
     if (requiresExpandedSurface) {
       setIsSurfaceExpanded(true)
     }
   }, [requiresExpandedSurface])
+
+  // Compact rest is a step-arrival transition, not empty-input / blur / error-clear.
+  useEffect(() => {
+    if (!isDocked) return
+    if (!isEligibleCompactRestStep(currentStepId)) return
+    if (
+      showClaimedGate ||
+      showGateUI ||
+      showContinuationChoice ||
+      showOrbitChat ||
+      showSaasPayment
+    ) {
+      return
+    }
+    if (saasTransitionLockRef.current) return
+    if (skipCompactRestOnArrivalRef.current) {
+      skipCompactRestOnArrivalRef.current = false
+      return
+    }
+
+    setIsSurfaceExpanded(false)
+    const node = inputRef.current
+    if (node && document.activeElement === node) {
+      node.blur()
+    }
+    // Overlay flags are sampled at arrival; closing a gate must not auto-rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rest only on step/dock arrival
+  }, [currentStepId, isDocked])
   
   // Notify parent of current step change (for carousel)
   // CRITICAL: Always notify parent when currentStepId changes
@@ -699,6 +740,10 @@ export default function EmeraldChat({
     const step = getStep(stepId)
     const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
     
+    if (focusInput) {
+      skipCompactRestOnArrivalRef.current = true
+    }
+
     // Pencil-editing a brand card is an EXPLICIT request to open that step's editor
     if (isBrandPanelStep(step)) {
       enterBrandPanel(stepId)
@@ -1837,9 +1882,11 @@ export default function EmeraldChat({
       setPreviousStepId(currentStepId)
       setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
       setIsSubmitting(false)
-      setTimeout(() => {
-        inputRef.current?.focus()
-      }, 100)
+      if (!(isDocked && isEligibleCompactRestStep(firstUnanswered))) {
+        setTimeout(() => {
+          inputRef.current?.focus()
+        }, 100)
+      }
       return
     }
     
@@ -2137,10 +2184,11 @@ export default function EmeraldChat({
         setCurrentStepIdSync('COMPLETE')
       }
       setIsSubmitting(false)
-      // Refocus input after submit (Zeyoda pattern)
-      setTimeout(() => {
-        inputRef.current?.focus()
-      }, 100)
+      if (!(isDocked && isEligibleCompactRestStep(nextStepId))) {
+        setTimeout(() => {
+          inputRef.current?.focus()
+        }, 100)
+      }
 
     } catch (error) {
       console.error("Error in submit flow:", error)
@@ -2166,8 +2214,17 @@ export default function EmeraldChat({
         isDocked ? ' artis-emerald--docked' : ''
       }${emeraldExpanded ? ' artis-emerald--expanded' : ' artis-emerald--collapsed'}`}
       data-emerald-state={emeraldExpanded ? 'expanded' : 'collapsed'}
-      onFocusCapture={() => {
-        if (isDocked) setIsSurfaceExpanded(true)
+      onFocusCapture={(event) => {
+        if (!isDocked) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (target.closest('.artis-emerald-controls')) return
+        if (
+          target.closest('.artis-emerald-composer') ||
+          target.closest('.artis-emerald-body')
+        ) {
+          setIsSurfaceExpanded(true)
+        }
       }}
       style={{
         backgroundImage: 'url(/IMG_723E215270D1-1.jpeg)',
@@ -2203,6 +2260,12 @@ export default function EmeraldChat({
             <span aria-hidden="true">{emeraldExpanded ? '⌄' : '⌃'}</span>
           </button>
         </div>
+      ) : null}
+
+      {showCompactQuestionCue ? (
+        <p className="artis-emerald-cue" title={currentStep.question}>
+          {currentStep.question}
+        </p>
       ) : null}
 
       <div className="artis-emerald-body">
@@ -2898,7 +2961,7 @@ export default function EmeraldChat({
       <form onSubmit={handleSubmit} id="artistForm">
         {/* Navigation Buttons - Back/Next/Undo/Redo */}
         {showNavToolbar && (
-        <div className="flex items-center justify-center gap-2 mb-2">
+        <div className="artis-emerald-nav flex items-center justify-center gap-2 mb-2">
           {/* History Button - View full conversation */}
           {hasUserHistory && (
             <button
@@ -3013,9 +3076,11 @@ export default function EmeraldChat({
                 setFullHistory(prev => [...prev, nextMessage])
                 setPreviousStepId(currentStepId)
                 setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
-                setTimeout(() => {
-                  inputRef.current?.focus()
-                }, 100)
+                if (!(isDocked && isEligibleCompactRestStep(firstUnanswered))) {
+                  setTimeout(() => {
+                    inputRef.current?.focus()
+                  }, 100)
+                }
               }}
               className="px-8 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-semibold transition-colors"
             >
@@ -3024,18 +3089,41 @@ export default function EmeraldChat({
           </div>
         ) : (
           <>
-            {/* Hide text input when picker or select is active */}
             {!isBrandStep && !isSelectInputStep && (
-              <input
-                ref={inputRef}
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={stepInputPlaceholder}
-                disabled={currentStepId === 'COMPLETE' || isSubmitting}
-                className="email-input"
-                autoFocus
-              />
+              <div className="artis-emerald-answer-row">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={stepInputPlaceholder}
+                  disabled={currentStepId === 'COMPLETE' || isSubmitting}
+                  className="email-input"
+                  autoFocus={!(isDocked && isEligibleCompactRestStep(currentStepId))}
+                />
+                <button
+                  type="submit"
+                  className="artis-emerald-send"
+                  disabled={
+                    !input.trim() ||
+                    isSubmitting ||
+                    currentStepId === 'COMPLETE'
+                  }
+                  style={{
+                    marginTop: '10px',
+                    padding: '10px',
+                    backgroundColor: '#047857',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
+                    boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
+                    width: '100%',
+                  }}
+                >
+                  {isSubmitting ? 'Sending...' : 'Send'}
+                </button>
+              </div>
             )}
             {claimError && (
               <p className="text-red-400 text-sm text-center" style={{ marginTop: '10px' }}>
@@ -3061,15 +3149,15 @@ export default function EmeraldChat({
                 }}
               />
             )}
-            {!isBrandStep && (
+            {isSelectInputStep && (
             <button
               type="submit"
+              className="artis-emerald-send"
               disabled={
-                (isSelectInputStep
-                    ? !input.trim() || !getSelectLabel(currentStep, input)
-                    : !input.trim())
-                || isSubmitting 
-                || currentStepId === 'COMPLETE'
+                !input.trim() ||
+                !getSelectLabel(currentStep, input) ||
+                isSubmitting ||
+                currentStepId === 'COMPLETE'
               }
               style={{
                 marginTop: '10px',

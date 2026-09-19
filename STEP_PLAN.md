@@ -145,7 +145,8 @@ while that boundary remains unresolved.
 
 0. isolated keyboard/focus prototype;
 1. trustworthy persistence with Saving, Saved, failure, Retry, and Undo;
-2. persistent collapsed Emerald and compact editing;
+2a. persistent compact Emerald and stable page shell;
+2b. compact editing groups / live page preview;
 3. curriculum position versus viewed work versus edit target;
 4. lower-artifact promotion and Mad-Lib Living Affirmation;
 5. one real artist work and one real demo.
@@ -186,8 +187,32 @@ PENDING HUMAN QA
 
 Ticket 0 is not fully cross-browser proven.
 
-Next planning priority: persistent collapsed Emerald and stable page shell.
-Ticket 1 persistence remains pending and unchanged.
+#### Ticket 2a QA checkpoint — 2026-09-18
+
+Ticket 2a — Persistent compact Emerald + stable page shell
+
+PROVEN BY HUMAN IPHONE QA — 2026-09-18
+
+- visualViewport listeners now attach after the real page shell mounts
+- proven INIT sequence remains intact:
+  centered welcome → first keystroke docks Emerald → Stage after successful Send
+- Logo / Colors / Font remain expanded
+- eligible written curriculum steps arrive in compact resting Emerald
+- compact rest keeps a one-line question cue + input + Send
+- engaging a written question expands Emerald for coaching/input
+- compact state materially reclaims page/Stage space
+- compact page reserve replaces the previous permanent expanded-sized lower gap
+- centered INIT retains full “What is your artist name?” placeholder
+- compact answer-row flex styling is scoped to collapsed Emerald only
+- Stage/carousel ownership was not changed
+
+Ticket 2a is complete for current iPhone QA.
+
+Next front-end item:
+2b — compact editing groups / live page preview.
+
+Ticket 1 trustworthy persistence remains separately pending.
+STEP_PLAN §11 remains in force.
 
 Every ticket requires separate approval. Section 11 remains in force. Ticket 3
 is the coordinated ownership ticket; no partial curriculum/viewed-work split
