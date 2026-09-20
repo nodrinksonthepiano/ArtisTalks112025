@@ -4,34 +4,76 @@ import { useState, useRef, useEffect } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Profile } from '@/hooks/useProfile'
 import { applyLogoBackground } from '@/utils/themeBackground'
+import {
+  extractLogoPalette,
+  type LogoPaletteGuess,
+} from '@/utils/extractLogoPalette'
 
 interface InlineLogoPickerProps {
   profile: Profile | null
-  onLogoChange: (updates: Partial<Profile>) => void // Autosave callback
+  onLogoChange: (updates: Partial<Profile>) => void
   onPreviewChange?: (previewUrl: string | null, useBackground: boolean) => void
+  onPaletteExtracted?: (
+    guess: LogoPaletteGuess,
+    source: { logo_url: string | null; logo_use_background: boolean }
+  ) => void
+  onUploadingChange?: (uploading: boolean) => void
+  sessionPreviewUrl?: string | null
 }
 
-export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChange }: InlineLogoPickerProps) {
-  const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(profile?.logo_url || null)
-  const logoPreviewRef = useRef<string | null>(profile?.logo_url || null)
+export default function InlineLogoPicker({
+  profile,
+  onLogoChange,
+  onPreviewChange,
+  onPaletteExtracted,
+  onUploadingChange,
+  sessionPreviewUrl,
+}: InlineLogoPickerProps) {
+  const initialPreview =
+    sessionPreviewUrl !== undefined ? sessionPreviewUrl : profile?.logo_url || null
+  const [logoPreview, setLogoPreview] = useState<string | null>(initialPreview)
+  const logoPreviewRef = useRef<string | null>(initialPreview)
+  const extractGenerationRef = useRef(0)
   const [logoUseBackground, setLogoUseBackground] = useState(profile?.logo_use_background || false)
   const [isUploading, setIsUploading] = useState(false)
 
   const canUploadLogo = Boolean(profile?.id && profile.id !== 'anonymous')
-  
-  // Update ref when preview changes
+
   useEffect(() => {
     logoPreviewRef.current = logoPreview
   }, [logoPreview])
-  
-  // Upload logo file to server - COPIED FROM ZEYODA ProfileEditPanel.tsx lines 148-206
+
+  useEffect(() => {
+    if (sessionPreviewUrl === undefined) return
+    setLogoPreview(sessionPreviewUrl)
+    logoPreviewRef.current = sessionPreviewUrl
+  }, [sessionPreviewUrl])
+
+  useEffect(() => {
+    setLogoUseBackground(profile?.logo_use_background || false)
+  }, [profile?.logo_use_background])
+
+  useEffect(() => {
+    onUploadingChange?.(isUploading)
+  }, [isUploading, onUploadingChange])
+
+  const cleanupReplacedLogos = async (userId: string, keepPath: string) => {
+    try {
+      const formData = new FormData()
+      formData.append('userId', userId)
+      formData.append('cleanupKeepPath', keepPath)
+      await fetch('/api/uploadLogo', { method: 'POST', body: formData })
+    } catch {
+      // Orphans are safe. Never delete-first.
+    }
+  }
+
   const uploadLogoFile = async (file: File, userId: string) => {
     setIsUploading(true)
     try {
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
-      
+
       if (!session) {
         alert('You must be logged in to upload a logo')
         return
@@ -40,28 +82,28 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
       const uploadFormData = new FormData();
       uploadFormData.append('file', file);
       uploadFormData.append('userId', userId);
-      
+
       const response = await fetch('/api/uploadLogo', {
         method: 'POST',
         body: uploadFormData
       });
-      
+
       const result = await response.json();
-      
+
       if (response.ok) {
         setLogoPreview(result.logoUrl);
         logoPreviewRef.current = result.logoUrl;
-        
-        // Zeyoda pattern: Apply background IMMEDIATELY if checkbox is checked
+
         applyLogoBackground(profile, result.logoUrl, logoUseBackground);
-        
-        // Update preview for live background
+
         if (onPreviewChange) {
           onPreviewChange(result.logoUrl, logoUseBackground);
         }
-        
-        // CRITICAL: Autosave immediately
-        onLogoChange({ logo_url: result.logoUrl });
+
+        await Promise.resolve(onLogoChange({ logo_url: result.logoUrl }));
+        if (result.logoPath) {
+          void cleanupReplacedLogos(userId, result.logoPath);
+        }
       } else {
         alert(result.error || 'Failed to upload logo');
       }
@@ -72,7 +114,7 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
       setIsUploading(false)
     }
   };
-  
+
   return (
     <div className="space-y-2">
       <div>
@@ -81,120 +123,119 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
             <button
               type="button"
               onClick={() => {
-                if (confirm('Are you sure you want to remove the logo?')) {
-                  if (logoPreview.startsWith('blob:')) {
-                    URL.revokeObjectURL(logoPreview);
-                  }
-                  setLogoPreview(null);
-                  logoPreviewRef.current = null;
-                  setLogoFile(null);
-                  onLogoChange({ logo_url: null, logo_use_background: false });
-                  applyLogoBackground(profile, null, false);
+                extractGenerationRef.current += 1
+                setLogoPreview(null);
+                logoPreviewRef.current = null;
+                onLogoChange({ logo_url: null, logo_use_background: false });
+                if (onPreviewChange) {
+                  onPreviewChange(null, false);
                 }
+                applyLogoBackground(profile, null, false);
               }}
               className="absolute -top-1 -right-1 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold transition-colors shadow-lg z-10"
               title="Remove logo"
             >
               ×
             </button>
-            <img 
-              src={logoPreview} 
-              alt="Logo preview" 
+            <img
+              src={logoPreview}
+              alt="Logo preview"
               className="h-12 w-12 object-contain rounded border border-gray-600 bg-gray-800"
             />
           </div>
         )}
-        
-        {/* File input */}
+
         <input
           type="file"
           accept="image/*"
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            
-            // Validate file type
+
             if (!file.type.startsWith('image/')) {
               alert('Please upload an image file (JPG, PNG, SVG, or WebP)');
               return;
             }
-            
-            // Validate file size (5MB max)
+
             if (file.size > 5 * 1024 * 1024) {
               alert('File size must be less than 5MB');
               return;
             }
-            
-            setLogoFile(file);
-            // Revoke old preview URL to prevent memory leaks
+
             if (logoPreview && logoPreview.startsWith('blob:')) {
               URL.revokeObjectURL(logoPreview);
             }
             const preview = URL.createObjectURL(file);
             setLogoPreview(preview);
             logoPreviewRef.current = preview;
-            
-            // Zeyoda pattern: Apply background IMMEDIATELY when file selected
+
+            const extractGeneration = extractGenerationRef.current + 1
+            extractGenerationRef.current = extractGeneration
+            void extractLogoPalette(file)
+              .then((guess) => {
+                if (extractGeneration !== extractGenerationRef.current) return
+                if (!guess || !onPaletteExtracted) return
+                onPaletteExtracted(guess, {
+                  logo_url: logoPreviewRef.current,
+                  logo_use_background: logoUseBackground,
+                })
+              })
+              .catch(() => {})
+
             applyLogoBackground(profile, preview, logoUseBackground);
-            
-            // Update parent state for consistency
+
             if (onPreviewChange) {
               onPreviewChange(preview, logoUseBackground);
             }
-            
-            // Auto-upload only when authenticated (not anonymous preview)
+
             if (canUploadLogo && profile?.id) {
               uploadLogoFile(file, profile.id);
             } else {
-              // Anonymous free-taste: keep the local preview as the chosen logo so
-              // Save logo can persist draft answer_data / profilePreview without login.
               onLogoChange({ logo_url: preview });
             }
+
+            e.target.value = ''
           }}
           className="w-full p-2 bg-gray-700 text-white rounded-lg border border-gray-600 mb-2 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-yellow-500 file:text-white hover:file:bg-yellow-600"
           disabled={isUploading}
         />
-        
-        {/* Checkbox - Use logo as background */}
-        <label className="flex items-center text-white cursor-pointer">
+
+        <label
+          className={`flex items-center gap-2.5 py-1 ${logoPreview ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+        >
           <input
             type="checkbox"
             checked={logoUseBackground}
             onChange={(e) => {
               const checked = e.target.checked;
               setLogoUseBackground(checked);
-              
-              // Zeyoda pattern: Apply background IMMEDIATELY (bypass React state batching)
+
               const currentLogoUrl = logoPreviewRef.current || logoPreview || profile?.logo_url || null;
-              
-              // CRITICAL: When unchecked, pass null for logo URL to force primary color
-              // This ensures background reverts to primary color, not logo
               const logoUrlToUse = checked ? currentLogoUrl : null;
-              
-              // Build profile with updated logo_use_background to ensure correct fallback
+
               const updatedProfile = {
                 ...profile,
                 logo_use_background: checked,
                 primary_color: profile?.primary_color,
                 brand_color: profile?.brand_color || profile?.primary_color
               } as Profile;
-              
-              // Apply immediately (Zeyoda pattern - direct call, no state batching delay)
-              // Pass null for logo URL when unchecked to force primary color branch
+
               applyLogoBackground(updatedProfile, logoUrlToUse, checked);
-              
-              // Update parent state for consistency
+
               if (onPreviewChange) {
                 onPreviewChange(logoUrlToUse, checked);
               }
-              
-              // CRITICAL: Autosave immediately
+
               onLogoChange({ logo_use_background: checked });
             }}
-            className="mr-2 w-4 h-4"
+            className="h-4 w-4 shrink-0 accent-[#FFD700] disabled:opacity-60"
             disabled={!logoPreview}
           />
-          <span className={logoPreview ? '' : 'text-gray-500'}>
+          <span
+            className={`[text-shadow:0_1px_2px_rgba(0,0,0,0.7)] ${
+              logoPreview ? 'text-[#fffacd]' : 'text-[#fffacd]/65'
+            }`}
+          >
             Use logo as page background
           </span>
         </label>
@@ -202,4 +243,3 @@ export default function InlineLogoPicker({ profile, onLogoChange, onPreviewChang
     </div>
   )
 }
-

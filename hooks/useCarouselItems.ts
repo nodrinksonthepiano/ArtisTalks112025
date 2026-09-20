@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useCallback, useState, useEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, getStep, StepId } from '@/lib/curriculum'
+import { CURRICULUM, getCurriculumSpineOrder, getStep, StepId } from '@/lib/curriculum'
 import { loadDraft } from '@/lib/draft'
 
 export interface CarouselItem {
@@ -17,77 +17,148 @@ export interface CarouselItem {
   createdAt: string
 }
 
+export interface LiveCarouselMedia {
+  logoUrl?: string | null
+  logoRemoved?: boolean
+}
+
+function keyToLabel(key: string) {
+  if (key === 'logo_uploaded') return 'Logo'
+  if (key === 'colors_set') return 'Colors'
+  if (key === 'font_set') return 'Font'
+  return key
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+function itemTypeForStep(step: { phase?: string } | undefined): CarouselItem['type'] {
+  if (step?.phase === 'prod') return 'pro'
+  if (step?.phase === 'legacy') return 'loop'
+  if (step?.phase === 'post') return 'post'
+  return 'pre'
+}
+
+function sortBySpine(items: CarouselItem[]): CarouselItem[] {
+  const spine = getCurriculumSpineOrder()
+  return [...items].sort((a, b) => {
+    const ai = spine.indexOf(a.stepId)
+    const bi = spine.indexOf(b.stepId)
+    const aRank = ai === -1 ? 999 : ai
+    const bRank = bi === -1 ? 999 : bi
+    if (aRank !== bRank) return aRank - bRank
+    return a.createdAt.localeCompare(b.createdAt)
+  })
+}
+
+function carouselItemsEqual(
+  previous: CarouselItem[],
+  next: CarouselItem[]
+): boolean {
+  if (previous.length !== next.length) return false
+
+  return previous.every((item, index) => {
+    const candidate = next[index]
+    return (
+      item.id === candidate.id &&
+      item.stepId === candidate.stepId &&
+      item.questionKey === candidate.questionKey &&
+      item.isCurrentQuestion === candidate.isCurrentQuestion &&
+      item.title === candidate.title &&
+      item.content === candidate.content &&
+      item.imageUrl === candidate.imageUrl &&
+      item.videoUrl === candidate.videoUrl &&
+      item.audioUrl === candidate.audioUrl &&
+      item.type === candidate.type &&
+      item.createdAt === candidate.createdAt
+    )
+  })
+}
+
 export function useCarouselItems(
   userId: string | null,
   currentTypingInput: string,
-  activeStepId: StepId | null,
-  activeStepIdForQuestion: StepId | null,
-  isEditMode: boolean,
-  answeredKeys?: Set<string>
+  pendingStepId: StepId | null,
+  viewedStepId: StepId | null,
+  answeredKeys?: Set<string>,
+  liveMedia?: LiveCarouselMedia
 ) {
   const [items, setItems] = useState<CarouselItem[]>([])
   const supabase = createClient()
   const typingDebounceRef = useRef<NodeJS.Timeout | null>(null)
   const lastTypingInputRef = useRef<string>('')
-  const typingInputRef = useRef<string>(currentTypingInput) // Track current typing input
+  const typingInputRef = useRef<string>(currentTypingInput)
+  const liveMediaRef = useRef<LiveCarouselMedia | undefined>(liveMedia)
+  const liveLogoUrl = liveMedia?.logoUrl
+  const liveLogoRemoved = liveMedia?.logoRemoved
+  const pendingCardCreatedAt = useMemo(
+    () => (pendingStepId ? new Date().toISOString() : ''),
+    [pendingStepId]
+  )
 
-  // Update ref immediately (for use in loadItems)
-  typingInputRef.current = currentTypingInput
+  const commitItems = useCallback((nextItems: CarouselItem[]) => {
+    setItems((previous) =>
+      carouselItemsEqual(previous, nextItems) ? previous : nextItems
+    )
+  }, [])
 
-  // CRITICAL: Create current question card synchronously (before async database query)
-  // This ensures card exists immediately when currentQuestionStepId changes, preventing flash
-  const currentQuestionCard = useMemo(() => {
-    // CRITICAL: In edit mode, don't create a new current question card
-    // The edited card is already in the answered items list
-    if (isEditMode) {
-      return null
+  useEffect(() => {
+    typingInputRef.current = currentTypingInput
+    liveMediaRef.current = liveMedia
+  })
+
+  const pendingQuestionCard = useMemo(() => {
+    if (!pendingStepId) return null
+    if (answeredKeys?.has(getStep(pendingStepId).key)) return null
+
+    const currentStep = getStep(pendingStepId)
+    const typingForPending = viewedStepId === pendingStepId ? currentTypingInput : ''
+    const logoUrl = liveLogoUrl || undefined
+    const logoRemoved = liveLogoRemoved === true && !logoUrl
+
+    if (currentStep.key === 'logo_uploaded') {
+      return {
+        id: `current-question-${pendingStepId}`,
+        stepId: pendingStepId,
+        questionKey: currentStep.key,
+        isCurrentQuestion: true,
+        title: 'Logo',
+        content: logoRemoved ? 'Removed' : '',
+        imageUrl: logoUrl,
+        type: itemTypeForStep(currentStep),
+        createdAt: pendingCardCreatedAt,
+      } as CarouselItem
     }
-    
-    if (!activeStepId) return null
-    
-    const currentStep = getStep(activeStepId)
-    
-    // CRITICAL: INIT card is special - only create when user has started typing
-    const isInitStep = activeStepId === 'INIT'
-    const hasTypingStarted = activeStepId === 'INIT' && currentTypingInput.length > 0
-    
-    if (isInitStep && !hasTypingStarted) {
-      return null
-    }
-    
-    // CRITICAL: Since activeStepId is single source of truth, typing always matches
-    const typingInput = currentTypingInput
+
+    const label = keyToLabel(currentStep.key)
     const cardTitle =
       currentStep.key === 'artist_name'
-        ? typingInput
-        : (() => {
-            const label = currentStep.key
-              .split('_')
-              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-              .join(' ')
-            return typingInput ? `${label}: ${typingInput}` : `${label}: `
-          })()
-    
+        ? typingForPending
+        : typingForPending
+          ? `${label}: ${typingForPending}`
+          : label
+
     return {
-      id: `current-question-${activeStepId}`,
-      stepId: activeStepId,
+      id: `current-question-${pendingStepId}`,
+      stepId: pendingStepId,
       questionKey: currentStep.key,
       isCurrentQuestion: true,
       title: cardTitle,
       content: '',
-      type: (currentStep.phase === 'prod' ? 'pro' : currentStep.phase === 'legacy' ? 'loop' : currentStep.phase) || 'pre',
-      createdAt: new Date().toISOString()
+      type: itemTypeForStep(currentStep),
+      createdAt: pendingCardCreatedAt,
     } as CarouselItem
-  }, [activeStepId, currentTypingInput, isEditMode])
+  }, [
+    pendingStepId,
+    currentTypingInput,
+    viewedStepId,
+    answeredKeys,
+    liveLogoUrl,
+    liveLogoRemoved,
+    pendingCardCreatedAt,
+  ])
 
-  // Shared loadItems function
   const loadItemsRef = useRef<(() => Promise<void>) | null>(null)
-
-  const keyToLabel = (key: string) =>
-    key
-      .split('_')
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
 
   const buildItemsFromAnswers = (
     answers: Array<{ question_key: string; answer_data: any; created_at: string }>
@@ -120,12 +191,22 @@ export function useCarouselItems(
         answerData?.imageUrl || answerData?.image_url || answerData?.url || undefined
 
       if (answer.question_key === 'logo_uploaded') {
-        if (answerData?.skipped) {
+        const liveUrl = liveMediaRef.current?.logoUrl
+        const liveRemoved = liveMediaRef.current?.logoRemoved === true
+        if (liveUrl) {
+          imageUrl = liveUrl
+        } else if (liveRemoved) {
+          imageUrl = undefined
+        }
+        if (answerData?.skipped && !liveUrl) {
           cardTitle = 'Logo'
           cardContent = 'Skipped for now'
         } else if (imageUrl) {
           cardTitle = 'Logo'
           cardContent = !isStatusText && rawText ? rawText : ''
+        } else if (liveRemoved) {
+          cardTitle = 'Logo'
+          cardContent = 'Removed'
         } else if (rawText && !isStatusText) {
           cardTitle = 'Logo'
           cardContent = rawText
@@ -135,8 +216,9 @@ export function useCarouselItems(
       } else if (answer.question_key === 'colors_set') {
         const primary = answerData?.primary || answerData?.brand_color || ''
         const accent = answerData?.accent || ''
+        const pop = answerData?.pop || ''
         cardTitle = 'Colors'
-        cardContent = [primary, accent].filter(Boolean).join(' · ')
+        cardContent = [primary, accent, pop].filter(Boolean).join(' · ')
       } else if (answer.question_key === 'font_set') {
         const headline = answerData?.headline_font || answerData?.font || ''
         const body = answerData?.body_font || ''
@@ -151,17 +233,8 @@ export function useCarouselItems(
       } else {
         const label = keyToLabel(answer.question_key)
         cardTitle =
-          rawText && !isStatusText ? `${label}: ${rawText}` : `${label}: `
+          rawText && !isStatusText ? `${label}: ${rawText}` : label
       }
-
-      const itemType: CarouselItem['type'] =
-        step?.phase === 'prod'
-          ? 'pro'
-          : step?.phase === 'legacy'
-            ? 'loop'
-            : step?.phase === 'post'
-              ? 'post'
-              : 'pre'
 
       return {
         id: `${answer.question_key}-${answer.created_at}`,
@@ -172,56 +245,68 @@ export function useCarouselItems(
         imageUrl,
         videoUrl: answerData?.videoUrl || answerData?.video_url,
         audioUrl: answerData?.audioUrl || answerData?.audio_url,
-        type: itemType,
+        type: itemTypeForStep(step),
         createdAt: answer.created_at,
       }
     })
 
-    return mappedItems.filter((item): item is CarouselItem => item !== null)
+    return sortBySpine(mappedItems.filter((item): item is CarouselItem => item !== null))
   }
 
-  const mergeCurrentQuestionCard = (answeredItems: CarouselItem[]): CarouselItem[] => {
-    let finalItems = answeredItems.filter((item) => !item.isCurrentQuestion)
+  const mergePendingCard = (answeredItems: CarouselItem[]): CarouselItem[] => {
+    let finalItems = sortBySpine(answeredItems.filter((item) => !item.isCurrentQuestion))
 
-    if (activeStepId && typingInputRef.current) {
-      const editedCardIndex = finalItems.findIndex((item) => item.stepId === activeStepId)
+    const typingTargetId = viewedStepId || pendingStepId
+    if (typingTargetId && typingInputRef.current) {
+      const editedCardIndex = finalItems.findIndex((item) => item.stepId === typingTargetId)
       if (editedCardIndex !== -1) {
         const editedCard = finalItems[editedCardIndex]
-        const step = getStep(activeStepId)
-        finalItems[editedCardIndex] = {
-          ...editedCard,
-          title:
-            step.key === 'artist_name'
-              ? typingInputRef.current
-              : `${keyToLabel(step.key)}: ${typingInputRef.current}`,
+        const step = getStep(typingTargetId)
+        if (step.key === 'logo_uploaded') {
+          finalItems[editedCardIndex] = {
+            ...editedCard,
+            title: 'Logo',
+            imageUrl: liveMediaRef.current?.logoUrl || editedCard.imageUrl,
+            content:
+              liveMediaRef.current?.logoRemoved && !liveMediaRef.current?.logoUrl
+                ? 'Removed'
+                : editedCard.content,
+          }
+        } else {
+          finalItems[editedCardIndex] = {
+            ...editedCard,
+            title:
+              step.key === 'artist_name'
+                ? typingInputRef.current
+                : `${keyToLabel(step.key)}: ${typingInputRef.current}`,
+          }
         }
       }
     }
 
-    if (!isEditMode && currentQuestionCard) {
+    if (pendingQuestionCard) {
       const alreadyAnswered = finalItems.some(
-        (item) => item.questionKey === currentQuestionCard.questionKey
+        (item) => item.questionKey === pendingQuestionCard.questionKey
       )
       if (!alreadyAnswered) {
-        finalItems = [currentQuestionCard, ...finalItems]
+        finalItems = sortBySpine([...finalItems, pendingQuestionCard])
       }
     }
 
     return finalItems
   }
 
-  // Main effect: Load items (handles all non-typing changes)
   useEffect(() => {
     if (!userId) {
       const draft = loadDraft()
       const answeredItems = buildItemsFromAnswers(draft?.answers ?? [])
-      setItems(mergeCurrentQuestionCard(answeredItems))
+      commitItems(mergePendingCard(answeredItems))
       lastTypingInputRef.current = typingInputRef.current
 
       loadItemsRef.current = async () => {
         const latestDraft = loadDraft()
         const latestAnswered = buildItemsFromAnswers(latestDraft?.answers ?? [])
-        setItems(mergeCurrentQuestionCard(latestAnswered))
+        commitItems(mergePendingCard(latestAnswered))
         lastTypingInputRef.current = typingInputRef.current
       }
       return
@@ -241,20 +326,16 @@ export function useCarouselItems(
         }
 
         const answeredItems = buildItemsFromAnswers(answers || [])
-        setItems(mergeCurrentQuestionCard(answeredItems))
+        commitItems(mergePendingCard(answeredItems))
         lastTypingInputRef.current = typingInputRef.current
       } catch (err) {
         console.error('Error in useCarouselItems:', err)
       }
     }
 
-    // Store loadItems function for typing debounce
     loadItemsRef.current = loadItems
-
-    // Load immediately (not typing) - this will update items with DB data
     loadItems()
 
-    // Subscribe to changes
     const channel = supabase
       .channel(`carousel-items-${userId}`)
       .on(
@@ -274,16 +355,23 @@ export function useCarouselItems(
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, supabase, activeStepId, currentQuestionCard, isEditMode, answeredKeys])
+  }, [
+    userId,
+    supabase,
+    pendingStepId,
+    pendingQuestionCard,
+    answeredKeys,
+    viewedStepId,
+    liveLogoUrl,
+    liveLogoRemoved,
+    commitItems,
+  ])
 
-  // Separate effect: Debounce typing updates to prevent glitching
   useEffect(() => {
     if (!loadItemsRef.current) return
-    
-    // CRITICAL: Since activeStepId is single source of truth, typing always matches when activeStepId is set
-    const isTyping = currentTypingInput !== lastTypingInputRef.current && activeStepId !== null
+
+    const isTyping = currentTypingInput !== lastTypingInputRef.current && pendingStepId !== null
     if (isTyping) {
-      // Typing is happening - debounce the update
       if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
       typingDebounceRef.current = setTimeout(() => {
         if (loadItemsRef.current) {
@@ -291,52 +379,47 @@ export function useCarouselItems(
         }
       }, 100)
     }
-    
+
     return () => {
       if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
     }
-  }, [currentTypingInput, activeStepId, userId, answeredKeys])
+  }, [currentTypingInput, pendingStepId, viewedStepId, userId, answeredKeys])
 
-  // CRITICAL: Merge synchronous current question card with async items from database
-  // This ensures card exists immediately when activeStepId changes, preventing flash
   const finalItems = useMemo(() => {
-    // Remove any old current question cards from items (cleanup)
-    const itemsWithoutCurrent = items.filter(item => !item.isCurrentQuestion)
-    
-    // CRITICAL: In edit mode, don't add a current question card - edited card is already in items
-    if (isEditMode) {
-      return itemsWithoutCurrent
-    }
-    
-    // CRITICAL: If activeStepId exists, guarantee current card at index 0
-    // Never fall back to answered items when question is active
-    if (activeStepId) {
-      // INIT special case: currentQuestionCard is null until typing starts.
-      // Fresh user: no answered items either, so this stays empty (preserves the
-      // "surprise" moment). Returning user who navigated back to the answered
-      // name card: keep the answered deck visible instead of blanking it.
-      if (!currentQuestionCard) {
-        return itemsWithoutCurrent
-      }
-      
-      // CRITICAL: If the active step is already answered (artist swiped/navigated to it),
-      // keep the answered card in place - injecting a synthetic question card here
-      // reordered the deck under the artist's finger and broke swiping.
+    const itemsWithoutCurrent = sortBySpine(items.filter((item) => !item.isCurrentQuestion))
+
+    if (pendingQuestionCard) {
       const alreadyAnswered = itemsWithoutCurrent.some(
-        item => item.questionKey === currentQuestionCard.questionKey
+        (item) => item.questionKey === pendingQuestionCard.questionKey
       )
       if (alreadyAnswered) {
-        return itemsWithoutCurrent
+        return itemsWithoutCurrent.map((item) => {
+          if (item.questionKey !== 'logo_uploaded') return item
+          const liveUrl = liveLogoUrl
+          if (liveUrl) {
+            return { ...item, title: 'Logo', imageUrl: liveUrl, content: item.content }
+          }
+          if (liveLogoRemoved) {
+            return { ...item, title: 'Logo', imageUrl: undefined, content: 'Removed' }
+          }
+          return item
+        })
       }
-      
-      // Unanswered step: current question card leads at index 0 (featured spot)
-      return [currentQuestionCard, ...itemsWithoutCurrent]
+      return sortBySpine([...itemsWithoutCurrent, pendingQuestionCard])
     }
-    
-    // No active step - return answered items only
-    return itemsWithoutCurrent
-  }, [items, currentQuestionCard, activeStepId, isEditMode])
+
+    return itemsWithoutCurrent.map((item) => {
+      if (item.questionKey !== 'logo_uploaded') return item
+      const liveUrl = liveLogoUrl
+      if (liveUrl) {
+        return { ...item, title: 'Logo', imageUrl: liveUrl, content: item.content }
+      }
+      if (liveLogoRemoved) {
+        return { ...item, title: 'Logo', imageUrl: undefined, content: 'Removed' }
+      }
+      return item
+    })
+  }, [items, pendingQuestionCard, liveLogoUrl, liveLogoRemoved])
 
   return finalItems
 }
-

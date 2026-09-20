@@ -121,7 +121,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   INIT: {
     id: 'INIT',
     question: "What is your artist name?",
-    nextStep: 'LOGO_PANEL',
+    nextStep: 'GIFT_PRESENCE',
     key: 'artist_name',
     placeholder: "What is your artist name?",
     phase: 'pre'
@@ -129,7 +129,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   LOGO_PANEL: {
     id: 'LOGO_PANEL',
     question: "Upload your logo—or describe the logo you imagine.",
-    nextStep: 'SYMBOL',
+    nextStep: 'COLORS_PANEL',
     key: 'logo_uploaded',
     triggersPanel: 'logo',
     input: { kind: 'panel', panel: 'logo' },
@@ -137,10 +137,10 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   },
   SYMBOL: {
     id: 'SYMBOL',
-    question: "Is there a symbol, sign, or icon that represents you or your artist world?",
-    nextStep: 'COLORS_PANEL',
+    question: "Is there a symbol, sign, or icon that represents your gift to the world?",
+    nextStep: 'LOGO_PANEL',
     key: 'artist_symbol',
-    placeholder: "Is there a symbol, sign, or icon that represents you or your artist world?",
+    placeholder: "Is there a symbol, sign, or icon that represents your gift to the world?",
     phase: 'pre'
   },
   COLORS_PANEL: {
@@ -155,7 +155,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   FONT_PANEL: {
     id: 'FONT_PANEL',
     question: "What kind of lettering sounds like you?",
-    nextStep: 'GIFT_PRESENCE',
+    nextStep: 'KNOWN_FOR_LEGACY',
     key: 'font_set',
     triggersPanel: 'font',
     input: { kind: 'panel', panel: 'font' },
@@ -163,8 +163,8 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   },
   GIFT_PRESENCE: {
     id: 'GIFT_PRESENCE',
-    question: "Acknowledge yourself. What makes your presence a gift to the world?",
-    nextStep: 'KNOWN_FOR_LEGACY',
+    question: "What makes your presence a gift to the world?",
+    nextStep: 'SYMBOL',
     key: 'gift_to_world',
     placeholder: "My presence is a gift because...",
     phase: 'pre'
@@ -272,7 +272,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   PLAYLIST_CONTEXT: {
     id: 'PLAYLIST_CONTEXT',
     question: "If your music was in a playlist, who would you be played before and after?",
-    nextStep: 'SPONSOR_BRAND_ALLIES',
+    nextStep: 'WARDROBE_IMAGE',
     key: 'playlist_context',
     placeholder: "I would be played before/after...",
     phase: 'post'
@@ -288,7 +288,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   INFLUENCERS_COMMUNITIES: {
     id: 'INFLUENCERS_COMMUNITIES',
     question: "Who are the influencers, communities, groups, venues, scenes, or tribes that already gather people similar to your audience?",
-    nextStep: 'WARDROBE_IMAGE',
+    nextStep: 'SIGNATURE_WORLD',
     key: 'influencers_communities',
     placeholder: "My people are already gathering around...",
     phase: 'post'
@@ -296,7 +296,7 @@ export const CURRICULUM: Record<StepId, CurriculumStep> = {
   WARDROBE_IMAGE: {
     id: 'WARDROBE_IMAGE',
     question: "What does your on-stage wardrobe or public image look like when you are fully showing up?",
-    nextStep: 'SIGNATURE_WORLD',
+    nextStep: 'SPONSOR_BRAND_ALLIES',
     key: 'wardrobe_public_image',
     placeholder: "When I am fully showing up, I look like...",
     phase: 'pre'
@@ -449,6 +449,30 @@ export function getCurriculumSpineOrder(): StepId[] {
   }
 
   return order
+}
+
+/**
+ * Previous step on the live V2 spine (INIT → … → COMPLETE).
+ * Compatibility stubs are not on that walk, so they return null.
+ */
+export function getSpinePredecessor(stepId: StepId): StepId | null {
+  const spine = getCurriculumSpineOrder()
+  const idx = spine.indexOf(stepId)
+  if (idx <= 0) return null
+  return spine[idx - 1]
+}
+
+/** Gift fallback is stored on the step. Named copy is display-only and not saved. */
+export function getDisplayedQuestion(
+  step: CurriculumStep,
+  artistName?: string | null
+): string {
+  if (step.id === 'GIFT_PRESENCE') {
+    const name = artistName?.trim()
+    if (name) return `Why is ${name}'s presence a gift to the world?`
+    return step.question
+  }
+  return step.question
 }
 
 /** Last step of the anonymous free taste (step 8). Gate follows when its key is answered. */

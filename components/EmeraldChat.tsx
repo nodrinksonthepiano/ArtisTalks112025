@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUp, Undo2, Redo2, Pencil, ChevronLeft } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { CURRICULUM, StepId, getStep, isSelectStep, isBrandPanelStep, isLogoPanelStep, isColorsPanelStep, isFontPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, ANONYMOUS_GATE_SAVE_CTA, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, getCurriculumSpineOrder, withProfileSatisfiedArtistName, legacyBrandBridgeKeys, BRAND_FLOW_VERSION } from '@/lib/curriculum'
+import { CURRICULUM, StepId, getStep, isSelectStep, isBrandPanelStep, isLogoPanelStep, isColorsPanelStep, isFontPanelStep, getStepPlaceholder, getSelectLabel, resolveSelectValue, FREE_TASTE_LAST_STEP_ID, FREE_TASTE_LAST_KEY, ANONYMOUS_GATE_MESSAGE, ANONYMOUS_GATE_SAVE_CTA, isFreeTasteGateReached, isBeyondFreeTaste, findFirstUnansweredInFreeTaste, clampStepToFreeTaste, getCurriculumSpineOrder, getSpinePredecessor, getDisplayedQuestion, withProfileSatisfiedArtistName, legacyBrandBridgeKeys, BRAND_FLOW_VERSION } from '@/lib/curriculum'
 import { Profile } from '@/hooks/useProfile'
 import {
   getDraftAnswerText,
@@ -17,8 +17,16 @@ import {
   clearDraftArtistNameAttempt,
 } from '@/lib/draft'
 import { upsertCurriculumAnswer } from '@/lib/upsertCurriculumAnswer'
-import InlineColorPicker from '@/components/InlineColorPicker'
+import InlineColorPicker, {
+  type PaletteSessionState,
+} from '@/components/InlineColorPicker'
 import InlineLogoPicker from '@/components/InlineLogoPicker'
+import {
+  clearLogoPaletteSuggestion,
+  stashLogoPaletteSuggestion,
+  type LogoPaletteGuess,
+} from '@/utils/extractLogoPalette'
+import { previewArtistPalette } from '@/utils/previewArtistPalette'
 import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
 import {
@@ -82,7 +90,9 @@ function isPaidSaasStep(stepId: StepId): boolean {
 
 // Add prop type for the update function
 interface EmeraldChatProps {
-  onProfileUpdate?: (updates: Partial<Profile>) => void
+  onProfileUpdate?: (
+    updates: Partial<Profile>
+  ) => boolean | void | Promise<boolean | void>
   onTriggerPanel?: (panel: 'logo' | 'colors' | 'font' | 'asset' | null) => void
   onTypingUpdate?: (input: string, stepId: StepId) => void // Live typing updates for carousel card
   onSubmitCard?: (answer: string, stepId: StepId) => void // Trigger card swipe animation on submit
@@ -98,6 +108,9 @@ interface EmeraldChatProps {
   onSaasAccessActivated?: () => Promise<void> | void
   /** Presentation only: use the persistent compact/expanded Emerald shell. */
   isDocked?: boolean
+  /** Durable saved colors (profile/draft/colors_set). Never infer from live preview. */
+  hasSavedArtistColors?: boolean
+  onLiveLogoChange?: (logoUrl: string | null, removed: boolean) => void
 }
 
 const INIT_WELCOME_HEADLINE = 'Welcome, my champion...'
@@ -125,6 +138,8 @@ export default function EmeraldChat({
   affirmationReadyToSave = true,
   onSaasAccessActivated,
   isDocked = false,
+  hasSavedArtistColors = false,
+  onLiveLogoChange,
 }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
@@ -136,30 +151,42 @@ export default function EmeraldChat({
   const [showHistory, setShowHistory] = useState(false) // Toggle history modal
   const [isSurfaceExpanded, setIsSurfaceExpanded] = useState(() => !isDocked)
   
-  // Live panel drafts (profile still updates on each change for preview)
+  // Same-session panel state survives browsing; durable writes happen on Save.
   const [currentPickerState, setCurrentPickerState] = useState<{
-    colors?: {
-      primary_color?: string | null
-      accent_color?: string | null
-      brand_color?: string | null
-    }
+    colors?: PaletteSessionState
     logo?: { logo_url?: string | null; logo_use_background?: boolean | null }
     font?: { font_family?: string | null; body_font_family?: string | null }
   }>({})
   const [logoDescription, setLogoDescription] = useState('')
-
-  // Redo stack: track undone states so user can redo
-  const [redoStack, setRedoStack] = useState<Array<{
+  const [logoUploading, setLogoUploading] = useState(false)
+  const paletteSuggestionOwnerRef = useRef<string | null>(null)
+  const textDraftsRef = useRef<Record<string, string>>({})
+  const inputValueRef = useRef(input)
+  const [actionUndoStack, setActionUndoStack] = useState<Array<{
+    kind: 'logo'
+    before: { logo_url?: string | null; logo_use_background?: boolean | null }
+    after: { logo_url?: string | null; logo_use_background?: boolean | null }
+  } | {
+    kind: 'text'
     stepId: StepId
-    previousStepId: StepId | null
-    history: Array<{role: 'assistant' | 'user', content: string, stepId?: StepId}>
+    before: string
+    after: string
   }>>([])
-  
+  const [actionRedoStack, setActionRedoStack] = useState<typeof actionUndoStack>([])
+
+  useEffect(() => {
+    const owner = profile?.id ?? (isAnonymous ? 'anonymous' : null)
+    if (paletteSuggestionOwnerRef.current === owner) return
+    clearLogoPaletteSuggestion()
+    paletteSuggestionOwnerRef.current = owner
+  }, [isAnonymous, profile?.id])
+
   // Brand panel editors open when the step is unanswered or explicitly edited.
   // Casual swipe onto an answered brand card shows a compact summary instead.
   const [pickerOpenedExplicitly, setPickerOpenedExplicitly] = useState(false)
   const keepPickerOpenRef = useRef(false)
   const currentStepIdRef = useRef<StepId>(currentStepId)
+  const lastNotifiedStepIdRef = useRef<StepId | null>(null)
   const stepAdvanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
   const currentStep = getStep(currentStepId)
@@ -267,6 +294,19 @@ export default function EmeraldChat({
     }
   }, [profile?.saas_subscription_status])
 
+  const artistNameForCopy = useMemo(() => {
+    const fromProfile = profile?.artist_name?.trim()
+    if (fromProfile) return fromProfile
+    const fromDraft = getDraftAnswerText('artist_name').trim()
+    if (fromDraft) return fromDraft
+    return answeredKeys.has('artist_name') ? fromDraft : ''
+  }, [profile?.artist_name, answeredKeys])
+
+  const currentQuestionText = useMemo(
+    () => getDisplayedQuestion(currentStep, artistNameForCopy),
+    [currentStep, artistNameForCopy]
+  )
+
   const gateEmailPlaceholder = useMemo(() => {
     const artistName =
       profile?.artist_name?.trim() || getDraftAnswerText('artist_name').trim()
@@ -302,7 +342,7 @@ export default function EmeraldChat({
     const finalStep = getStep(nextStepId)
     const nextMessage = {
       role: 'assistant' as const,
-      content: finalStep.question,
+      content: getDisplayedQuestion(finalStep, artistNameForCopy),
       stepId: nextStepId,
     }
     setHistory([nextMessage])
@@ -316,7 +356,7 @@ export default function EmeraldChat({
       setLogoDescription('')
       setSaveError('')
     }
-  }, [cancelPendingStepAdvance, setCurrentStepIdSync])
+  }, [artistNameForCopy, cancelPendingStepAdvance, setCurrentStepIdSync])
 
   const scheduleStepAdvance = useCallback(
     (nextStepId: StepId, fromStepId: StepId) => {
@@ -424,7 +464,7 @@ export default function EmeraldChat({
     const nextStep = getStep(nextStepId)
     const nextMessage = {
       role: 'assistant' as const,
-      content: nextStep.question,
+      content: getDisplayedQuestion(nextStep, artistNameForCopy),
       stepId: nextStepId,
     }
     setHistory([nextMessage])
@@ -436,7 +476,7 @@ export default function EmeraldChat({
       inputRef.current?.focus()
       saasTransitionLockRef.current = false
     }, 100)
-  }, [setCurrentStepIdSync])
+  }, [artistNameForCopy, setCurrentStepIdSync])
 
   const openPostPillarContinuation = useCallback(async () => {
     if (saasTransitionLockRef.current) return
@@ -506,10 +546,8 @@ export default function EmeraldChat({
   const isColorsStep = isColorsPanelStep(getStep(currentStepId))
   const isFontStep = isFontPanelStep(getStep(currentStepId))
   const isSelectInputStep = isSelectStep(getStep(currentStepId))
-  const showBrandPicker =
-    isBrandStep &&
-    (!answeredKeys.has(getStep(currentStepId).key) || pickerOpenedExplicitly)
-  const showBrandSummary = isBrandStep && !showBrandPicker
+  const showBrandPicker = isBrandStep
+  const showBrandSummary = false
   const requiresExpandedSurface =
     !isDocked ||
     showClaimedGate ||
@@ -532,7 +570,7 @@ export default function EmeraldChat({
     isDocked &&
     !emeraldExpanded &&
     isEligibleCompactRestStep(currentStepId) &&
-    !!currentStep.question
+    !!currentQuestionText
   const isSpecialLongContentSurface =
     showClaimedGate ||
     showGateUI ||
@@ -602,18 +640,17 @@ export default function EmeraldChat({
   // Parent's onCurrentStepChange handler will check isEditMode and only update if not editing
   // For INIT: Only notify when typing has started (input.length > 0)
   useEffect(() => {
+    inputValueRef.current = input
+  }, [input])
+
+  useEffect(() => {
     if (!onCurrentStepChange) return
-    
-    const isInitStep = currentStepId === 'INIT'
-    
-    // CRITICAL: Always notify parent when currentStepId changes
-    // Parent's onCurrentStepChange handler will check isEditMode and only update if not editing
-    // For INIT: Only notify when typing has started (input.length > 0)
-    if (!isInitStep || input.length > 0) {
-      onCurrentStepChange(currentStepId)
-    }
-  }, [currentStepId, onCurrentStepChange, input])
-  
+    if (currentStepId === 'INIT' && !isDocked && input.length === 0) return
+    if (lastNotifiedStepIdRef.current === currentStepId) return
+    lastNotifiedStepIdRef.current = currentStepId
+    onCurrentStepChange(currentStepId)
+  }, [currentStepId, onCurrentStepChange, input, isDocked])
+
   // Resume-only legacy brand keys (unversioned colors_set at hydration). Never recalculated mid-journey.
   const resumeLegacyBrandKeysRef = useRef<Set<string>>(new Set())
 
@@ -698,6 +735,78 @@ export default function EmeraldChat({
     
     return 'COMPLETE'
   }, [answeredKeys, isAnonymous, profile?.artist_name, shouldBlockPaidStep])
+
+  const pendingCurriculumStepId = findFirstUnansweredStep('INIT')
+  const liveLogoUrl =
+    currentPickerState.logo?.logo_url !== undefined
+      ? currentPickerState.logo.logo_url
+      : profile?.logo_url ?? null
+  const liveLogoUseBackground =
+    currentPickerState.logo?.logo_use_background !== undefined
+      ? currentPickerState.logo.logo_use_background
+      : profile?.logo_use_background ?? false
+  const logoIsDurable =
+    !isAnonymous && !!liveLogoUrl && !liveLogoUrl.startsWith('blob:')
+  const showContinueLogoCue =
+    isDocked &&
+    pendingCurriculumStepId === 'LOGO_PANEL' &&
+    currentStepId !== 'LOGO_PANEL' &&
+    !showClaimedGate &&
+    !showGateUI &&
+    !showContinuationChoice &&
+    !showSaasPayment &&
+    !showOrbitChat
+  const continueLogoLabel = logoIsDurable ? 'Continue Logo · Saved' : 'Continue Logo'
+  const liveLogoSnapshotRef = useRef({
+    logo_url: liveLogoUrl,
+    logo_use_background: liveLogoUseBackground,
+  })
+  useEffect(() => {
+    liveLogoSnapshotRef.current = {
+      logo_url: liveLogoUrl,
+      logo_use_background: liveLogoUseBackground,
+    }
+  }, [liveLogoUrl, liveLogoUseBackground])
+
+  function applyLiveLogoState(
+    next: { logo_url?: string | null; logo_use_background?: boolean | null },
+    options?: { recordUndo?: boolean }
+  ) {
+    const before = liveLogoSnapshotRef.current
+    const after = {
+      logo_url: next.logo_url !== undefined ? next.logo_url : before.logo_url,
+      logo_use_background:
+        next.logo_use_background !== undefined
+          ? next.logo_use_background
+          : before.logo_use_background,
+    }
+    setCurrentPickerState((prev) => ({
+      ...prev,
+      logo: {
+        logo_url: after.logo_url,
+        logo_use_background: after.logo_use_background,
+      },
+    }))
+    liveLogoSnapshotRef.current = after
+    if (next.logo_url !== undefined) {
+      onLiveLogoChange?.(next.logo_url, next.logo_url == null)
+    }
+    if (!options?.recordUndo) return
+    const blobToDurable =
+      typeof before.logo_url === 'string' &&
+      before.logo_url.startsWith('blob:') &&
+      typeof after.logo_url === 'string' &&
+      !after.logo_url.startsWith('blob:')
+    if (blobToDurable) return
+    if (
+      before.logo_url === after.logo_url &&
+      before.logo_use_background === after.logo_use_background
+    ) {
+      return
+    }
+    setActionUndoStack((prev) => [...prev, { kind: 'logo', before, after }])
+    setActionRedoStack([])
+  }
   
   // Helper: Load answer from fullHistory or database
   const loadAnswerForStep = useCallback(async (stepId: StepId): Promise<string> => {
@@ -774,10 +883,12 @@ export default function EmeraldChat({
 
     setAnonymousGateView(false)
     setSaasPaymentPhase(null)
-    // Clear redo stack when editing (editing is a new action)
-    setRedoStack([])
+    const leavingId = currentStepIdRef.current
+    if (leavingId && leavingId !== stepId && !isBrandPanelStep(getStep(leavingId))) {
+      textDraftsRef.current[leavingId] = inputValueRef.current
+    }
     const step = getStep(stepId)
-    const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+    const stepMessage = { role: 'assistant' as const, content: getDisplayedQuestion(step, artistNameForCopy), stepId }
     
     if (focusInput) {
       skipCompactRestOnArrivalRef.current = true
@@ -812,16 +923,19 @@ export default function EmeraldChat({
     
     setCurrentStepIdSync(stepId)
     
-    // Find previous step immediately
-    const allSteps = Object.values(CURRICULUM)
-    const prevStep = allSteps.find(s => s.nextStep === stepId)
-    setPreviousStepId(prevStep?.id || null)
+    setPreviousStepId(getSpinePredecessor(stepId))
     
     // CRITICAL: Load answer asynchronously AFTER question is shown (text/select steps only)
     if (!isBrandPanelStep(step)) {
-      const userAnswer = await loadAnswerForStep(stepId)
-      if (currentStepIdRef.current === stepId) {
-        setInput(userAnswer)
+      const cached = textDraftsRef.current[stepId]
+      if (cached !== undefined) {
+        setInput(cached)
+      } else {
+        const userAnswer = await loadAnswerForStep(stepId)
+        if (currentStepIdRef.current === stepId) {
+          textDraftsRef.current[stepId] = userAnswer
+          setInput(userAnswer)
+        }
       }
     } else {
       setInput('')
@@ -833,7 +947,7 @@ export default function EmeraldChat({
         inputRef.current?.focus()
       }, 50)
     }
-  }, [history, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
+  }, [artistNameForCopy, history, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // CRITICAL: Listen for token navigation events (from ArtisTalksOrbitRenderer)
   useEffect(() => {
@@ -851,7 +965,7 @@ export default function EmeraldChat({
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
-        const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+        const stepMessage = { role: 'assistant' as const, content: getDisplayedQuestion(step, artistNameForCopy), stepId }
         setHistory([stepMessage])
         setFullHistory(prev => [...prev, stepMessage])
 
@@ -871,7 +985,7 @@ export default function EmeraldChat({
     return () => {
       window.removeEventListener('tokenNavigate', handleTokenNavigate as EventListener)
     }
-  }, [isAnonymous, enterBrandPanel, loadAnswerForStep, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
+  }, [isAnonymous, artistNameForCopy, enterBrandPanel, loadAnswerForStep, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // CRITICAL: Listen for card edit events (from OrbitPeekCarousel)
   useEffect(() => {
@@ -903,21 +1017,30 @@ export default function EmeraldChat({
           showSaasGateMessage()
           return
         }
-        // CRITICAL: Navigation is NOT editing - don't call handleEditStep
+        const leavingId = currentStepIdRef.current
+        if (leavingId && leavingId !== stepId && !isBrandPanelStep(getStep(leavingId))) {
+          textDraftsRef.current[leavingId] = inputValueRef.current
+        }
         setAnonymousGateView(false)
         setSaasPaymentPhase(null)
         const step = getStep(stepId)
         enterBrandPanel(stepId)
         setCurrentStepIdSync(stepId)
-        const stepMessage = { role: 'assistant' as const, content: step.question, stepId }
+        const stepMessage = { role: 'assistant' as const, content: getDisplayedQuestion(step, artistNameForCopy), stepId }
         setHistory([stepMessage])
 
         if (!isBrandPanelStep(step)) {
-          void loadAnswerForStep(stepId).then((userAnswer) => {
-            if (currentStepIdRef.current === stepId) {
-              setInput(userAnswer)
-            }
-          })
+          const cached = textDraftsRef.current[stepId]
+          if (cached !== undefined) {
+            setInput(cached)
+          } else {
+            void loadAnswerForStep(stepId).then((userAnswer) => {
+              if (currentStepIdRef.current === stepId) {
+                textDraftsRef.current[stepId] = userAnswer
+                setInput(userAnswer)
+              }
+            })
+          }
         } else {
           setInput('')
         }
@@ -928,7 +1051,7 @@ export default function EmeraldChat({
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
+  }, [artistNameForCopy, loadAnswerForStep, isAnonymous, enterBrandPanel, setCurrentStepIdSync, shouldBlockPaidStep, showSaasGateMessage])
   
   // Initialize chat on mount - start from INIT immediately, then update if answers exist
   useEffect(() => {
@@ -985,7 +1108,7 @@ export default function EmeraldChat({
         }
         const step = getStep(stepId)
         setCurrentStepId(stepId)
-        const assistantContent = stepId === 'INIT' ? getStep('INIT').question : step.question
+        const assistantContent = getDisplayedQuestion(step, artistNameForCopy)
         const stepMessage = {
           role: 'assistant' as const,
           content: assistantContent,
@@ -1013,12 +1136,12 @@ export default function EmeraldChat({
     setCurrentStepId('INIT')
     const initMessage = {
       role: 'assistant' as const,
-      content: initStep.question,
+      content: getDisplayedQuestion(initStep, artistNameForCopy),
       stepId: 'INIT' as StepId,
     }
     setHistory([initMessage])
     setFullHistory([initMessage])
-  }, [onCurrentStepChange, isAnonymous, onTypingUpdate, enterBrandPanel])
+  }, [onCurrentStepChange, isAnonymous, artistNameForCopy, onTypingUpdate, enterBrandPanel])
   
   // Track previous answeredKeys size to detect initial load (0 -> N) vs new answers (N -> N+1)
   const prevAnsweredKeysSizeRef = useRef<number>(0)
@@ -1151,7 +1274,7 @@ export default function EmeraldChat({
           setCurrentStepIdSync(firstUnanswered)
           const stepMessage = {
             role: 'assistant' as const,
-            content: step.question,
+            content: getDisplayedQuestion(step, artistNameForCopy),
             stepId: firstUnanswered,
           }
           setHistory([stepMessage])
@@ -1168,7 +1291,7 @@ export default function EmeraldChat({
     return () => {
       cancelled = true
     }
-  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, setCurrentStepIdSync, enterBrandPanel, supabase, canContinuePaidCurriculum, openPostPillarContinuation])
+  }, [answeredKeys.size, findFirstUnansweredStep, currentStepId, history.length, isAnonymous, answeredKeys, answeredKeysReady, profile?.artist_name, artistNameForCopy, setCurrentStepIdSync, enterBrandPanel, supabase, canContinuePaidCurriculum, openPostPillarContinuation])
   
   const scrollToBottom = () => {
     if (messagesContainerRef.current) {
@@ -1224,6 +1347,8 @@ export default function EmeraldChat({
 
     if (!isFirstCompletion) return
 
+    onSubmitCard?.('', stepIdAtStart)
+
     let nextStepId = findFirstUnansweredStep(currentStep.nextStep, updatedAnsweredKeys)
     if (isAnonymous) {
       if (isBeyondFreeTaste(nextStepId)) {
@@ -1245,10 +1370,20 @@ export default function EmeraldChat({
     setIsSubmitting(true)
     setSaveError('')
 
-    const logoUrl =
+    const pickerUrl =
       currentPickerState.logo?.logo_url !== undefined
         ? currentPickerState.logo.logo_url
         : profile?.logo_url
+    if (
+      mode === 'save' &&
+      !isAnonymous &&
+      (logoUploading || (typeof pickerUrl === 'string' && pickerUrl.startsWith('blob:')))
+    ) {
+      setSaveError('Logo is still uploading. Try Save in a moment.')
+      setIsSubmitting(false)
+      return
+    }
+    const logoUrl = pickerUrl
     const logoUseBackground =
       currentPickerState.logo?.logo_use_background !== undefined
         ? currentPickerState.logo.logo_use_background
@@ -1301,6 +1436,32 @@ export default function EmeraldChat({
     setIsSubmitting(false)
   }
 
+  function handleLogoPaletteExtracted(
+    guess: LogoPaletteGuess,
+    source: { logo_url: string | null; logo_use_background: boolean }
+  ) {
+    stashLogoPaletteSuggestion(guess)
+    if (hasSavedArtistColors) return
+    setCurrentPickerState((previous) => ({
+      ...previous,
+      colors: {
+        primary_color: guess.primary,
+        accent_color: guess.accent,
+        pop_color: guess.pop,
+        brand_color: guess.primary,
+      },
+    }))
+    previewArtistPalette({
+      primary: guess.primary,
+      accent: guess.accent,
+      pop: guess.pop,
+      logoUrl: source.logo_url,
+      logoUseBackground: source.logo_use_background,
+      fontFamily: profile?.font_family,
+      bodyFontFamily: profile?.body_font_family,
+    })
+  }
+
   /** Colors: one row — no status phrase text. */
   async function completeColorsPanel() {
     if (!isColorsPanelStep(currentStep) || isSubmitting) return
@@ -1310,21 +1471,57 @@ export default function EmeraldChat({
     setIsSubmitting(true)
     setSaveError('')
 
+    const sessionColors = currentPickerState.colors
     const primaryColor =
-      currentPickerState.colors?.primary_color || profile?.primary_color
-    const accentColor =
-      currentPickerState.colors?.accent_color || profile?.accent_color
-    const brandColor =
-      currentPickerState.colors?.brand_color ||
-      profile?.brand_color ||
-      primaryColor
+      sessionColors?.primary_color || profile?.primary_color || profile?.brand_color
+    const accentColor = sessionColors?.accent_color || profile?.accent_color
+    const popColor =
+      sessionColors !== undefined
+        ? sessionColors.pop_color
+        : profile?.pop_color ?? null
+    const brandColor = sessionColors ? sessionColors.primary_color : primaryColor
+
+    if (!primaryColor || !accentColor) {
+      setSaveError('Choose Main and Support colors before saving.')
+      setIsSubmitting(false)
+      return
+    }
 
     const answerData = {
       step_id: 'COLORS_PANEL',
       brand_flow_version: BRAND_FLOW_VERSION,
       primary: primaryColor,
       accent: accentColor,
+      pop: popColor,
       brand_color: brandColor,
+    }
+
+    const displayedColors: Partial<Profile> = {
+      primary_color: primaryColor,
+      accent_color: accentColor,
+      pop_color: popColor,
+      brand_color: primaryColor,
+    }
+
+    if (!isAnonymous) {
+      if (!onProfileUpdate) {
+        setSaveError('Your colors could not be saved. Try again.')
+        setIsSubmitting(false)
+        return
+      }
+      try {
+        const profileSaved = await onProfileUpdate(displayedColors)
+        if (profileSaved === false) {
+          setSaveError('Your colors could not be saved. Try again.')
+          setIsSubmitting(false)
+          return
+        }
+      } catch {
+        console.error('Error saving profile colors')
+        setSaveError('Your colors could not be saved. Try again.')
+        setIsSubmitting(false)
+        return
+      }
     }
 
     const ok = await persistPanelAnswer('colors_set', answerData)
@@ -1335,9 +1532,10 @@ export default function EmeraldChat({
 
     if (isAnonymous) {
       setDraftProfilePreview({
-        primary_color: primaryColor ?? undefined,
-        accent_color: accentColor ?? undefined,
-        brand_color: brandColor ?? undefined,
+        primary_color: primaryColor,
+        accent_color: accentColor,
+        pop_color: popColor,
+        brand_color: primaryColor,
       })
       onDraftRefresh?.()
     }
@@ -1468,36 +1666,40 @@ export default function EmeraldChat({
   }
 
   const handleUndo = () => {
-    if (previousStepId) {
-      // Save current state to redo stack
-      setRedoStack(prev => [...prev, {
-        stepId: currentStepId,
-        previousStepId: previousStepId,
-        history: [...history]
-      }])
-      
-      // Go back to previous step
-      setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
-      setHistory(prev => prev.slice(0, -2))
-      
-      // Find the step before the previous one
-      const allSteps = Object.values(CURRICULUM)
-      const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
-      setPreviousStepId(prevPrevStep?.id || null)
+    const action = actionUndoStack[actionUndoStack.length - 1]
+    if (!action) return
+    setActionUndoStack((prev) => prev.slice(0, -1))
+    setActionRedoStack((prev) => [...prev, action])
+    if (action.kind === 'logo') {
+      applyLiveLogoState(action.before)
+      void onProfileUpdate?.({
+        logo_url: action.before.logo_url,
+        logo_use_background: action.before.logo_use_background,
+      })
+      return
+    }
+    textDraftsRef.current[action.stepId] = action.before
+    if (currentStepId === action.stepId) {
+      setInput(action.before)
     }
   }
 
   const handleRedo = () => {
-    if (redoStack.length > 0) {
-      const lastUndone = redoStack[redoStack.length - 1]
-      
-      // Restore the undone state
-      setCurrentStepId(lastUndone.stepId) // Effect at line 55-59 handles notification automatically
-      setPreviousStepId(lastUndone.previousStepId)
-      setHistory(lastUndone.history)
-      
-      // Remove from redo stack
-      setRedoStack(prev => prev.slice(0, -1))
+    const action = actionRedoStack[actionRedoStack.length - 1]
+    if (!action) return
+    setActionRedoStack((prev) => prev.slice(0, -1))
+    setActionUndoStack((prev) => [...prev, action])
+    if (action.kind === 'logo') {
+      applyLiveLogoState(action.after)
+      void onProfileUpdate?.({
+        logo_url: action.after.logo_url,
+        logo_use_background: action.after.logo_use_background,
+      })
+      return
+    }
+    textDraftsRef.current[action.stepId] = action.after
+    if (currentStepId === action.stepId) {
+      setInput(action.after)
     }
   }
 
@@ -1513,12 +1715,9 @@ export default function EmeraldChat({
       }
       const prevStep = getStep(previousStepId)
       setCurrentStepId(previousStepId) // Effect at line 55-59 handles notification automatically
-      // Find the step before previous for new previousStepId
-      const allSteps = Object.values(CURRICULUM)
-      const prevPrevStep = allSteps.find(s => s.nextStep === previousStepId)
-      setPreviousStepId(prevPrevStep?.id || null)
+      setPreviousStepId(getSpinePredecessor(previousStepId))
       // Only show current question
-      const prevMessage = { role: 'assistant' as const, content: prevStep.question, stepId: previousStepId }
+      const prevMessage = { role: 'assistant' as const, content: getDisplayedQuestion(prevStep, artistNameForCopy), stepId: previousStepId }
       setHistory([prevMessage])
       // Don't add to fullHistory - it's navigation, not new content
       setInput('')
@@ -1559,7 +1758,7 @@ export default function EmeraldChat({
     setCurrentStepId(firstUnanswered) // Effect at line 55-59 handles notification automatically
     setPreviousStepId(currentStepId)
     // Only show current question (no history)
-    const nextMessage = { role: 'assistant' as const, content: nextStep.question, stepId: firstUnanswered }
+    const nextMessage = { role: 'assistant' as const, content: getDisplayedQuestion(nextStep, artistNameForCopy), stepId: firstUnanswered }
     setHistory([nextMessage])
     // Don't add to fullHistory - skipping doesn't create history entry
     setInput('')
@@ -1940,7 +2139,7 @@ export default function EmeraldChat({
       
       // CRITICAL: No delay - instant transition for smooth UX
       // Celebration card disappears immediately, next question card appears instantly
-      const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: firstUnanswered }
+      const nextMessage = { role: 'assistant' as const, content: getDisplayedQuestion(finalStep, artistNameForCopy), stepId: firstUnanswered }
       setHistory([nextMessage])
       setFullHistory(prev => [...prev, nextMessage])
       setPreviousStepId(currentStepId)
@@ -1967,6 +2166,8 @@ export default function EmeraldChat({
     }
 
     const answer = isSelectSubmit ? displayAnswer : input.trim()
+    const isFirstCompletion = !answeredKeys.has(currentStep.key)
+    const previousSavedText = textDraftsRef.current[currentStepId] ?? ''
     setIsSubmitting(true)
     isSubmittingRef.current = true
     if (!isSelectSubmit) {
@@ -2152,12 +2353,24 @@ export default function EmeraldChat({
         onDraftRefresh?.()
       }
 
-      // Clear redo stack when user makes a new action (can't redo after new action)
-      setRedoStack([])
-
       // CRITICAL: Update answeredKeys only after durable save succeeded
       const updatedAnsweredKeys = new Set([...answeredKeys, currentStep.key])
       setAnsweredKeys(updatedAnsweredKeys)
+      textDraftsRef.current[currentStepId] = answer
+      if (!isFirstCompletion) {
+        setActionUndoStack((prev) => [
+          ...prev,
+          {
+            kind: 'text',
+            stepId: currentStepId,
+            before: previousSavedText,
+            after: answer,
+          },
+        ])
+        setActionRedoStack([])
+        setIsSubmitting(false)
+        return
+      }
 
       if (isAnonymous && updatedAnsweredKeys.has(FREE_TASTE_LAST_KEY)) {
         setAnonymousGateView(true)
@@ -2230,13 +2443,15 @@ export default function EmeraldChat({
       }
 
       const finalStep = getStep(nextStepId)
+      const nameForNextQuestion =
+        currentStep.key === 'artist_name' ? answer : artistNameForCopy
       
       // CRITICAL: Instant transition - no delay for seamless UX
       // Card and question appear together immediately, no flash of wrong card
       // Normal chat flow - only show current question (no history building up)
       if (nextStepId !== 'COMPLETE') {
         // Only show current question in chat (clear previous)
-        const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
+        const nextMessage = { role: 'assistant' as const, content: getDisplayedQuestion(finalStep, nameForNextQuestion), stepId: nextStepId }
         setHistory([nextMessage])
         setFullHistory(prev => [...prev, nextMessage]) // Add to full history
         setPreviousStepId(currentStepId)
@@ -2245,7 +2460,7 @@ export default function EmeraldChat({
           enterBrandPanel(nextStepId)
         }
       } else {
-        const completeMessage = { role: 'assistant' as const, content: finalStep.question, stepId: nextStepId }
+        const completeMessage = { role: 'assistant' as const, content: getDisplayedQuestion(finalStep, nameForNextQuestion), stepId: nextStepId }
         setHistory([completeMessage])
         setFullHistory(prev => [...prev, completeMessage]) // Add to full history
         setPreviousStepId(currentStepId)
@@ -2397,23 +2612,23 @@ export default function EmeraldChat({
                   <ChevronLeft size={16} className="rotate-180" />
                 </button>
               )}
-              {previousStepId && !isSubmitting && currentStepId !== 'INIT' && (
+              {actionUndoStack.length > 0 && !isSubmitting && (
                 <button
                   type="button"
                   onClick={handleUndo}
                   className="artis-emerald-nav-btn"
-                  title="Undo last step"
+                  title="Undo last action"
                   aria-label="Undo last action"
                 >
                   <Undo2 size={16} />
                 </button>
               )}
-              {redoStack.length > 0 && !isSubmitting && (
+              {actionRedoStack.length > 0 && !isSubmitting && (
                 <button
                   type="button"
                   onClick={handleRedo}
                   className="artis-emerald-nav-btn"
-                  title="Redo last undone step"
+                  title="Redo last undone action"
                   aria-label="Redo last undone action"
                 >
                   <Redo2 size={16} />
@@ -2447,9 +2662,23 @@ export default function EmeraldChat({
       ) : null}
 
       {showCompactQuestionCue ? (
-        <p className="artis-emerald-cue" title={currentStep.question}>
-          {currentStep.question}
+        <p className="artis-emerald-cue" title={currentQuestionText}>
+          {currentQuestionText}
         </p>
+      ) : null}
+
+      {showContinueLogoCue ? (
+        <button
+          type="button"
+          className="artis-emerald-cue"
+          onClick={() => {
+            window.dispatchEvent(
+              new CustomEvent('cardNavigate', { detail: { stepId: 'LOGO_PANEL' } })
+            )
+          }}
+        >
+          {continueLogoLabel}
+        </button>
       ) : null}
 
       <div className="artis-emerald-body">
@@ -2565,7 +2794,7 @@ export default function EmeraldChat({
                     : SAAS_PAYMENT_INTRO}
             </p>
           </>
-        ) : currentStep && currentStep.question && (
+        ) : currentStep && currentQuestionText && (
           <>
             {saasReceiptLine ? (
               <div
@@ -2601,40 +2830,33 @@ export default function EmeraldChat({
             {showBrandPicker && isLogoStep ? (
               <div className="artis-emerald-brand-shell">
                 <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
-                  {currentStep.question}
+                  {currentQuestionText}
                 </h2>
                 <div className="artis-emerald-editor">
                   <InlineLogoPicker
                     profile={profile || null}
+                    sessionPreviewUrl={liveLogoUrl}
+                    onUploadingChange={setLogoUploading}
                     onLogoChange={async (updates) => {
-                      setCurrentPickerState((prev) => ({
-                        ...prev,
-                        logo: {
-                          logo_url:
-                            updates.logo_url !== undefined
-                              ? updates.logo_url
-                              : prev.logo?.logo_url,
-                          logo_use_background:
-                            updates.logo_use_background !== undefined
-                              ? updates.logo_use_background
-                              : prev.logo?.logo_use_background,
+                      applyLiveLogoState(
+                        {
+                          logo_url: updates.logo_url,
+                          logo_use_background: updates.logo_use_background,
                         },
-                      }))
+                        { recordUndo: true }
+                      )
                       if (onProfileUpdate) await onProfileUpdate(updates)
                     }}
                     onPreviewChange={(previewUrl, useBackground) => {
-                      // previewUrl is null when background is unchecked — keep the logo choice.
-                      setCurrentPickerState((prev) => ({
-                        ...prev,
-                        logo: {
-                          logo_url:
-                            previewUrl != null
-                              ? previewUrl
-                              : prev.logo?.logo_url,
+                      applyLiveLogoState(
+                        {
+                          logo_url: previewUrl != null ? previewUrl : undefined,
                           logo_use_background: useBackground,
                         },
-                      }))
+                        { recordUndo: true }
+                      )
                     }}
+                    onPaletteExtracted={handleLogoPaletteExtracted}
                   />
                   <textarea
                     value={logoDescription}
@@ -2653,18 +2875,22 @@ export default function EmeraldChat({
                     type="button"
                     className="artis-emerald-brand-save"
                     onClick={() => void completeLogoPanel('save')}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || logoUploading}
                     style={{
                       padding: '10px',
                       backgroundColor: '#047857',
                       color: 'white',
                       border: 'none',
                       borderRadius: '5px',
-                      cursor: isSubmitting ? 'wait' : 'pointer',
+                      cursor: isSubmitting || logoUploading ? 'wait' : 'pointer',
                       boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
                     }}
                   >
-                    {isSubmitting ? 'Saving...' : 'Save logo'}
+                    {logoUploading
+                      ? 'Uploading...'
+                      : isSubmitting
+                        ? 'Saving...'
+                        : 'Save logo'}
                   </button>
                   <button
                     type="button"
@@ -2679,22 +2905,20 @@ export default function EmeraldChat({
             ) : showBrandPicker && isColorsStep ? (
               <div className="artis-emerald-brand-shell">
                 <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
-                  {currentStep.question}
+                  {currentQuestionText}
                 </h2>
                 <div className="artis-emerald-editor">
                   <InlineColorPicker
                     variant="colors"
                     profile={profile || null}
-                    onColorChange={async (updates) => {
+                    sessionPalette={currentPickerState.colors}
+                    hasSavedArtistColors={hasSavedArtistColors}
+                    onColorChange={(updates) => {
+                      const colors = updates as PaletteSessionState
                       setCurrentPickerState((prev) => ({
                         ...prev,
-                        colors: {
-                          primary_color: updates.primary_color ?? prev.colors?.primary_color,
-                          accent_color: updates.accent_color ?? prev.colors?.accent_color,
-                          brand_color: updates.brand_color ?? prev.colors?.brand_color,
-                        },
+                        colors,
                       }))
-                      if (onProfileUpdate) await onProfileUpdate(updates)
                     }}
                   />
                   {saveError && (
@@ -2724,7 +2948,7 @@ export default function EmeraldChat({
             ) : showBrandPicker && isFontStep ? (
               <div className="artis-emerald-brand-shell">
                 <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
-                  {currentStep.question}
+                  {currentQuestionText}
                 </h2>
                 <div className="artis-emerald-editor">
                   <InlineFontPicker
@@ -2859,12 +3083,12 @@ export default function EmeraldChat({
                         : '20px',
                   }}
                 >
-                  {currentStepId === 'INIT'
+                  {currentStepId === 'INIT' && !answeredKeys.has('artist_name')
                     ? INIT_WELCOME_HEADLINE
-                    : currentStep.question
+                    : currentQuestionText
                   }
                 </h1>
-                {isAnonymous && currentStepId === 'INIT' && input.length > 0 ? (
+                {isAnonymous && currentStepId === 'INIT' && input.length > 0 && !answeredKeys.has('artist_name') ? (
                   <motion.p
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -2879,7 +3103,7 @@ export default function EmeraldChat({
                       textShadow: '0 1px 2px rgba(0, 0, 0, 0.95)',
                     }}
                   >
-                    {currentStep.question}
+                    {currentQuestionText}
                   </motion.p>
                 ) : null}
               </>
@@ -3165,7 +3389,7 @@ export default function EmeraldChat({
                 if (isAnonymous && isBeyondFreeTaste(nextStepId)) return
                 const firstUnanswered = findFirstUnansweredStep(nextStepId, answeredKeys)
                 const finalStep = getStep(firstUnanswered)
-                const nextMessage = { role: 'assistant' as const, content: finalStep.question, stepId: firstUnanswered }
+                const nextMessage = { role: 'assistant' as const, content: getDisplayedQuestion(finalStep, artistNameForCopy), stepId: firstUnanswered }
                 setHistory([nextMessage])
                 setFullHistory(prev => [...prev, nextMessage])
                 setPreviousStepId(currentStepId)

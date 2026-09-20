@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
-import { Pencil } from 'lucide-react';
 import type { CarouselItem } from '@/hooks/useCarouselItems';
 import { StepId } from '@/lib/curriculum';
 
@@ -154,12 +153,12 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     } catch {}
   }, []);
 
-  const count = items.length || 0;
-  const prevIndex = (effectiveIndex - 1 + count) % count;
-  const nextIndex = (effectiveIndex + 1) % count;
-  const prevItem = items[prevIndex] || items[effectiveIndex];
-  const currItem = items[effectiveIndex];
-  const nextItem = items[nextIndex] || items[effectiveIndex];
+  const count = items.length || 0
+  const prevIndex = effectiveIndex > 0 ? effectiveIndex - 1 : -1
+  const nextIndex = effectiveIndex < count - 1 ? effectiveIndex + 1 : -1
+  const prevItem = prevIndex >= 0 ? items[prevIndex] : undefined
+  const currItem = items[effectiveIndex]
+  const nextItem = nextIndex >= 0 ? items[nextIndex] : undefined
   const activeMediaSignature = currItem
     ? [
         currItem.id,
@@ -372,13 +371,14 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     const seen = new Set<number>();
     const isInteracting = (stateRef.current !== 'idle') || Math.abs(p) > 0.001;
     for (let j = -VISIBLE_RADIUS; j <= VISIBLE_RADIUS; j++) {
-      const itemIdx = (baseIndex + j + currentCount) % currentCount;
-      if (seen.has(itemIdx)) continue; // avoid duplicate renders when count < window
+      const itemIdx = baseIndex + j;
+      if (itemIdx < 0 || itemIdx >= currentCount) continue;
+      if (seen.has(itemIdx)) continue;
       seen.add(itemIdx);
       const el = itemLayerRefs.current.get(itemIdx);
       if (!el) continue;
 
-      const rel = shortestSignedDistance(itemIdx, baseIndex + p, currentCount);
+      const rel = itemIdx - (baseIndex + p);
       const a = Math.abs(rel);
       const sign = rel === 0 ? 0 : (rel > 0 ? 1 : -1);
       const k0 = Math.min(3, Math.floor(a));
@@ -434,11 +434,12 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
 
     // Media orchestration: only hero/in-transit items play; coalesce attribute writes
     for (let j = -VISIBLE_RADIUS; j <= VISIBLE_RADIUS; j++) {
-      const itemIdx = (baseIndex + j + currentCount) % currentCount;
+      const itemIdx = baseIndex + j;
+      if (itemIdx < 0 || itemIdx >= currentCount) continue;
       if (seen.size && !seen.has(itemIdx)) continue;
       const v = videoRefs.current.get(itemIdx);
       if (!v) continue;
-      const rel = shortestSignedDistance(itemIdx, baseIndex + p, currentCount);
+      const rel = itemIdx - (baseIndex + p);
       const dist = Math.abs(rel);
       const shouldPlay = dist < 0.5 || (stateRef.current === 'dragging' && dist < 1.2);
       // Determine hero readiness
@@ -484,17 +485,16 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
   const computeFitBox = useCallback(() => {
     const vw = Math.max(320, Math.round(window.innerWidth || 0));
     const vh = Math.max(320, Math.round(window.innerHeight || 0));
-    const r = Math.max(0.2, Math.min(5, naturalAspect || 16 / 9)); // guard extreme ratios
+    const r = 1;
     const targetW = Math.min(Math.round(0.5 * vw), Math.round(0.5 * vh * r));
     const targetH = Math.round(targetW / r);
     const clampedW = Math.max(280, Math.min(1000, targetW));
     const clampedH = Math.max(180, Math.min(Math.round(1000 / r), targetH));
-    // Guarantee some side margin so oval doesn't appear clipped on small screens
     const sidePad = Math.round(vw * 0.04);
     const safeW = Math.min(clampedW, vw - sidePad * 2);
     const safeH = vw <= 767 ? Math.min(clampedH, 130) : clampedH;
     return { w: safeW, h: safeH };
-  }, [naturalAspect]);
+  }, []);
 
   const waitForItemReady = useCallback((itemIdx: number, maxWaitMs: number = 250) => {
     return new Promise<void>((resolve) => {
@@ -566,9 +566,11 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
       const px = Math.abs(startYRef.current - y);
       if (px > 8) {
         intentDirRef.current = (startYRef.current - y) > 0 ? 1 : -1;
-        const targetIdx = (effectiveIndexRef.current + intentDirRef.current + count) % count;
-        const v = videoRefs.current.get(targetIdx);
-        if (v) { try { v.preload = 'auto'; } catch {} try { void v.play().catch(()=>{}); v.pause(); } catch {} }
+        const targetIdx = effectiveIndexRef.current + intentDirRef.current;
+        if (targetIdx >= 0 && targetIdx < count) {
+          const v = videoRefs.current.get(targetIdx);
+          if (v) { try { v.preload = 'auto'; } catch {} try { void v.play().catch(()=>{}); v.pause(); } catch {} }
+        }
       }
     }
     const raw = clamp(delta, -MAX_PROGRESS, MAX_PROGRESS);
@@ -630,13 +632,25 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
 
     // helper: execute one index step
     const doOneStep = async (dir: number) => {
+      const baseIndex = effectiveIndexRef.current;
+      const next = baseIndex + dir;
+      if (next < 0 || next >= count) {
+        stabilizingRef.current = true; lockBodyScroll();
+        await runSnapTo(0);
+        progressRef.current = 0;
+        try { writeFrame(); } catch {}
+        dirtyRef.current = true; startLoop();
+        snappingRef.current = false;
+        stateRef.current = 'idle';
+        snapLockRef.current = false;
+        velocityRef.current = 0;
+        intentDirRef.current = 0;
+        stabilizingRef.current = false; unlockBodyScroll();
+        return;
+      }
       stabilizingRef.current = true; lockBodyScroll();
       await runSnapTo(dir > 0 ? +1 : -1);
-      // Paint the final anchored frame at p = ±1 before flipping index
       try { writeFrame(); } catch {}
-      const baseIndex = effectiveIndexRef.current;
-      const next = (baseIndex + dir + count) % count;
-      // ensure the incoming hero media (by itemIdx) is ready to avoid flash
       await waitForItemReady(next, 900);
       requestAnimationFrame(() => {
         setEffectiveIndex(next);
@@ -899,41 +913,10 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     };
   }, [onTouchStart, onTouchMove, endDrag, onWheel, computeFitBox, startLoop]);
 
-  // Re-pin when natural aspect is learned and differs materially from first pin
+  // Keep a stable square Stage. Media aspect must not resize the frame.
   useEffect(() => {
-    const root = (rootRef as React.RefObject<HTMLDivElement>).current;
-    if (!root) return;
-    try {
-      // For text cards (no media), set square aspect immediately
-      if (!activeItemHasMedia && !naturalAspect) {
-        setNaturalAspect(1.0);
-        return;
-      }
-      if (!naturalAspect) return;
-      const { w, h } = computeFitBox();
-      pinnedActiveRef.current = true;
-      pinnedWRef.current = w; pinnedHRef.current = h;
-      pinnedViewportWidthRef.current = Math.max(
-        320,
-        Math.round(
-          window.visualViewport?.width || window.innerWidth || 0
-        )
-      );
-      (root as HTMLDivElement).style.width = `${w}px`;
-      (root as HTMLDivElement).style.height = `${h}px`;
-      cachedHRef.current = pinnedHRef.current; lastWRef.current = w;
-      dirtyRef.current = true; startLoop();
-      try {
-        const detail = { w: pinnedWRef.current, h: pinnedHRef.current, ts: performance.now() };
-        (window as any).__heroPinnedCache = detail;
-        window.dispatchEvent(new CustomEvent('hero:pinned', { detail } as any));
-        requestAnimationFrame(() => {
-          window.dispatchEvent(new CustomEvent('hero:pinned', { detail: { ...detail, ts: performance.now() } } as any));
-          window.dispatchEvent(new CustomEvent('carousel:stable'));
-        });
-      } catch {}
-    } catch {}
-  }, [naturalAspect, activeMediaSignature, activeItemHasMedia, startLoop, computeFitBox]);
+    if (!naturalAspect) setNaturalAspect(1.0);
+  }, [naturalAspect]);
 
   // Trigger animation when index changes or items load (Zeyoda pattern: ensure initial render)
   useEffect(() => { 
@@ -1166,8 +1149,39 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     }
     
     if (item.imageUrl) {
+      const isLogoCard = item.questionKey === 'logo_uploaded'
+      const imageWrapStyle: React.CSSProperties = isLogoCard
+        ? {
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxSizing: 'border-box',
+            overflow: 'hidden',
+          }
+        : {
+            position: 'relative',
+            width: '100%',
+            height: '100%',
+            padding: '8%',
+            boxSizing: 'border-box',
+          }
+      const imageStyle: React.CSSProperties = isLogoCard
+        ? {
+            ...base,
+            width: '82%',
+            height: '82%',
+            maxWidth: '85%',
+            maxHeight: '85%',
+            objectFit: 'contain',
+            objectPosition: 'center center',
+            display: 'block',
+            flexShrink: 0,
+          }
+        : base
       return (
-        <div ref={typeof itemIdx === 'number' ? setMediaWrapRef(itemIdx) : undefined} style={{ position:'relative', width:'100%', height:'100%' }}
+        <div ref={typeof itemIdx === 'number' ? setMediaWrapRef(itemIdx) : undefined} style={imageWrapStyle}
           onMouseEnter={() => { setShowHeroOverlay(true); if (overlayHideTimerRef.current) window.clearTimeout(overlayHideTimerRef.current); }}
           onMouseLeave={() => { if (overlayHideTimerRef.current) window.clearTimeout(overlayHideTimerRef.current); overlayHideTimerRef.current = window.setTimeout(()=>setShowHeroOverlay(false), 4000) as unknown as number; }}
           onTouchStart={(e) => { setShowHeroOverlay(true); if (overlayHideTimerRef.current) window.clearTimeout(overlayHideTimerRef.current); }}
@@ -1186,7 +1200,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                 if (el) imageRefs.current.set(itemIdx, el); else imageRefs.current.delete(itemIdx);
               }
             }}
-            style={base as any}
+            style={imageStyle}
           />
           {/* Overlay box aligned to the inner picture using wrapper CSS vars */}
           {isHero && (() => {
@@ -1354,29 +1368,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
 
             if (isArtistNameCard) {
               return (
-                <>
-                  {hasAnswer && item.stepId && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        window.dispatchEvent(new CustomEvent('cardEdit', {
-                          detail: { stepId: item.stepId, focusInput: true }
-                        }));
-                      }}
-                      className="absolute top-2 right-2 p-1.5 rounded-lg transition-colors hover:bg-black/20 flex-shrink-0 z-10"
-                      style={{
-                        color: cardText,
-                        backgroundColor: 'rgba(0, 0, 0, 0.1)',
-                        backdropFilter: 'blur(4px)',
-                      }}
-                      title="Edit answer"
-                      aria-label="Edit answer"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                  <h3 style={{
+                <h3 style={{
                     fontSize: 'clamp(1.25rem, 4vw, 2.25rem)',
                     fontWeight: 700,
                     marginBottom: 0,
@@ -1391,37 +1383,11 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
                   }}>
                     {artistName || '\u00A0'}
                   </h3>
-                </>
               );
             }
             
             return (
               <>
-                {/* Edit button - top right corner, only on answer cards */}
-                {hasAnswer && item.stepId && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      // Dispatch event to trigger edit in EmeraldChat with focusInput=true
-                      // This focuses the input field and brings up the keyboard
-                      window.dispatchEvent(new CustomEvent('cardEdit', { 
-                        detail: { stepId: item.stepId, focusInput: true } 
-                      }));
-                    }}
-                    className="absolute top-2 right-2 p-1.5 rounded-lg transition-colors hover:bg-black/20 flex-shrink-0 z-10"
-                    style={{
-                      color: cardText,
-                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
-                      backdropFilter: 'blur(4px)',
-                    }}
-                    title="Edit answer"
-                    aria-label="Edit answer"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                )}
-            
                 <h3 style={{ 
                   fontSize: 'clamp(0.875rem, 2vw, 1.5rem)', // Responsive text sizing
                   fontWeight: 600,
@@ -1516,14 +1482,9 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
         if (count === 0) return null;
         const visible: number[] = [];
         const seen = new Set<number>();
-        // SIMPLE: Don't render below featured card unless swiping
-        // Featured spot is now always index 0 (current question card)
-        const isAtFeaturedSpot = effectiveIndex === 0;
-        const isSwiping = Math.abs(progressRef.current) > 0.001;
         for (let j = -VISIBLE_RADIUS; j <= VISIBLE_RADIUS; j++) {
-          // Skip rendering below featured spot unless user is swiping
-          if (isAtFeaturedSpot && !isSwiping && j > 0) continue;
-          const itemIdx = (effectiveIndex + j + count) % count;
+          const itemIdx = effectiveIndex + j;
+          if (itemIdx < 0 || itemIdx >= count) continue;
           if (seen.has(itemIdx)) continue;
           seen.add(itemIdx);
           visible.push(itemIdx);

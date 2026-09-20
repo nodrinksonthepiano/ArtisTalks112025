@@ -16,6 +16,7 @@ export interface Profile {
   logo_url?: string | null
   primary_color?: string | null
   accent_color?: string | null
+  pop_color?: string | null
   /** Headline font (artist name, titles, card titles). */
   font_family?: string | null
   /** Body font (mission, answers, longer copy). Falls back to Geist when null. */
@@ -89,13 +90,13 @@ export function useProfile(userId: string | null) {
     void reloadProfile()
   }, [reloadProfile])
 
-  const updateProfile = async (updates: Partial<Profile>) => {
+  const updateProfile = async (updates: Partial<Profile>): Promise<boolean> => {
     const safeUpdates = stripServerControlledProfileFields(updates)
-    if (Object.keys(safeUpdates).length === 0) return
+    if (Object.keys(safeUpdates).length === 0) return true
 
     if (!userId) {
       console.warn('⚠️ Cannot update profile: no user logged in')
-      return
+      return false
     }
 
     if (!profile) {
@@ -111,18 +112,18 @@ export function useProfile(userId: string | null) {
         saas_subscription_status: 'inactive',
         ...safeUpdates,
       }
-      setProfile(newProfile)
       try {
         const { error } = await supabase.from('profiles').upsert(newProfile)
         if (error) throw error
-      } catch (err) {
-        console.error('❌ Save NEW failed:', err)
+        setProfile(newProfile)
+        return true
+      } catch {
+        console.error('❌ Save NEW failed')
+        return false
       }
-      return
     }
 
     const newProfile = { ...profile, ...safeUpdates }
-    setProfile(newProfile)
 
     try {
       const { error } = await supabase.from('profiles').upsert({
@@ -130,8 +131,11 @@ export function useProfile(userId: string | null) {
         ...safeUpdates,
       })
       if (error) throw error
-    } catch (err) {
-      console.error('❌ Save UPDATE failed:', err)
+      setProfile(newProfile)
+      return true
+    } catch {
+      console.error('❌ Save UPDATE failed')
+      return false
     }
   }
 

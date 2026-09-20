@@ -14,6 +14,7 @@ export interface DraftProfilePreview {
   mission_statement?: string | null
   primary_color?: string | null
   accent_color?: string | null
+  pop_color?: string | null
   brand_color?: string | null
   font_family?: string | null
   body_font_family?: string | null

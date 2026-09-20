@@ -439,6 +439,155 @@ body {
   font-size: 0.875rem;
 }
 
+.artis-palette-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
+  gap: 4px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.artis-palette-layout {
+  display: grid;
+  grid-template-columns: clamp(84px, 24vw, 96px) minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.artis-palette-chart-column {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.artis-palette-pie {
+  display: block;
+  width: clamp(84px, 24vw, 96px);
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.artis-palette-pie-wedge {
+  cursor: pointer;
+  transition: filter 160ms ease, opacity 160ms ease;
+}
+
+.artis-palette-pie-wedge:hover,
+.artis-palette-pie-wedge:focus {
+  filter: brightness(1.12) drop-shadow(0 0 3px rgba(255, 255, 255, 0.75));
+  outline: none;
+}
+
+.artis-palette-pie-selection {
+  filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.9));
+}
+
+.artis-palette-pie-label {
+  pointer-events: none;
+}
+
+.artis-palette-pie-label text {
+  fill: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.82);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.artis-palette-editor-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.artis-palette-editor-heading {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  color: #fffacd;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.artis-palette-flip {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  border-radius: 7px;
+  color: #fffacd;
+  background: rgba(31, 41, 55, 0.96);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.artis-palette-select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 26px 2px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.85);
+  border-radius: 7px;
+  color: #f9fafb;
+  background: rgba(15, 23, 42, 0.96);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  color-scheme: dark;
+}
+
+.artis-palette-manual {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  align-items: stretch;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.artis-palette-manual .artis-color-picker-native {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+
+.artis-palette-manual .artis-color-picker-eyedropper {
+  flex-basis: 32px;
+  width: 32px;
+  min-height: 32px;
+}
+
+.artis-palette-manual .artis-color-picker-hex {
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 0.78rem;
+}
+
 .artis-font-picker--compact {
   display: flex;
   flex-direction: column;

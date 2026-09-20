@@ -38,6 +38,7 @@ export function applyLogoBackground(
     (typeof document !== 'undefined'
       ? document.documentElement.style.getPropertyValue('--accent-color') || '#10b981'
       : '#10b981');
+  const pop = profile?.pop_color || '#ffffff'
   
   const headlineFont = profile?.font_family || 'var(--font-geist-sans), sans-serif'
   const bodyFont = profile?.body_font_family || 'var(--font-geist-sans), sans-serif'
@@ -62,6 +63,15 @@ export function applyLogoBackground(
       );
     }
   }
+  document.documentElement.style.setProperty('--pop-color', pop)
+  document.documentElement.style.setProperty('--main-light', `color-mix(in srgb, ${primary} 70%, white)`)
+  document.documentElement.style.setProperty('--main-shadow', `color-mix(in srgb, ${primary} 70%, black)`)
+  document.documentElement.style.setProperty('--main-soft', `color-mix(in srgb, ${primary} 78%, white)`)
+  document.documentElement.style.setProperty('--main-deep', `color-mix(in srgb, ${primary} 78%, black)`)
+  document.documentElement.style.setProperty('--support-soft', `color-mix(in srgb, ${accent} 78%, white)`)
+  document.documentElement.style.setProperty('--support-deep', `color-mix(in srgb, ${accent} 78%, black)`)
+  document.documentElement.style.setProperty('--pop-light', `color-mix(in srgb, ${pop} 68%, white)`)
+  document.documentElement.style.setProperty('--pop-glow', `color-mix(in srgb, ${pop} 82%, transparent)`)
 
   // Zeyoda lines 42-44: Set gradient variables (using primary as fallback)
   document.documentElement.style.setProperty("--gradient-start", primary);

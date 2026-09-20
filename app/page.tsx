@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react'
 import EmeraldChat from "@/components/EmeraldChat";
 import DataReset from "@/components/DataReset";
 import OrbitPeekCarousel from "@/components/OrbitPeekCarousel";
@@ -31,7 +31,10 @@ import {
   isBeyondFreeTaste,
   isFreeTasteGateReached,
   withResumeSatisfiedKeys,
+  getCurriculumSpineOrder,
+  getStep,
 } from "@/lib/curriculum";
+import type { DraftProfilePreview } from '@/lib/draft'
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
 
 export default function Home() {
@@ -45,6 +48,16 @@ export default function Home() {
 
   // Lifted State: Profile Data
   const { profile, updateProfile, loading: profileLoading, reloadProfile } = useProfile(user?.id ?? null)
+  const updateProfileRef = useRef(updateProfile)
+
+  useEffect(() => {
+    updateProfileRef.current = updateProfile
+  }, [updateProfile])
+
+  const handleProfileUpdate = useCallback(
+    (updates: Partial<Profile>) => updateProfileRef.current(updates),
+    []
+  )
 
   const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
 
@@ -133,7 +146,7 @@ export default function Home() {
     }
   }, [user, answeredKeys, answeredKeysReady, draft])
 
-  const handleDraftRefresh = () => {
+  const handleDraftRefresh = useCallback(() => {
     refreshDraft()
     if (!user) {
       const draftKeys = getDraftAnsweredKeys()
@@ -142,7 +155,7 @@ export default function Home() {
         draftKeys.has('colors_set') ? getDraftAnswerData('colors_set') : null
       )
     }
-  }
+  }, [refreshDraft, setAnsweredKeys, user])
 
   // Curriculum Progress (single source of truth)
   // CRITICAL: Pass answeredKeys for immediate progress updates (coins fill as user progresses)
@@ -180,17 +193,44 @@ export default function Home() {
   // Panel state (like Zeyoda's appMode)
   const [activePanel, setActivePanel] = useState<'logo' | 'colors' | 'font' | 'asset' | null>(null)
 
-  // Carousel state: current typing input for live card updates
+  // Carousel state: viewing is not curriculum progress
   const [currentTypingInput, setCurrentTypingInput] = useState<string>('')
-  const [activeStepId, setActiveStepId] = useState<StepId | null>(null) // Single source of truth for both chat and carousel
-  const [isEditMode, setIsEditMode] = useState(false) // Track if we're editing an answered card
+  const [viewedStepId, setViewedStepId] = useState<StepId | null>(null)
   const [carouselIndex, setCarouselIndex] = useState(0)
   const carouselIndexRef = useRef<number>(0)
-  const prevQuestionRef = useRef<StepId | null>(null)
-  const isUserSwipeRef = useRef<boolean>(false)
+  const shouldCenterOnPendingRef = useRef(true)
+  const [stageRevealed, setStageRevealed] = useState(false)
+  const [liveLogoUrl, setLiveLogoUrl] = useState<string | null>(null)
+  const [liveLogoRemoved, setLiveLogoRemoved] = useState(false)
 
-  // Carousel items from curriculum answers + current question card
-  const carouselItems = useCarouselItems(user?.id ?? null, currentTypingInput, activeStepId, activeStepId, isEditMode, answeredKeys)
+  const pendingStepId = useMemo((): StepId | null => {
+    const keys = new Set(answeredKeys)
+    if (user && profile?.artist_name?.trim()) keys.add('artist_name')
+    if (!user) {
+      return findFirstUnansweredInFreeTaste(keys)
+    }
+    for (const id of getCurriculumSpineOrder()) {
+      if (id === 'COMPLETE' || id.includes('_COMPLETE')) continue
+      const step = getStep(id)
+      if (!step.key || step.key.length === 0) continue
+      if (!keys.has(step.key)) return id
+    }
+    return 'COMPLETE'
+  }, [answeredKeys, user, profile?.artist_name])
+
+  const liveCarouselMedia = useMemo(
+    () => ({ logoUrl: liveLogoUrl, logoRemoved: liveLogoRemoved }),
+    [liveLogoUrl, liveLogoRemoved]
+  )
+
+  const carouselItems = useCarouselItems(
+    user?.id ?? null,
+    currentTypingInput,
+    pendingStepId,
+    viewedStepId,
+    answeredKeys,
+    liveCarouselMedia
+  )
 
   // Stabilize phaseTokens array reference to prevent unnecessary effect re-runs
   const phaseTokens = useMemo(() => [
@@ -203,118 +243,82 @@ export default function Home() {
   // Reset carousel index when user changes
   useEffect(() => {
     setCarouselIndex(0)
-    prevQuestionRef.current = null
+    carouselIndexRef.current = 0
+    shouldCenterOnPendingRef.current = true
+    setViewedStepId(null)
+    setLiveLogoUrl(null)
+    setLiveLogoRemoved(false)
   }, [user?.id])
 
-  // Auto-advance to current question card (always at index 0)
-  // CRITICAL: Respect edit mode and user swipes
-  // Navigation (cardNavigate) updates activeStepId without edit mode, so auto-center can work
-  // Editing (cardEdit) sets edit mode, so auto-center is blocked
   useEffect(() => {
-    if (!activeStepId) return
+    if (!user || liveLogoRemoved) return
+    if (!profile?.logo_url || profile.logo_url.startsWith('blob:')) return
+    setLiveLogoUrl((prev) => prev ?? profile.logo_url ?? null)
+  }, [user, profile?.logo_url, liveLogoRemoved])
 
-    // CRITICAL: In edit mode, NEVER auto-center - stay on the edited card
-    if (isEditMode) {
-      return // Exit early - don't touch carousel at all
+  useEffect(() => {
+    const hasName =
+      answeredKeys.has('artist_name') ||
+      !!(user && profile?.artist_name?.trim()) ||
+      !!(!user && (draft?.profilePreview?.artist_name || getDraftAnswerText('artist_name')))
+    if (hasName) setStageRevealed(true)
+  }, [answeredKeys, user, profile?.artist_name, draft?.profilePreview?.artist_name])
+
+  // App-initiated progress centers the pending card. Browsing does not.
+  useEffect(() => {
+    if (!pendingStepId || !shouldCenterOnPendingRef.current) return
+    const pendingIndex = carouselItems.findIndex((item) => item.stepId === pendingStepId)
+    if (pendingIndex === -1) return
+    if (carouselIndexRef.current !== pendingIndex) {
+      setCarouselIndex(pendingIndex)
+      carouselIndexRef.current = pendingIndex
     }
+    setViewedStepId((previous) =>
+      previous === pendingStepId ? previous : pendingStepId
+    )
+  }, [pendingStepId, carouselItems])
 
-    // CRITICAL: A step change can be USER-initiated (swipe/pencil dispatch cardNavigate/cardEdit,
-    // which set isUserSwipeRef before updating activeStepId) or APP-initiated (submit/resume).
-    // If the user caused it, consume the flag and do NOT auto-center - snapping to index 0
-    // here is what made the carousel fight every swipe.
-    if (isUserSwipeRef.current) {
-      isUserSwipeRef.current = false
-      prevQuestionRef.current = activeStepId
-      return
+  const focusCarouselStep = (stepId: StepId, cardIndex?: number) => {
+    if (!user && isBeyondFreeTaste(stepId)) return
+    shouldCenterOnPendingRef.current = false
+    setViewedStepId(stepId)
+    const nextIndex =
+      cardIndex !== undefined
+        ? cardIndex
+        : carouselItems.findIndex((item) => item.stepId === stepId)
+    if (nextIndex !== -1) {
+      setCarouselIndex(nextIndex)
+      carouselIndexRef.current = nextIndex
     }
+  }
 
-    // App-initiated transition (submit advance, resume): center on current question card (index 0)
-    if (carouselIndexRef.current !== 0 || prevQuestionRef.current !== activeStepId) {
-      setCarouselIndex(0)
-      carouselIndexRef.current = 0
-      prevQuestionRef.current = activeStepId
-    }
-  }, [activeStepId, isEditMode])
-
-  // CRITICAL: Handle edit button clicks - navigate to edited card and prevent auto-center
-  // When user clicks edit, mark as user-initiated navigation and move carousel to that card
   useEffect(() => {
     const handleCardEdit = (e: Event) => {
-      const customEvent = e as CustomEvent<{ stepId: StepId; focusInput?: boolean; cardIndex?: number }>
+      const customEvent = e as CustomEvent<{ stepId: StepId; cardIndex?: number }>
       const stepId = customEvent.detail?.stepId
       if (!stepId) return
-
-      if (!user && isBeyondFreeTaste(stepId)) return
-
-      // CRITICAL: Enter edit mode - set activeStepId to the card being edited
-      setActiveStepId(stepId)
-      setIsEditMode(true)
-
-      // Mark as user-initiated navigation to prevent auto-center
-      isUserSwipeRef.current = true
-
-      // Navigate carousel to the card being edited
-      const cardIndex = customEvent.detail?.cardIndex !== undefined
-        ? customEvent.detail.cardIndex
-        : carouselItems.findIndex(item => item.stepId === stepId)
-
-      if (cardIndex !== -1) {
-        setCarouselIndex(cardIndex)
-        carouselIndexRef.current = cardIndex
-      }
-
-      // Clear swipe flag after delay (but stay in edit mode until submit)
-      setTimeout(() => {
-        isUserSwipeRef.current = false
-      }, 100)
+      focusCarouselStep(stepId, customEvent.detail?.cardIndex)
     }
 
     window.addEventListener('cardEdit', handleCardEdit as EventListener)
     return () => {
       window.removeEventListener('cardEdit', handleCardEdit as EventListener)
     }
-  }, [carouselItems])
+  }, [carouselItems, user])
 
-  // CRITICAL: Handle card navigation (swiping) separately from editing
-  // Navigation should update activeStepId WITHOUT entering edit mode
   useEffect(() => {
     const handleCardNavigate = (e: Event) => {
       const customEvent = e as CustomEvent<{ stepId: StepId; cardIndex?: number }>
       const stepId = customEvent.detail?.stepId
       if (!stepId) return
-
-      if (!user && isBeyondFreeTaste(stepId)) return
-
-      // CRITICAL: Navigation is NOT editing - swiping away abandons any in-progress edit.
-      // Without this, edit mode stuck ON after pencil+swipe and the carousel froze
-      // (edit mode suppresses the current question card and blocks auto-center forever).
-      setIsEditMode(false)
-      setActiveStepId(stepId)
-
-      // Mark as user-initiated to prevent auto-center during navigation
-      isUserSwipeRef.current = true
-
-      // Navigate carousel to the swiped card
-      const cardIndex = customEvent.detail?.cardIndex !== undefined
-        ? customEvent.detail.cardIndex
-        : carouselItems.findIndex(item => item.stepId === stepId)
-
-      if (cardIndex !== -1) {
-        setCarouselIndex(cardIndex)
-        carouselIndexRef.current = cardIndex
-      }
-
-      // Clear swipe flag after delay (allows auto-center for next step change)
-      setTimeout(() => {
-        isUserSwipeRef.current = false
-      }, 100)
+      focusCarouselStep(stepId, customEvent.detail?.cardIndex)
     }
 
     window.addEventListener('cardNavigate', handleCardNavigate as EventListener)
     return () => {
       window.removeEventListener('cardNavigate', handleCardNavigate as EventListener)
     }
-  }, [carouselItems])
+  }, [carouselItems, user])
 
   const prevUserRef = useRef<any>(undefined)
 
@@ -322,14 +326,16 @@ export default function Home() {
   useEffect(() => {
     const hadUser = prevUserRef.current != null
     if (hadUser && !user) {
-      setActiveStepId(null)
-      setIsEditMode(false)
-      prevQuestionRef.current = null
+      setViewedStepId(null)
+      shouldCenterOnPendingRef.current = true
+      setStageRevealed(false)
+      setLiveLogoUrl(null)
+      setLiveLogoRemoved(false)
     }
     prevUserRef.current = user
   }, [user])
 
-  // Restore anonymous draft step on load
+  // Restore anonymous viewed step on load; pending stays derived from answers
   useEffect(() => {
     if (!user && hydrated) {
       const saved = loadDraft()
@@ -341,7 +347,12 @@ export default function Home() {
             ? FREE_TASTE_LAST_STEP_ID
             : findFirstUnansweredInFreeTaste(draftKeys)
         }
-        setActiveStepId(stepId)
+        shouldCenterOnPendingRef.current = true
+        setViewedStepId(stepId)
+        if (saved.profilePreview?.logo_url && !saved.profilePreview.logo_url.startsWith('blob:')) {
+          setLiveLogoUrl(saved.profilePreview.logo_url)
+          setLiveLogoRemoved(false)
+        }
       }
     }
   }, [user, hydrated])
@@ -350,6 +361,7 @@ export default function Home() {
   const [previewOverrides, setPreviewOverrides] = useState<{
     primary_color?: string
     accent_color?: string
+    pop_color?: string | null
     brand_color?: string
     logo_url?: string
     logo_use_background?: boolean
@@ -361,16 +373,20 @@ export default function Home() {
   // This ensures page.tsx knows about color changes and updates previewOverrides for halo
   useEffect(() => {
     const handleProfilePreview = (e: Event) => {
-      const customEvent = e as CustomEvent<{ previewConfig?: { primary_color?: string; accent_color?: string; brand_color?: string; logo_url?: string | null; logo_use_background?: boolean } }>
-      if (customEvent.detail?.previewConfig) {
+      const customEvent = e as CustomEvent<{ previewConfig?: { primary_color?: string; accent_color?: string; pop_color?: string | null; brand_color?: string; logo_url?: string | null; logo_use_background?: boolean } }>
+      const previewConfig = customEvent.detail?.previewConfig
+      if (previewConfig) {
         setPreviewOverrides(prev => ({
           ...prev,
-          primary_color: customEvent.detail.previewConfig?.primary_color,
-          accent_color: customEvent.detail.previewConfig?.accent_color,
-          brand_color: customEvent.detail.previewConfig?.brand_color,
+          primary_color: previewConfig.primary_color,
+          accent_color: previewConfig.accent_color,
+          brand_color: previewConfig.brand_color,
+          ...(previewConfig.pop_color !== undefined
+            ? { pop_color: previewConfig.pop_color }
+            : {}),
           // CRITICAL: Clear logo when primary color is set (user chose background color)
-          logo_url: customEvent.detail.previewConfig?.logo_url !== undefined ? (customEvent.detail.previewConfig.logo_url ?? undefined) : prev?.logo_url,
-          logo_use_background: customEvent.detail.previewConfig?.logo_use_background !== undefined ? customEvent.detail.previewConfig.logo_use_background : prev?.logo_use_background
+          logo_url: previewConfig.logo_url !== undefined ? (previewConfig.logo_url ?? undefined) : prev?.logo_url,
+          logo_use_background: previewConfig.logo_use_background !== undefined ? previewConfig.logo_use_background : prev?.logo_use_background
         }))
       }
     }
@@ -451,7 +467,8 @@ export default function Home() {
           await migrationPromiseRef.current
           setSanctuarySaveError(null)
           if (continueAfterFreeTaste) {
-            setActiveStepId('CURRENT_FOCUS_PILLAR')
+            shouldCenterOnPendingRef.current = true
+            setViewedStepId('CURRENT_FOCUS_PILLAR')
           }
         } catch (err) {
           console.error('Draft migration failed:', err)
@@ -502,6 +519,7 @@ export default function Home() {
       email: null,
       primary_color: preview.primary_color ?? null,
       accent_color: preview.accent_color ?? null,
+      pop_color: preview.pop_color ?? null,
       brand_color: preview.brand_color ?? null,
       font_family: preview.font_family ?? null,
       body_font_family: preview.body_font_family ?? null,
@@ -516,36 +534,55 @@ export default function Home() {
     return { ...anonymousChatProfile, ...previewOverrides } as Profile
   }, [user, mergedProfile, anonymousChatProfile, previewOverrides])
 
-  const handleAnonymousProfileUpdate = async (updates: Partial<Profile>) => {
-    updateProfilePreview({
-      artist_name: updates.artist_name,
-      mission_statement: updates.mission_statement,
-      primary_color: updates.primary_color,
-      accent_color: updates.accent_color,
-      brand_color: updates.brand_color,
-      font_family: updates.font_family,
-      body_font_family: updates.body_font_family,
-      logo_url: updates.logo_url,
-      logo_use_background: updates.logo_use_background,
+  const handleAnonymousProfileUpdate = useCallback(async (updates: Partial<Profile>) => {
+    const preview: DraftProfilePreview = {}
+    if (updates.artist_name !== undefined) preview.artist_name = updates.artist_name
+    if (updates.mission_statement !== undefined) preview.mission_statement = updates.mission_statement
+    if (updates.primary_color !== undefined) preview.primary_color = updates.primary_color
+    if (updates.accent_color !== undefined) preview.accent_color = updates.accent_color
+    if (updates.pop_color !== undefined) preview.pop_color = updates.pop_color
+    if (updates.brand_color !== undefined) preview.brand_color = updates.brand_color
+    if (updates.font_family !== undefined) preview.font_family = updates.font_family
+    if (updates.body_font_family !== undefined) preview.body_font_family = updates.body_font_family
+    if (updates.logo_url !== undefined) preview.logo_url = updates.logo_url
+    if (updates.logo_use_background !== undefined) {
+      preview.logo_use_background = updates.logo_use_background
+    }
+    if (Object.keys(preview).length > 0) {
+      updateProfilePreview(preview)
+    }
+    setPreviewOverrides((prev) => {
+      const next = { ...prev }
+      if (updates.primary_color !== undefined) next.primary_color = updates.primary_color ?? undefined
+      if (updates.accent_color !== undefined) next.accent_color = updates.accent_color ?? undefined
+      if (updates.pop_color !== undefined) next.pop_color = updates.pop_color
+      if (updates.brand_color !== undefined) next.brand_color = updates.brand_color ?? undefined
+      if (updates.logo_url !== undefined) next.logo_url = updates.logo_url ?? undefined
+      if (updates.logo_use_background !== undefined) {
+        next.logo_use_background = updates.logo_use_background ?? undefined
+      }
+      if (updates.font_family !== undefined) next.font_family = updates.font_family ?? undefined
+      if (updates.body_font_family !== undefined) {
+        next.body_font_family = updates.body_font_family ?? undefined
+      }
+      return next
     })
-    setPreviewOverrides((prev) => ({
-      ...prev,
-      primary_color: updates.primary_color ?? prev?.primary_color,
-      accent_color: updates.accent_color ?? prev?.accent_color,
-      brand_color: updates.brand_color ?? prev?.brand_color,
-      logo_url: updates.logo_url ?? prev?.logo_url,
-      logo_use_background: updates.logo_use_background ?? prev?.logo_use_background,
-      font_family: updates.font_family ?? prev?.font_family,
-      body_font_family: updates.body_font_family ?? prev?.body_font_family,
-    }))
+    if (updates.logo_url !== undefined) {
+      setLiveLogoUrl(updates.logo_url)
+      setLiveLogoRemoved(updates.logo_url == null)
+    }
     handleDraftRefresh()
-  }
+  }, [handleDraftRefresh, updateProfilePreview])
 
   const anonymousLiveName =
     !user && hydrated
-      ? activeStepId === 'INIT'
-        ? currentTypingInput
-        : draft?.profilePreview?.artist_name || getDraftAnswerText('artist_name') || ''
+      ? stageRevealed
+        ? viewedStepId === 'INIT' && currentTypingInput
+          ? currentTypingInput
+          : draft?.profilePreview?.artist_name ||
+            getDraftAnswerText('artist_name') ||
+            currentTypingInput
+        : currentTypingInput
       : ''
 
   /** Anonymous gift subtitle — only when gift_to_world exists; no fallback copy. */
@@ -558,14 +595,7 @@ export default function Home() {
         )
       : ''
 
-  const showCarouselStage = (() => {
-    if (activeStepId === 'INIT') {
-      // Typing wakes the artist identity and docks Emerald, but INIT must be
-      // successfully submitted before the Stage is unveiled.
-      return false
-    }
-    return activeStepId || (carouselItems && carouselItems.length >= 1)
-  })()
+  const showCarouselStage = stageRevealed
 
   const effectiveAnsweredKeys = useMemo(() => {
     // Only bridge when hydration colors payload is known. undefined → no brand bridge.
@@ -672,28 +702,57 @@ export default function Home() {
   const isAnonymousPoster =
     !user && hydrated && anonymousLiveName.length === 0 && !showCarouselStage
 
+  const handleTypingUpdate = useCallback((input: string, stepId: StepId) => {
+    setCurrentTypingInput((previous) => (previous === input ? previous : input))
+    setViewedStepId((previous) => (previous === stepId ? previous : stepId))
+  }, [])
+
+  const handleCurrentStepChange = useCallback((stepId: StepId) => {
+    setViewedStepId((previous) => (previous === stepId ? previous : stepId))
+  }, [])
+
+  const handleSubmitCard = useCallback(() => {
+    setCurrentTypingInput((previous) => (previous === '' ? previous : ''))
+    shouldCenterOnPendingRef.current = true
+  }, [])
+
+  const handleLiveLogoChange = useCallback(
+    (logoUrl: string | null, removed: boolean) => {
+      setLiveLogoUrl((previous) => (previous === logoUrl ? previous : logoUrl))
+      setLiveLogoRemoved((previous) => (previous === removed ? previous : removed))
+      setPreviewOverrides((previous) => ({
+        ...previous,
+        logo_url: logoUrl ?? undefined,
+      }))
+    },
+    []
+  )
+
+  const handleSaasAccessActivated = useCallback(async () => {
+    // Quiet reload: never flip profileLoading (that unmounts EmeraldChat).
+    await reloadProfile({ quiet: true })
+    shouldCenterOnPendingRef.current = true
+    setViewedStepId((previous) =>
+      previous === 'FAN_CONNECTION' ? previous : 'FAN_CONNECTION'
+    )
+  }, [reloadProfile])
+
   const emeraldChatProps = {
-    onProfileUpdate: user ? updateProfile : handleAnonymousProfileUpdate,
+    onProfileUpdate: user ? handleProfileUpdate : handleAnonymousProfileUpdate,
     onTriggerPanel: setActivePanel,
-    onTypingUpdate: (input: string, stepId: StepId) => {
-      setCurrentTypingInput(input)
-      if (activeStepId !== stepId) {
-        console.warn('Typing stepId mismatch:', { activeStepId, stepId })
-      }
-    },
-    onCurrentStepChange: (stepId: StepId) => {
-      if (isEditMode && stepId !== activeStepId) {
-        setIsEditMode(false)
-      }
-      setActiveStepId(stepId)
-    },
-    onSubmitCard: () => {
-      setCurrentTypingInput('')
-      if (isEditMode) {
-        setIsEditMode(false)
-      }
-    },
+    onTypingUpdate: handleTypingUpdate,
+    onCurrentStepChange: handleCurrentStepChange,
+    onSubmitCard: handleSubmitCard,
+    onLiveLogoChange: handleLiveLogoChange,
     profile: chatProfile,
+    hasSavedArtistColors: Boolean(
+      answeredKeys.has('colors_set') ||
+        (user
+          ? profile?.primary_color || profile?.accent_color || profile?.pop_color
+          : draft?.profilePreview?.primary_color ||
+            draft?.profilePreview?.accent_color ||
+            draft?.profilePreview?.pop_color)
+    ),
     answeredKeys,
     setAnsweredKeys,
     answeredKeysReady,
@@ -701,17 +760,14 @@ export default function Home() {
     isDocked: !isAnonymousPoster,
     onDraftRefresh: handleDraftRefresh,
     affirmationReadyToSave: persistentAffirmationReady,
-    onSaasAccessActivated: async () => {
-      // Quiet reload: never flip profileLoading (that unmounts EmeraldChat).
-      await reloadProfile({ quiet: true })
-      setActiveStepId('FAN_CONNECTION')
-    },
+    onSaasAccessActivated: handleSaasAccessActivated,
   }
 
   // Get current primary color for halo (Zeyoda pattern: livePrimaryColor || config || default)
   // In Zeyoda: currentPrimaryColor = livePrimaryColor || artistConfig?.theme?.primaryColor || '#0a1a3b'
   const currentPrimaryColor =
     chatProfile?.primary_color || chatProfile?.brand_color || '#0a0a0a'
+  const currentPopColor = chatProfile?.pop_color ?? null
 
   // Apply logo background when profile or preview changes (Zeyoda pattern)
   // Debounced to prevent glitching during typing
@@ -726,6 +782,7 @@ export default function Home() {
       preview_logo_url: previewOverrides?.logo_url,
       preview_logo_use_bg: previewOverrides?.logo_use_background,
       primary_color: mergedProfile?.primary_color, // Include primary color in signature
+      pop_color: mergedProfile?.pop_color,
       user: !!user
     })
 
@@ -822,7 +879,8 @@ export default function Home() {
       await reloadProfile()
       setSanctuarySaveError(null)
       if (continueAfterFreeTaste) {
-        setActiveStepId('CURRENT_FOCUS_PILLAR')
+        shouldCenterOnPendingRef.current = true
+        setViewedStepId('CURRENT_FOCUS_PILLAR')
       }
     } catch (err) {
       console.error('Draft migration retry failed:', err)
@@ -918,6 +976,7 @@ export default function Home() {
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
                     primaryColor={currentPrimaryColor}
+                    popColor={currentPopColor}
                     intensity={0.95}
                     zIndex={1}
                   />
@@ -926,11 +985,12 @@ export default function Home() {
                     items={carouselItems}
                     index={carouselIndex}
                     onIndexChange={(idx) => {
-                      isUserSwipeRef.current = true
+                      shouldCenterOnPendingRef.current = false
                       setCarouselIndex(idx)
                       carouselIndexRef.current = idx
                       const swipedItem = carouselItems[idx]
                       if (swipedItem?.stepId) {
+                        setViewedStepId(swipedItem.stepId)
                         window.dispatchEvent(new CustomEvent('cardNavigate', {
                           detail: { stepId: swipedItem.stepId, cardIndex: idx }
                         }))
@@ -998,7 +1058,7 @@ export default function Home() {
                 </p>
               )}
 
-              {showCarouselStage && activeStepId !== 'INIT' ? (
+              {showCarouselStage ? (
                 <div
                   ref={haloContainerRef}
                   className="artis-carousel-stage relative w-full max-w-5xl mx-auto"
@@ -1007,6 +1067,7 @@ export default function Home() {
                   <OvalGlowBackdrop
                     containerRef={featuredContentRef}
                     primaryColor={currentPrimaryColor}
+                    popColor={currentPopColor}
                     intensity={0.95}
                     zIndex={1}
                   />
@@ -1014,11 +1075,12 @@ export default function Home() {
                     items={carouselItems}
                     index={carouselIndex}
                     onIndexChange={(idx) => {
-                      isUserSwipeRef.current = true
+                      shouldCenterOnPendingRef.current = false
                       setCarouselIndex(idx)
                       carouselIndexRef.current = idx
                       const swipedItem = carouselItems[idx]
                       if (swipedItem?.stepId) {
+                        setViewedStepId(swipedItem.stepId)
                         window.dispatchEvent(
                           new CustomEvent('cardNavigate', {
                             detail: { stepId: swipedItem.stepId, cardIndex: idx },

@@ -25,6 +25,7 @@ function hasDraftContent(draft: AnonymousDraft): boolean {
       p.mission_statement ||
       p.primary_color ||
       p.accent_color ||
+      p.pop_color ||
       p.brand_color ||
       p.font_family ||
       p.logo_url
@@ -74,6 +75,9 @@ function buildProfileFill(
   }
   if (isBlank(existing?.accent_color) && preview.accent_color) {
     fill.accent_color = preview.accent_color
+  }
+  if (isBlank(existing?.pop_color) && preview.pop_color) {
+    fill.pop_color = preview.pop_color
   }
   if (isBlank(existing?.brand_color) && preview.brand_color) {
     fill.brand_color = preview.brand_color
@@ -204,6 +208,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
       email: existingProfile?.email ?? user.email ?? null,
       primary_color: existingProfile?.primary_color ?? null,
       accent_color: existingProfile?.accent_color ?? null,
+      pop_color: existingProfile?.pop_color ?? null,
       brand_color: existingProfile?.brand_color ?? null,
       font_family: existingProfile?.font_family ?? null,
       logo_url: existingProfile?.logo_url ?? null,

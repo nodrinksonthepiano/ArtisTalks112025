@@ -6,6 +6,7 @@ type Props = {
   containerRef: React.RefObject<HTMLDivElement | null>;
   primaryColor?: string; // plate color (page background)
   accentColor?: string;  // unused for plate; kept for compatibility
+  popColor?: string | null; // optional 10% halo/rim accent
   intensity?: number; // 0..1 controls halo strength
   zIndex?: number;
 };
@@ -33,7 +34,7 @@ function toRGBA(hexOrRgb: string, alpha: number) {
   return `rgba(64,115,255,${alpha})`;
 }
 
-const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a3b', accentColor = '#4073ff', intensity = 0.9, zIndex = 2 }) => {
+const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a3b', popColor = null, intensity = 0.9, zIndex = 2 }) => {
   const [box, setBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const lastCarouselDimensionsRef = useRef<{ w: number; h: number } | null>(null);
 
@@ -136,9 +137,10 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
 
   const { wrapperStyle, plateStyle, ringStyle } = useMemo(() => {
     const w = box.w || 0; const h = box.h || 0;
-    const halo1 = toRGBA('#ffffff', Math.min(0.25 * intensity, 0.55));
-    const halo2 = toRGBA('#ffffff', Math.min(0.16 * intensity, 0.40));
-    const rim   = toRGBA('#ffffff', Math.min(0.12 * intensity, 0.25));
+    const haloColor = popColor || '#ffffff'
+    const halo1 = toRGBA(haloColor, Math.min(0.25 * intensity, 0.55));
+    const halo2 = toRGBA(haloColor, Math.min(0.16 * intensity, 0.40));
+    const rim   = toRGBA(haloColor, Math.min(0.20 * intensity, 0.32));
     return {
       wrapperStyle: {
         position: 'absolute',
@@ -165,13 +167,13 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
       ringStyle: {
         position: 'absolute', inset: 0,
         borderRadius: '50% / 50%',
-        background: `radial-gradient(ellipse at 50% 50%, rgba(255,255,255,0) 66%, rgba(255,255,255,${Math.min(0.20 * intensity, 0.32)}) 82%, rgba(255,255,255,0) 98%)`,
+        background: `radial-gradient(ellipse at 50% 50%, transparent 66%, ${rim} 82%, transparent 98%)`,
         filter: 'blur(6px)',
         opacity: 1,
         willChange: 'transform',
       } as React.CSSProperties,
     };
-  }, [box, primaryColor, intensity, zIndex]);
+  }, [box, primaryColor, popColor, intensity, zIndex]);
 
   if (!box.w || !box.h) return null;
   return (

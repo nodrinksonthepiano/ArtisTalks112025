@@ -5,6 +5,12 @@ import { createClient } from '@/utils/supabase/client'
 import { Profile } from '@/hooks/useProfile'
 import { applyLogoBackground } from '@/utils/themeBackground'
 import {
+  FALLBACK_GOLD,
+  FALLBACK_SILVER,
+  getLogoPaletteSuggestion,
+} from '@/utils/extractLogoPalette'
+import { previewArtistPalette } from '@/utils/previewArtistPalette'
+import {
   DEFAULT_FONT_VALUE,
   FEATURED_FONTS,
   type FontCatalogEntry,
@@ -16,10 +22,48 @@ import { applyCatalogFont, preloadFeaturedFonts } from '@/utils/applyCatalogFont
 
 interface InlineColorPickerProps {
   profile: Profile | null
-  onColorChange: (updates: Partial<Profile>) => void // Autosave callback for colors, logo, font
-  onPreviewChange?: (preview: { primary_color?: string; accent_color?: string }) => void
+  onColorChange: (updates: Partial<Profile>) => void
+  onPreviewChange?: (preview: {
+    primary_color?: string
+    accent_color?: string
+    pop_color?: string | null
+    brand_color?: string
+  }) => void
+  sessionPalette?: PaletteSessionState
+  hasSavedArtistColors?: boolean
   /** `colors` = palette only (V2 brand spine). `full` = legacy combined panel. */
   variant?: 'colors' | 'full'
+}
+
+export type PaletteRole = 'primary' | 'accent' | 'pop'
+
+export interface PaletteSessionState {
+  primary_color: string
+  accent_color: string
+  pop_color: string | null
+  brand_color: string
+}
+
+type EyeDropperWindow = Window & {
+  EyeDropper?: new () => {
+    open: () => Promise<{ sRGBHex: string }>
+  }
+}
+
+const DEFAULT_PRIMARY = '#10b981'
+const DEFAULT_ACCENT = '#fbbf24'
+
+function normalizeHexColor(value: string): string | null {
+  const trimmed = value.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase()
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    return `#${trimmed
+      .slice(1)
+      .split('')
+      .map((character) => character + character)
+      .join('')}`.toLowerCase()
+  }
+  return null
 }
 
 const COLOR_PRESETS = {
@@ -37,11 +81,47 @@ export default function InlineColorPicker({
   profile,
   onColorChange,
   onPreviewChange,
+  sessionPalette,
+  hasSavedArtistColors = false,
   variant = 'colors',
 }: InlineColorPickerProps) {
   const showExtras = variant === 'full'
-  const [primaryColor, setPrimaryColor] = useState(profile?.primary_color || '#10b981')
-  const [accentColor, setAccentColor] = useState(profile?.accent_color || '#fbbf24')
+  const initialPaletteRef = useRef<PaletteSessionState | null>(null)
+  if (!initialPaletteRef.current) {
+    const logoSuggestion = getLogoPaletteSuggestion()
+    const mayUseLogoSuggestion = !hasSavedArtistColors
+    const primary =
+      sessionPalette?.primary_color ||
+      profile?.primary_color ||
+      profile?.brand_color ||
+      (mayUseLogoSuggestion ? logoSuggestion?.primary : null) ||
+      DEFAULT_PRIMARY
+    const accent =
+      sessionPalette?.accent_color ||
+      profile?.accent_color ||
+      (mayUseLogoSuggestion ? logoSuggestion?.accent : null) ||
+      DEFAULT_ACCENT
+    const pop =
+      sessionPalette !== undefined
+        ? sessionPalette.pop_color
+        : profile?.pop_color !== undefined
+          ? profile.pop_color
+          : mayUseLogoSuggestion
+            ? logoSuggestion?.pop ?? null
+            : null
+    initialPaletteRef.current = {
+      primary_color: primary,
+      accent_color: accent,
+      pop_color: pop,
+      brand_color: primary,
+    }
+  }
+  const initialPalette = initialPaletteRef.current
+  const [primaryColor, setPrimaryColor] = useState(initialPalette.primary_color)
+  const [accentColor, setAccentColor] = useState(initialPalette.accent_color)
+  const [popColor, setPopColor] = useState<string | null>(initialPalette.pop_color)
+  const [selectedRole, setSelectedRole] = useState<PaletteRole>('primary')
+  const [hexDraft, setHexDraft] = useState(initialPalette.primary_color)
   const [fontFamily, setFontFamily] = useState(
     () => normalizeFontFamilyValue(profile?.font_family) || DEFAULT_FONT_VALUE
   )
@@ -86,113 +166,67 @@ export default function InlineColorPicker({
     logoPreviewRef.current = logoPreview
   }, [logoPreview])
   
-  // CRITICAL: Update PRIMARY color only (background, halo, tokens, slides)
-  // Matches Zeyoda's handleFieldChange for primary_color (lines 280-295)
-  // FIXED: Preserve logo when primary color changes (Zeyoda line 278-280)
-  const updatePrimaryColor = useCallback(async (newPrimary: string) => {
-    if (typeof document === 'undefined') return
-    
-    // CRITICAL: Update primary color CSS variable immediately
-    document.documentElement.style.setProperty("--primary-color", newPrimary);
-    
-    // Build preview config (Zeyoda pattern)
-    // CRITICAL: PRESERVE logo_url and logo_use_background (Zeyoda lines 278-280)
-    const currentLogoUrl = logoPreviewRef.current || logoPreview || profile?.logo_url || null
-    const previewConfig = {
+  const publishPalette = useCallback((palette: PaletteSessionState) => {
+    const currentLogoUrl =
+      logoPreviewRef.current || logoPreview || profile?.logo_url || null
+    previewArtistPalette({
+      primary: palette.primary_color,
+      accent: palette.accent_color,
+      pop: palette.pop_color,
+      logoUrl: currentLogoUrl,
+      logoUseBackground,
+      fontFamily,
+      bodyFontFamily: profile?.body_font_family,
+    })
+    onPreviewChange?.(palette)
+    // Session state only. EmeraldChat performs the durable write on Save colors.
+    onColorChange(palette)
+  }, [
+    fontFamily,
+    logoPreview,
+    logoUseBackground,
+    onColorChange,
+    onPreviewChange,
+    profile?.body_font_family,
+    profile?.logo_url,
+  ])
+
+  const initializedPaletteRef = useRef(false)
+  useEffect(() => {
+    if (showExtras || initializedPaletteRef.current) return
+    initializedPaletteRef.current = true
+    publishPalette(initialPalette)
+  }, [initialPalette, publishPalette, showExtras])
+
+  const updatePrimaryColor = useCallback((newPrimary: string) => {
+    setPrimaryColor(newPrimary)
+    publishPalette({
       primary_color: newPrimary,
       accent_color: accentColor,
+      pop_color: popColor,
       brand_color: newPrimary,
-      font_family: fontFamily,
-      logo_url: currentLogoUrl, // PRESERVE logo (Zeyoda line 278)
-      logo_use_background: logoUseBackground // PRESERVE logo background setting (Zeyoda line 280)
-    }
-    
-    // CRITICAL: Call applyLogoBackground with preserved logo settings
-    // This matches Zeyoda's applyArtistBackground call (line 283)
-    applyLogoBackground(previewConfig as Profile, currentLogoUrl, logoUseBackground)
-    
-    // CRITICAL: Dispatch primaryColorChange event for halo (Zeyoda line 286-288)
-    window.dispatchEvent(new CustomEvent('primaryColorChange', { 
-      detail: { color: newPrimary } 
-    }))
-    
-    // CRITICAL: Dispatch preview config for token live updates (Zeyoda lines 292-294)
-    // PRESERVE logo in preview config
-    window.dispatchEvent(new CustomEvent('profilePreview', { 
-      detail: { 
-        previewConfig: { 
-          primary_color: newPrimary, 
-          accent_color: accentColor,
-          brand_color: newPrimary,
-          font_family: fontFamily,
-          logo_url: currentLogoUrl, // PRESERVE logo
-          logo_use_background: logoUseBackground // PRESERVE logo background setting
-        } 
-      } 
-    }))
-    
-    // Update state
-    setPrimaryColor(newPrimary)
-    
-    // Call parent preview handler
-    onPreviewChange?.({ primary_color: newPrimary, accent_color: accentColor })
-    
-    // CRITICAL: Autosave immediately (only colors, preserve logo/font)
-    onColorChange({
-      primary_color: newPrimary,
-      brand_color: newPrimary
     })
-  }, [accentColor, fontFamily, logoPreview, logoUseBackground, profile, onColorChange, onPreviewChange])
-  
-  // CRITICAL: Update ACCENT color only (text/fonts, NOT background)
-  // Matches Zeyoda's handleFieldChange for accent_color (lines 300-310)
-  const updateAccentColor = useCallback(async (newAccent: string) => {
-    if (typeof document === 'undefined') return
-    
-    // CRITICAL: Update accent color CSS variables directly (Zeyoda lines 300-306)
-    // This is the ONLY place accent color CSS vars should be updated
-    document.documentElement.style.setProperty('--accent-color', newAccent)
-    document.documentElement.style.setProperty(
-      '--accent-color-rgb',
-      newAccent.match(/\d+/g)?.join(', ') ?? '0,0,0'
-    )
-    
-    // CRITICAL: Update header text color immediately (Zeyoda lines 303-306)
-    const headerElement = document.querySelector('h1')
-    if (headerElement) {
-      headerElement.style.color = newAccent
-    }
-    
-    // CRITICAL: Do NOT call applyLogoBackground when accent color changes
-    // Accent color should ONLY affect text/fonts, NOT background
-    // Zeyoda pattern: accent color changes don't call applyArtistBackground for background
-    
-    // CRITICAL: Dispatch preview config for token live updates (Zeyoda lines 295-298)
-    const currentLogoUrl = logoPreviewRef.current || logoPreview || profile?.logo_url || null
-    window.dispatchEvent(new CustomEvent('profilePreview', { 
-      detail: { 
-        previewConfig: { 
-          primary_color: primaryColor, 
-          accent_color: newAccent,
-          brand_color: primaryColor,
-          font_family: fontFamily,
-          logo_url: currentLogoUrl,
-          logo_use_background: logoUseBackground
-        } 
-      } 
-    }))
-    
-    // Update state
+  }, [accentColor, popColor, publishPalette])
+
+  const updateAccentColor = useCallback((newAccent: string) => {
     setAccentColor(newAccent)
-    
-    // Call parent preview handler
-    onPreviewChange?.({ primary_color: primaryColor, accent_color: newAccent })
-    
-    // CRITICAL: Autosave immediately
-    onColorChange({
-      accent_color: newAccent
+    publishPalette({
+      primary_color: primaryColor,
+      accent_color: newAccent,
+      pop_color: popColor,
+      brand_color: primaryColor,
     })
-  }, [primaryColor, fontFamily, logoPreview, logoUseBackground, profile, onColorChange, onPreviewChange])
+  }, [popColor, primaryColor, publishPalette])
+
+  const updatePopColor = useCallback((newPop: string) => {
+    setPopColor(newPop)
+    publishPalette({
+      primary_color: primaryColor,
+      accent_color: accentColor,
+      pop_color: newPop,
+      brand_color: primaryColor,
+    })
+  }, [accentColor, primaryColor, publishPalette])
   
   // CRITICAL: Update font immediately (matches Zeyoda's handleFieldChange for font_family, lines 307-313)
   const updateFontImmediately = useCallback(async (newFont: string) => {
@@ -278,6 +312,7 @@ export default function InlineColorPicker({
   useEffect(() => {
     if (profile?.primary_color) setPrimaryColor(profile.primary_color)
     if (profile?.accent_color) setAccentColor(profile.accent_color)
+    if (profile?.pop_color !== undefined) setPopColor(profile.pop_color)
     if (profile?.font_family) {
       setFontFamily(normalizeFontFamilyValue(profile.font_family))
     }
@@ -286,7 +321,7 @@ export default function InlineColorPicker({
       logoPreviewRef.current = profile.logo_url
     }
     if (profile?.logo_use_background !== undefined && profile.logo_use_background !== null) setLogoUseBackground(profile.logo_use_background)
-  }, [profile?.primary_color, profile?.accent_color, profile?.font_family, profile?.logo_url, profile?.logo_use_background])
+  }, [profile?.primary_color, profile?.accent_color, profile?.pop_color, profile?.font_family, profile?.logo_url, profile?.logo_use_background])
   
   const applyPrimaryPreset = (presetKey: string) => {
     const preset = COLOR_PRESETS[presetKey as keyof typeof COLOR_PRESETS]
@@ -302,137 +337,273 @@ export default function InlineColorPicker({
     }
   }
   
+  const applyRoleColor = (role: PaletteRole, color: string) => {
+    if (role === 'primary') updatePrimaryColor(color)
+    else if (role === 'accent') updateAccentColor(color)
+    else updatePopColor(color)
+  }
+
+  const flipMainAndSupport = () => {
+    const nextPrimary = accentColor
+    const nextAccent = primaryColor
+    setPrimaryColor(nextPrimary)
+    setAccentColor(nextAccent)
+    publishPalette({
+      primary_color: nextPrimary,
+      accent_color: nextAccent,
+      pop_color: popColor,
+      brand_color: nextPrimary,
+    })
+  }
+
+  const selectedColor =
+    selectedRole === 'primary'
+      ? primaryColor
+      : selectedRole === 'accent'
+        ? accentColor
+        : popColor
+  const paletteRoles = [
+    {
+      role: 'primary' as const,
+      ratio: 60,
+      label: 'Main',
+      color: primaryColor,
+      path: 'M 60 60 L 60 10 A 50 50 0 1 1 30.61 100.45 Z',
+      textX: 88,
+      textY: 70,
+    },
+    {
+      role: 'accent' as const,
+      ratio: 30,
+      label: 'Support',
+      color: accentColor,
+      path: 'M 60 60 L 30.61 100.45 A 50 50 0 0 1 30.61 19.55 Z',
+      textX: 30,
+      textY: 63,
+    },
+    {
+      role: 'pop' as const,
+      ratio: 10,
+      label: 'Pop',
+      color: popColor || 'url(#artis-empty-pop)',
+      path: 'M 60 60 L 30.61 19.55 A 50 50 0 0 1 60 10 Z',
+      textX: 48,
+      textY: 30,
+    },
+  ]
+  const selectedRoleInfo =
+    paletteRoles.find((item) => item.role === selectedRole) || paletteRoles[0]
+
+  useEffect(() => {
+    setHexDraft(selectedColor || '')
+  }, [selectedColor, selectedRole])
+
+  const logoSuggestion = getLogoPaletteSuggestion()
+  const logoRoleColor =
+    selectedRole === 'primary'
+      ? logoSuggestion?.primary
+      : selectedRole === 'accent'
+        ? logoSuggestion?.accent
+        : logoSuggestion?.pop
+  const namedColorChoices = [
+    { value: 'logo', label: 'Logo', color: logoRoleColor || null, disabled: !logoRoleColor },
+    { value: 'gold', label: 'Gold', color: FALLBACK_GOLD, disabled: false },
+    { value: 'silver', label: 'Silver', color: FALLBACK_SILVER, disabled: false },
+    { value: 'emerald', label: 'Emerald', color: COLOR_PRESETS.emerald.primary, disabled: false },
+    { value: 'ruby', label: 'Ruby', color: COLOR_PRESETS.ruby.primary, disabled: false },
+    { value: 'sapphire', label: 'Sapphire', color: COLOR_PRESETS.sapphire.primary, disabled: false },
+    ...(selectedRole === 'pop'
+      ? [{ value: 'none', label: 'None', color: null, disabled: false }]
+      : []),
+    { value: 'custom', label: 'Custom', color: null, disabled: false },
+  ]
+  const selectedNamedColor =
+    selectedRole === 'pop' && popColor === null
+      ? 'none'
+      : namedColorChoices.find(
+          (choice) =>
+            choice.color !== null &&
+            selectedColor?.toLowerCase() === choice.color.toLowerCase()
+        )?.value || 'custom'
+
+  const clearPopColor = () => {
+    setPopColor(null)
+    publishPalette({
+      primary_color: primaryColor,
+      accent_color: accentColor,
+      pop_color: null,
+      brand_color: primaryColor,
+    })
+  }
+
   // EyeDropper handler (HTML5 API)
-  const handleEyeDropper = async (type: 'primary' | 'accent') => {
-    if (!('EyeDropper' in window)) return
+  const handleEyeDropper = async (role: PaletteRole) => {
+    const EyeDropperApi = (window as EyeDropperWindow).EyeDropper
+    if (!EyeDropperApi) return
     
     try {
-      const eyeDropper = new (window as any).EyeDropper()
+      const eyeDropper = new EyeDropperApi()
       const result = await eyeDropper.open()
       const color = result.sRGBHex
-      
-      if (type === 'primary') {
-        updatePrimaryColor(color)
-      } else {
-        updateAccentColor(color)
-      }
-    } catch (err) {
+
+      applyRoleColor(role, color)
+    } catch {
       // User cancelled
     }
   }
 
   if (!showExtras) {
     return (
-      <div className="artis-color-picker--compact">
-        <div className="artis-color-picker-group">
-          <p className="artis-color-picker-label" title="Primary Color (Background)">
-            Primary
-          </p>
-          <div className="artis-color-picker-swatches" role="group" aria-label="Primary color presets">
-            {Object.entries(COLOR_PRESETS).map(([key, preset]) => {
-              const selected = primaryColor === preset.primary
-              return (
-                <button
-                  key={`primary-${key}`}
-                  type="button"
-                  className={`artis-color-picker-swatch${selected ? ' is-selected' : ''}`}
-                  onClick={() => applyPrimaryPreset(key)}
-                  title={`${preset.name} Primary`}
-                  aria-label={`${preset.name} Primary`}
-                  aria-pressed={selected}
+      <div className="artis-palette-control">
+        <div className="artis-palette-layout">
+          <div className="artis-palette-chart-column">
+            <svg
+              className="artis-palette-pie"
+              viewBox="0 0 120 120"
+              width="96"
+              height="96"
+              preserveAspectRatio="xMidYMid meet"
+              role="group"
+              aria-label="60 30 10 palette roles"
+            >
+              <defs>
+                <pattern
+                  id="artis-empty-pop"
+                  width="7"
+                  height="7"
+                  patternUnits="userSpaceOnUse"
+                  patternTransform="rotate(45)"
                 >
-                  <span
-                    className="artis-color-picker-chip"
-                    style={{ backgroundColor: preset.primary }}
+                  <rect width="7" height="7" fill="#374151" />
+                  <line
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="7"
+                    stroke="#9ca3af"
+                    strokeWidth="2"
                   />
-                </button>
-              )
-            })}
+                </pattern>
+              </defs>
+              {paletteRoles.map((item) => (
+                <path
+                  key={item.role}
+                  className="artis-palette-pie-wedge"
+                  d={item.path}
+                  fill={item.color}
+                  stroke="rgba(15, 23, 42, 0.55)"
+                  strokeWidth="1"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${item.ratio} percent ${item.label}`}
+                  aria-pressed={selectedRole === item.role}
+                  onClick={() => setSelectedRole(item.role)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setSelectedRole(item.role)
+                  }}
+                />
+              ))}
+              <path
+                className="artis-palette-pie-selection"
+                d={selectedRoleInfo.path}
+                fill="none"
+                stroke="#ffffff"
+                strokeWidth="3"
+                pointerEvents="none"
+              />
+              {paletteRoles.map((item) => (
+                <g
+                  key={`${item.role}-label`}
+                  className="artis-palette-pie-label"
+                  aria-hidden="true"
+                >
+                  <text x={item.textX} y={item.textY}>
+                    {item.ratio}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
-          <div className="artis-color-picker-controls">
-            <input
-              type="color"
-              value={primaryColor}
-              onChange={(e) => updatePrimaryColor(e.target.value)}
-              className="artis-color-picker-native"
-              aria-label="Primary color picker"
-            />
-            {eyeDropperSupported && (
-              <button
-                type="button"
-                onClick={() => handleEyeDropper('primary')}
-                className="artis-color-picker-eyedropper"
-                title="Pick color from screen"
-                aria-label="Pick primary color from screen"
-              >
-                🎨
-              </button>
-            )}
-            <input
-              type="text"
-              value={primaryColor}
-              onChange={(e) => updatePrimaryColor(e.target.value)}
-              className="artis-color-picker-hex"
-              placeholder="#RRGGBB"
-              spellCheck={false}
-              aria-label="Primary hex"
-            />
-          </div>
-        </div>
 
-        <div className="artis-color-picker-group">
-          <p className="artis-color-picker-label" title="Accent Color (Text/Highlights)">
-            Accent
-          </p>
-          <div className="artis-color-picker-swatches" role="group" aria-label="Accent color presets">
-            {Object.entries(COLOR_PRESETS).map(([key, preset]) => {
-              const selected = accentColor === preset.accent
-              return (
-                <button
-                  key={`accent-${key}`}
-                  type="button"
-                  className={`artis-color-picker-swatch${selected ? ' is-selected' : ''}`}
-                  onClick={() => applyAccentPreset(key)}
-                  title={`${preset.name} Accent`}
-                  aria-label={`${preset.name} Accent`}
-                  aria-pressed={selected}
-                >
-                  <span
-                    className="artis-color-picker-chip"
-                    style={{ backgroundColor: preset.accent }}
-                  />
-                </button>
-              )
-            })}
-          </div>
-          <div className="artis-color-picker-controls">
-            <input
-              type="color"
-              value={accentColor}
-              onChange={(e) => updateAccentColor(e.target.value)}
-              className="artis-color-picker-native"
-              aria-label="Accent color picker"
-            />
-            {eyeDropperSupported && (
+          <div className="artis-palette-editor-panel">
+            <div className="artis-palette-editor-heading">
+              <strong>
+                {selectedRoleInfo.label} · {selectedRoleInfo.ratio}%
+              </strong>
               <button
                 type="button"
-                onClick={() => handleEyeDropper('accent')}
-                className="artis-color-picker-eyedropper"
-                title="Pick color from screen"
-                aria-label="Pick accent color from screen"
+                className="artis-palette-flip"
+                onClick={flipMainAndSupport}
+                aria-label="Flip Main and Support colors"
               >
-                🎨
+                ↔ Flip
               </button>
-            )}
-            <input
-              type="text"
-              value={accentColor}
-              onChange={(e) => updateAccentColor(e.target.value)}
-              className="artis-color-picker-hex"
-              placeholder="#RRGGBB"
-              spellCheck={false}
-              aria-label="Accent hex"
-            />
+            </div>
+
+            <select
+              className="artis-palette-select"
+              value={selectedNamedColor}
+              onChange={(event) => {
+                const choice = namedColorChoices.find(
+                  (item) => item.value === event.target.value
+                )
+                if (!choice) return
+                if (choice.value === 'none') {
+                  clearPopColor()
+                  return
+                }
+                if (choice.color) applyRoleColor(selectedRole, choice.color)
+              }}
+              aria-label={`Named color for ${selectedRoleInfo.label}`}
+            >
+              {namedColorChoices.map((choice) => (
+                <option
+                  key={choice.value}
+                  value={choice.value}
+                  disabled={choice.disabled}
+                >
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+
+            <div className="artis-palette-manual">
+              <input
+                type="color"
+                value={selectedColor || '#6b7280'}
+                onChange={(event) => applyRoleColor(selectedRole, event.target.value)}
+                className="artis-color-picker-native"
+                aria-label={`Custom ${selectedRole} color picker`}
+              />
+              {eyeDropperSupported ? (
+                <button
+                  type="button"
+                  onClick={() => handleEyeDropper(selectedRole)}
+                  className="artis-color-picker-eyedropper"
+                  title="Pick color from screen"
+                  aria-label={`Pick ${selectedRole} color from screen`}
+                >
+                  🎨
+                </button>
+              ) : null}
+              <input
+                type="text"
+                value={hexDraft}
+                onChange={(event) => {
+                  const next = event.target.value
+                  setHexDraft(next)
+                  const normalized = normalizeHexColor(next)
+                  if (normalized) applyRoleColor(selectedRole, normalized)
+                }}
+                onBlur={() => setHexDraft(selectedColor || '')}
+                className="artis-color-picker-hex"
+                placeholder={selectedRole === 'pop' && !popColor ? 'Optional Pop' : '#RRGGBB'}
+                spellCheck={false}
+                aria-label={`${selectedRole} hex color`}
+              />
+            </div>
           </div>
         </div>
       </div>
