@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { deriveVibeAppearance } from '@/utils/vibeAppearance';
 
 type Props = {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -137,7 +138,8 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
 
   const { wrapperStyle, plateStyle, ringStyle } = useMemo(() => {
     const w = box.w || 0; const h = box.h || 0;
-    const haloColor = popColor || '#ffffff'
+    const depth = deriveVibeAppearance(primaryColor, undefined, popColor);
+    const haloColor = depth.highlight;
     const halo1 = toRGBA(haloColor, Math.min(0.25 * intensity, 0.55));
     const halo2 = toRGBA(haloColor, Math.min(0.16 * intensity, 0.40));
     const rim   = toRGBA(haloColor, Math.min(0.20 * intensity, 0.32));
@@ -158,10 +160,9 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
       plateStyle: {
         position: 'absolute', inset: 0,
         borderRadius: '50% / 50%',
-        background: primaryColor,
-        boxShadow: `0 0 110px 28px ${halo1}, 0 0 52px 18px ${halo2}, 0 0 2px 1px ${rim} inset`,
+        background: `radial-gradient(ellipse at 50% 50%, ${toRGBA(primaryColor, 0.94)} 45%, ${toRGBA(depth.shadow, 0.35)} 100%)`,
+        boxShadow: `0 0 24px 3px ${halo1}, 0 0 8px 1px ${halo2}, 0 0 0 1px ${rim} inset, 0 8px 18px ${toRGBA(depth.shadow, 0.18)}`,
         filter: 'none',
-        willChange: 'transform',
       } as React.CSSProperties,
       // Thin outer ring-only highlight to mimic eclipse rim
       ringStyle: {
@@ -170,7 +171,6 @@ const OvalGlowBackdrop: React.FC<Props> = ({ containerRef, primaryColor = '#0a1a
         background: `radial-gradient(ellipse at 50% 50%, transparent 66%, ${rim} 82%, transparent 98%)`,
         filter: 'blur(6px)',
         opacity: 1,
-        willChange: 'transform',
       } as React.CSSProperties,
     };
   }, [box, primaryColor, popColor, intensity, zIndex]);

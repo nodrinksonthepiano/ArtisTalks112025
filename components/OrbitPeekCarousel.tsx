@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from 'react';
 import type { CarouselItem } from '@/hooks/useCarouselItems';
 import { StepId } from '@/lib/curriculum';
+import { readableVibeForeground } from '@/utils/vibeAppearance';
 
 type Props = {
   items: CarouselItem[];
@@ -15,6 +16,7 @@ type Props = {
     bodyFontFamily?: string
     primaryColor?: string
     accentColor?: string
+    popColor?: string | null
   };
   disabled?: boolean;
   onShakeRequest?: () => void;
@@ -949,9 +951,9 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     // CRITICAL: Use primary color for card background (so accent color text is visible)
     const cardBg = theme?.primaryColor || '#047857'; // Primary color for card background
     // Use accent color for text (visible on primary color background)
-    const cardText = theme?.accentColor || '#fffacd'; // Accent color for text
+    const cardText = readableVibeForeground(cardBg, theme?.accentColor || '#fffacd');
     const overlayBg = theme?.primaryColor || 'rgba(0,0,0,0.6)';
-    const overlayFg = theme?.accentColor || '#ffffff';
+    const overlayFg = theme?.primaryColor ? readableVibeForeground(theme.primaryColor, theme?.accentColor || '#ffffff') : '#ffffff';
     const isHero = typeof itemIdx === 'number' && itemIdx === effectiveIndex;
     const isQuestionCard = !item.content || item.content.trim() === ''; // Question card (not answered yet)
     
@@ -1322,7 +1324,19 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
     // Show question card if content is empty, answer card if content exists
     return (
       <div ref={typeof itemIdx === 'number' ? setMediaWrapRef(itemIdx) : undefined} style={{ position:'relative', width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', padding:'clamp(1rem, 2vw, 2rem)' }}>
-        <div style={{ 
+        <div
+          role={isHero && item.stepId === 'COLORS_PANEL' ? 'button' : undefined}
+          tabIndex={isHero && item.stepId === 'COLORS_PANEL' ? 0 : undefined}
+          aria-label={isHero && item.stepId === 'COLORS_PANEL' ? 'Edit Colors and Vibe' : undefined}
+          onClick={isHero && item.stepId === 'COLORS_PANEL' ? () => {
+            window.dispatchEvent(new CustomEvent('cardEdit', { detail: { stepId: item.stepId, focusInput: false } }));
+          } : undefined}
+          onKeyDown={isHero && item.stepId === 'COLORS_PANEL' ? (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            window.dispatchEvent(new CustomEvent('cardEdit', { detail: { stepId: item.stepId, focusInput: false } }));
+          } : undefined}
+          style={{
           width:'100%', 
           height: '100%',
           aspectRatio: '1/1', // Square card
@@ -1330,7 +1344,7 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
           backgroundColor: cardBg, // Artist's accent color or emerald button color
           backdropFilter: 'blur(12px)',
           borderRadius: '1rem',
-          border: `2px solid ${hexToRgba(cardText, 0.3)}`,
+          border: `2px solid ${hexToRgba(theme?.popColor || cardText, 0.45)}`,
           padding: 'clamp(1rem, 2vw, 2rem)',
           boxShadow: `0 25px 50px -12px ${hexToRgba(cardText, 0.2)}`,
           opacity: 1,
@@ -1496,6 +1510,9 @@ export const OrbitPeekCarousel: React.FC<Props> = ({ items, index, onIndexChange
           return (
               <div key={`item-${itemKey}`} ref={setItemRef(itemIdx)} style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:(isHeroItem ? 'auto' : 'none'), backfaceVisibility:'hidden', WebkitBackfaceVisibility:'hidden', transformStyle:'preserve-3d' }}>
               {renderMedia(item, itemIdx)}
+              {isHeroItem && theme?.popColor && (item.imageUrl || item.videoUrl) ? (
+                <div className="artis-featured-pop-rim" style={{ boxShadow: `inset 0 0 0 1px ${hexToRgba(theme.popColor, 0.65)}, 0 1px 10px ${hexToRgba(theme.popColor, 0.22)}` }} aria-hidden="true" />
+              ) : null}
             </div>
           );
         });

@@ -47,6 +47,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   const [previewConfig, setPreviewConfig] = React.useState<{
     primary_color?: string;
     accent_color?: string;
+    pop_color?: string | null;
     brand_color?: string;
   } | null>(null);
   const tokenElementRefs = useRef<(HTMLElement | null)[]>([]);
@@ -73,7 +74,7 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
   // CRITICAL: Listen for preview config events from ColorPanel/InlineColorPicker for live token updates
   useEffect(() => {
     const handlePreview = (e: Event) => {
-      const customEvent = e as CustomEvent<{ previewConfig: { primary_color?: string; accent_color?: string; brand_color?: string } }>;
+      const customEvent = e as CustomEvent<{ previewConfig: { primary_color?: string; accent_color?: string; pop_color?: string | null; brand_color?: string } }>;
       if (customEvent.detail?.previewConfig) {
         setPreviewConfig(customEvent.detail.previewConfig);
       }
@@ -501,6 +502,9 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
                 style={{
                   backgroundColor: 'transparent',
                   border: `2px solid ${primaryColor}`, // PRIMARY COLOR BORDER
+                  boxShadow: (previewConfig?.pop_color !== undefined ? previewConfig.pop_color : profile?.pop_color)
+                    ? `inset 0 0 0 1px ${previewConfig?.pop_color ?? profile?.pop_color}, 0 1px 6px ${previewConfig?.pop_color ?? profile?.pop_color}`
+                    : undefined,
                   opacity: 1,
                 }}
               >
@@ -553,4 +557,3 @@ const ArtisTalksOrbitRenderer: React.FC<ArtisTalksOrbitRendererProps> = ({
 };
 
 export default ArtisTalksOrbitRenderer;
-

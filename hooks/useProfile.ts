@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
+import type { PageVibe } from '@/utils/vibeAppearance'
 
 export type SaasSubscriptionStatus =
   | 'inactive'
@@ -17,6 +18,8 @@ export interface Profile {
   primary_color?: string | null
   accent_color?: string | null
   pop_color?: string | null
+  /** Page atmosphere. Missing or null renders as Glow. */
+  page_vibe?: PageVibe | null
   /** Headline font (artist name, titles, card titles). */
   font_family?: string | null
   /** Body font (mission, answers, longer copy). Falls back to Geist when null. */

@@ -1,5 +1,7 @@
 import { Profile } from '@/hooks/useProfile'
 
+let backgroundRequest = 0
+
 /**
  * Applies background with strict precedence (Zeyoda pattern):
  * 1) logo_url (if logo_use_background is true)
@@ -45,6 +47,8 @@ export function applyLogoBackground(
 
   // SSR guard
   if (typeof document === 'undefined') return;
+  const request = ++backgroundRequest;
+  document.documentElement.style.backgroundColor = primary;
 
   // Zeyoda lines 30-32: Always keep core theme variables current
   document.documentElement.style.setProperty("--primary-color", primary);
@@ -111,19 +115,24 @@ export function applyLogoBackground(
     // Zeyoda lines 98-115: Preload image and apply once loaded
     const img = new Image();
     img.onload = () => {
+      if (request !== backgroundRequest) return;
       // Zeyoda lines 100-106: Image loaded - apply it atomically
       const bgStyle = `${primary} url(${cacheBustedLogoUrl}) center/cover no-repeat`;
-      document.body.style.setProperty("background-image", `url(${cacheBustedLogoUrl})`, "important");
+      document.documentElement.style.setProperty("--artis-world-image", `url(${JSON.stringify(cacheBustedLogoUrl)})`);
+      document.body.style.setProperty("background-image", `url(${JSON.stringify(cacheBustedLogoUrl)})`, "important");
       document.body.style.setProperty("background-size", "cover", "important"); /* EXACT from Zeyoda - fit to screen */
       document.body.style.setProperty("background-position", "center", "important");
       document.body.style.setProperty("background-repeat", "no-repeat", "important");
       document.body.style.setProperty("background-color", primary, "important");
       document.body.style.setProperty("background", bgStyle, "important");
+      if (document.documentElement.dataset.artisWorld === "awake") document.body.style.setProperty("background-image", "none", "important");
       
       console.log('[applyLogoBackground] ✅ Logo image loaded and applied', { url: cacheBustedLogoUrl });
     };
     img.onerror = () => {
+      if (request !== backgroundRequest) return;
       // Zeyoda lines 107-110: Image failed to load - keep primary color
+      document.documentElement.style.setProperty("--artis-world-image", "none");
       console.warn('[applyLogoBackground] ⚠️ Logo image failed to load, keeping primary color');
       document.body.style.setProperty("background-color", primary, "important");
       document.body.style.setProperty("background", primary, "important");
@@ -146,6 +155,7 @@ export function applyLogoBackground(
     logo_use_background_type: typeof useBackground
   });
   // Zeyoda lines 124-127: CRITICAL - Clear ALL background styles and set primary color
+  document.documentElement.style.setProperty("--artis-world-image", "none");
   document.body.style.setProperty("background-image", "none", "important");
   document.body.style.setProperty("background-color", primary, "important");
   document.body.style.setProperty("background", primary, "important");

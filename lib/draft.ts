@@ -1,4 +1,6 @@
 import { StepId } from '@/lib/curriculum'
+import type { PageVibe } from '@/utils/vibeAppearance'
+import { clearDraftLogoAssets, getCachedDraftLogoUrl, getDraftLogoAssetId } from '@/lib/draftLogoAsset'
 
 export const DRAFT_STORAGE_KEY = 'artistalks_anonymous_draft_v1'
 
@@ -15,10 +17,14 @@ export interface DraftProfilePreview {
   primary_color?: string | null
   accent_color?: string | null
   pop_color?: string | null
+  page_vibe?: PageVibe | null
   brand_color?: string | null
   font_family?: string | null
   body_font_family?: string | null
   logo_url?: string | null
+  logo_asset_id?: string | null
+  logo_removed?: boolean
+  logo_missing?: boolean
   logo_use_background?: boolean | null
 }
 
@@ -38,6 +44,35 @@ function emptyDraft(): AnonymousDraft {
   }
 }
 
+function encodeLogo(url: unknown, assetId: unknown) {
+  const id = typeof url === 'string' ? getDraftLogoAssetId(url) : null
+  const savedId = id || (typeof assetId === 'string' ? assetId : null)
+  if (typeof url === 'string' && url && !url.startsWith('blob:')) return { url, id: null, missing: false }
+  return { url: null, id: savedId, missing: !savedId && typeof url === 'string' && url.startsWith('blob:') }
+}
+
+function serializeDraft(draft: AnonymousDraft): AnonymousDraft {
+  const preview = { ...draft.profilePreview }
+  const logo = encodeLogo(preview.logo_url, preview.logo_asset_id)
+  preview.logo_url = preview.logo_removed ? null : logo.url
+  preview.logo_asset_id = preview.logo_removed ? null : logo.id
+  preview.logo_missing = !preview.logo_removed && (logo.missing || preview.logo_missing === true)
+  return {
+    ...draft, profilePreview: preview,
+    answers: draft.answers.map(answer => {
+      if (answer.question_key !== 'logo_uploaded') return answer
+      const data = { ...answer.answer_data }
+      const image = encodeLogo(data.url ?? data.imageUrl ?? data.image_url, data.asset_id)
+      delete data.imageUrl
+      delete data.image_url
+      data.url = image.url
+      data.asset_id = image.id
+      data.asset_missing = image.missing || data.asset_missing === true
+      return { ...answer, answer_data: data }
+    }),
+  }
+}
+
 export function loadDraft(): AnonymousDraft | null {
   if (typeof window === 'undefined') return null
   try {
@@ -45,7 +80,16 @@ export function loadDraft(): AnonymousDraft | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as AnonymousDraft
     if (parsed?.version !== 1) return null
-    return parsed
+    const draft = serializeDraft(parsed)
+    if (draft.profilePreview.logo_asset_id && !draft.profilePreview.logo_removed) {
+      draft.profilePreview.logo_url = getCachedDraftLogoUrl(draft.profilePreview.logo_asset_id)
+    }
+    for (const answer of draft.answers) {
+      if (answer.question_key === 'logo_uploaded' && typeof answer.answer_data.asset_id === 'string') {
+        answer.answer_data.url = getCachedDraftLogoUrl(answer.answer_data.asset_id)
+      }
+    }
+    return draft
   } catch {
     return null
   }
@@ -53,16 +97,17 @@ export function loadDraft(): AnonymousDraft | null {
 
 export function saveDraft(draft: AnonymousDraft): void {
   if (typeof window === 'undefined') return
-  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft))
+  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(serializeDraft(draft)))
 }
 
 export function getOrCreateDraft(): AnonymousDraft {
   return loadDraft() ?? emptyDraft()
 }
 
-export function clearDraft(): void {
+export async function clearDraft(): Promise<void> {
   if (typeof window === 'undefined') return
   localStorage.removeItem(DRAFT_STORAGE_KEY)
+  await clearDraftLogoAssets()
 }
 
 export function setDraftCurrentStepId(stepId: StepId): void {
@@ -73,7 +118,13 @@ export function setDraftCurrentStepId(stepId: StepId): void {
 
 export function setDraftProfilePreview(updates: DraftProfilePreview): void {
   const draft = getOrCreateDraft()
-  draft.profilePreview = { ...draft.profilePreview, ...updates }
+  const normalized = { ...updates }
+  if (updates.logo_url !== undefined) {
+    normalized.logo_asset_id = getDraftLogoAssetId(updates.logo_url)
+    normalized.logo_removed = updates.logo_url === null
+    normalized.logo_missing = false
+  }
+  draft.profilePreview = { ...draft.profilePreview, ...normalized }
   saveDraft(draft)
 }
 

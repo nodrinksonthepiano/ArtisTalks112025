@@ -9,6 +9,8 @@ import LogoPanel from "@/components/LogoPanel";
 import ColorPanel from "@/components/ColorPanel";
 import FontPanel from "@/components/FontPanel";
 import OvalGlowBackdrop from "@/components/OvalGlowBackdrop";
+import LivingWorldBackdrop from '@/components/LivingWorldBackdrop'
+import { deriveVibeAppearance, normalizePageVibe, type PageVibe } from '@/utils/vibeAppearance'
 import SanctuaryAccordion from "@/components/SanctuaryAccordion";
 import { createClient } from "@/utils/supabase/client";
 import { useProfile, type Profile } from "@/hooks/useProfile";
@@ -18,6 +20,7 @@ import { useAnsweredKeys } from "@/hooks/useAnsweredKeys";
 import { useSanctuaryAnswers } from "@/hooks/useSanctuaryAnswers";
 import { applyLogoBackground } from "@/utils/themeBackground";
 import { loadDraft, getDraftAnsweredKeys, getDraftAnswerData, getDraftAnswerText, clearDraft } from '@/lib/draft'
+import { isManagedDraftLogoUrl } from '@/lib/draftLogoAsset'
 import { migrateAnonymousDraft } from '@/lib/migrateDraft'
 import {
   clearReturningClaimMarker,
@@ -36,6 +39,12 @@ import {
 } from "@/lib/curriculum";
 import type { DraftProfilePreview } from '@/lib/draft'
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
+
+const ANONYMOUS_PRESET_IMAGE = `url(${JSON.stringify(encodeURI('/CreationCreator_Logo_Color copy.png'))})`
+
+function retainAnonymousPresetImage() {
+  document.documentElement.style.setProperty('--artis-world-image', ANONYMOUS_PRESET_IMAGE)
+}
 
 export default function Home() {
   const pageShellRef = useRef<HTMLDivElement | null>(null)
@@ -59,7 +68,7 @@ export default function Home() {
     []
   )
 
-  const { draft, hydrated, refreshDraft, updateProfilePreview } = useDraft()
+  const { draft, hydrated, refreshDraft, updateProfilePreview, logoRestoreError } = useDraft()
 
   const shellMounted = !(
     loading ||
@@ -175,6 +184,7 @@ export default function Home() {
         brand_color: '#0a0a0a'
       } as Profile
       applyLogoBackground(tempProfile, presetLogoUrl, true)
+      retainAnonymousPresetImage()
       // Override background-size for landing page ONLY to make logo bigger
       document.body.style.setProperty("background-size", "350%", "important")
     } else if (typeof document !== 'undefined' && user) {
@@ -349,9 +359,14 @@ export default function Home() {
         }
         shouldCenterOnPendingRef.current = true
         setViewedStepId(stepId)
-        if (saved.profilePreview?.logo_url && !saved.profilePreview.logo_url.startsWith('blob:')) {
+        if (saved.profilePreview?.logo_url && (
+          !saved.profilePreview.logo_url.startsWith('blob:') || isManagedDraftLogoUrl(saved.profilePreview.logo_url)
+        )) {
           setLiveLogoUrl(saved.profilePreview.logo_url)
           setLiveLogoRemoved(false)
+        } else if (saved.profilePreview?.logo_removed || saved.profilePreview?.logo_missing || saved.profilePreview?.logo_asset_id) {
+          setLiveLogoUrl(null)
+          setLiveLogoRemoved(true)
         }
       }
     }
@@ -362,12 +377,17 @@ export default function Home() {
     primary_color?: string
     accent_color?: string
     pop_color?: string | null
+    page_vibe?: PageVibe | null
     brand_color?: string
-    logo_url?: string
+    logo_url?: string | null
     logo_use_background?: boolean
     font_family?: string
     body_font_family?: string
   } | null>(null)
+
+  const handleVibePreview = useCallback((page_vibe: PageVibe | null) => {
+    setPreviewOverrides((previous) => ({ ...previous, page_vibe }))
+  }, [])
 
   // CRITICAL: Listen for profile preview changes from InlineColorPicker (matches Zeyoda's artistConfigPreview)
   // This ensures page.tsx knows about color changes and updates previewOverrides for halo
@@ -447,7 +467,7 @@ export default function Home() {
 
       if (isReturningClaim) {
         // Returning claimed-name login — never migrate anonymous draft into this account
-        clearDraft()
+        await clearDraft()
         clearReturningClaimMarker()
         refreshDraft()
         setSanctuarySaveError(null)
@@ -520,6 +540,7 @@ export default function Home() {
       primary_color: preview.primary_color ?? null,
       accent_color: preview.accent_color ?? null,
       pop_color: preview.pop_color ?? null,
+      page_vibe: preview.page_vibe ?? null,
       brand_color: preview.brand_color ?? null,
       font_family: preview.font_family ?? null,
       body_font_family: preview.body_font_family ?? null,
@@ -541,6 +562,7 @@ export default function Home() {
     if (updates.primary_color !== undefined) preview.primary_color = updates.primary_color
     if (updates.accent_color !== undefined) preview.accent_color = updates.accent_color
     if (updates.pop_color !== undefined) preview.pop_color = updates.pop_color
+    if (updates.page_vibe !== undefined) preview.page_vibe = updates.page_vibe
     if (updates.brand_color !== undefined) preview.brand_color = updates.brand_color
     if (updates.font_family !== undefined) preview.font_family = updates.font_family
     if (updates.body_font_family !== undefined) preview.body_font_family = updates.body_font_family
@@ -556,8 +578,9 @@ export default function Home() {
       if (updates.primary_color !== undefined) next.primary_color = updates.primary_color ?? undefined
       if (updates.accent_color !== undefined) next.accent_color = updates.accent_color ?? undefined
       if (updates.pop_color !== undefined) next.pop_color = updates.pop_color
+      if (updates.page_vibe !== undefined) next.page_vibe = updates.page_vibe
       if (updates.brand_color !== undefined) next.brand_color = updates.brand_color ?? undefined
-      if (updates.logo_url !== undefined) next.logo_url = updates.logo_url ?? undefined
+      if (updates.logo_url !== undefined) next.logo_url = updates.logo_url
       if (updates.logo_use_background !== undefined) {
         next.logo_use_background = updates.logo_use_background ?? undefined
       }
@@ -744,6 +767,7 @@ export default function Home() {
     onCurrentStepChange: handleCurrentStepChange,
     onSubmitCard: handleSubmitCard,
     onLiveLogoChange: handleLiveLogoChange,
+    onVibePreview: handleVibePreview,
     profile: chatProfile,
     hasSavedArtistColors: Boolean(
       answeredKeys.has('colors_set') ||
@@ -768,6 +792,31 @@ export default function Home() {
   const currentPrimaryColor =
     chatProfile?.primary_color || chatProfile?.brand_color || '#0a0a0a'
   const currentPopColor = chatProfile?.pop_color ?? null
+  const nameEdge = useMemo(() => {
+    const tone = deriveVibeAppearance(
+      currentPrimaryColor,
+      chatProfile?.accent_color || chatProfile?.brand_color || undefined,
+      currentPopColor,
+    )
+    return tone.hasPop && tone.pop ? tone.pop : tone.highlight
+  }, [currentPrimaryColor, currentPopColor, chatProfile?.accent_color, chatProfile?.brand_color])
+  const nameEdgeShadow = useMemo(() => {
+    const raw = nameEdge.replace('#', '')
+    const red = parseInt(raw.slice(0, 2), 16)
+    const green = parseInt(raw.slice(2, 4), 16)
+    const blue = parseInt(raw.slice(4, 6), 16)
+    return `0 0 1px ${nameEdge}, 0 0 8px rgba(${red}, ${green}, ${blue}, 0.45)`
+  }, [nameEdge])
+  const draftLogo = user ? null : draft?.profilePreview
+  const anonymousPresetActive = Boolean(
+    !user &&
+    !liveLogoRemoved &&
+    !chatProfile?.logo_url &&
+    !draftLogo?.logo_url &&
+    !draftLogo?.logo_asset_id &&
+    !draftLogo?.logo_removed &&
+    !draftLogo?.logo_missing
+  )
 
   // Apply logo background when profile or preview changes (Zeyoda pattern)
   // Debounced to prevent glitching during typing
@@ -775,80 +824,28 @@ export default function Home() {
   const logoBgTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastLogoBgRef = useRef<string>('')
   useEffect(() => {
-    // Create a signature of the current background state to prevent unnecessary reapplications
+    // Restore the same resolved anonymous media used by the picker and carousel.
+    if (!user && (!hydrated || !chatProfile || !stageRevealed)) return
     const bgSignature = JSON.stringify({
-      logo_url: mergedProfile?.logo_url,
-      logo_use_background: mergedProfile?.logo_use_background,
-      preview_logo_url: previewOverrides?.logo_url,
-      preview_logo_use_bg: previewOverrides?.logo_use_background,
-      primary_color: mergedProfile?.primary_color, // Include primary color in signature
-      pop_color: mergedProfile?.pop_color,
-      user: !!user
+      logo_url: chatProfile?.logo_url,
+      logo_use_background: chatProfile?.logo_use_background,
+      primary_color: chatProfile?.primary_color,
+      brand_color: chatProfile?.brand_color,
+      accent_color: chatProfile?.accent_color,
+      pop_color: chatProfile?.pop_color,
+      user: !!user,
     })
-
-    // Only apply if signature changed (prevents reapplying same background)
-    if (bgSignature === lastLogoBgRef.current) {
-      return
-    }
-
-    // Debounce rapid changes (e.g., during typing)
+    if (bgSignature === lastLogoBgRef.current) return
     if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     logoBgTimeoutRef.current = setTimeout(() => {
-      // Authenticated: never force marketing logo. Zeyoda rule — saved config only.
-      // Anonymous landing preset is applied in the !user mount effect above.
-      if (user) {
-        if (previewOverrides?.primary_color && previewOverrides?.logo_url === null) {
-          const colorProfile = {
-            ...mergedProfile,
-            primary_color: previewOverrides.primary_color,
-            brand_color: previewOverrides.brand_color || previewOverrides.primary_color,
-            logo_url: null,
-            logo_use_background: false,
-          } as Profile
-          applyLogoBackground(colorProfile, null, false)
-          lastLogoBgRef.current = bgSignature
-          return
-        }
-
-        const previewUrl =
-          previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
-        const previewUseBg =
-          previewOverrides?.logo_use_background !== undefined
-            ? previewOverrides.logo_use_background
-            : undefined
-        applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
-        lastLogoBgRef.current = bgSignature
-        return
-      }
-
-      // Anonymous portal (has progress): honor draft/preview via merged path
-      if (previewOverrides?.primary_color && previewOverrides?.logo_url === null) {
-        const colorProfile = {
-          ...mergedProfile,
-          primary_color: previewOverrides.primary_color,
-          brand_color: previewOverrides.brand_color || previewOverrides.primary_color,
-          logo_url: null,
-          logo_use_background: false,
-        } as Profile
-        applyLogoBackground(colorProfile, null, false)
-        lastLogoBgRef.current = bgSignature
-        return
-      }
-
-      const previewUrl =
-        previewOverrides?.logo_url !== undefined ? previewOverrides.logo_url : undefined
-      const previewUseBg =
-        previewOverrides?.logo_use_background !== undefined
-          ? previewOverrides.logo_use_background
-          : undefined
-      applyLogoBackground(mergedProfile, previewUrl, previewUseBg)
+      applyLogoBackground(chatProfile)
+      if (anonymousPresetActive) retainAnonymousPresetImage()
       lastLogoBgRef.current = bgSignature
-    }, 200) // Debounce background updates
-
+    }, 200)
     return () => {
       if (logoBgTimeoutRef.current) clearTimeout(logoBgTimeoutRef.current)
     }
-  }, [mergedProfile, previewOverrides, user])
+  }, [chatProfile, user, hydrated, stageRevealed, anonymousPresetActive])
 
   // Do not unmount EmeraldChat on quiet profile refreshes once a profile exists.
   if (loading || migrating || (user && profileLoading && !profile)) {
@@ -899,7 +896,23 @@ export default function Home() {
         isAnonymousPoster ? '' : ' artis-page-shell--awake'
       }`}
     >
+      <LivingWorldBackdrop
+        awake={!isAnonymousPoster}
+        vibe={normalizePageVibe(chatProfile?.page_vibe)}
+        primary={currentPrimaryColor}
+        accent={chatProfile?.accent_color || undefined}
+        pop={currentPopColor}
+        hasImage={Boolean(
+          (chatProfile?.logo_use_background && chatProfile?.logo_url) || anonymousPresetActive
+        )}
+        viewedStepId={viewedStepId}
+      />
       <DataReset isAnonymous={!user} />
+      {!user && logoRestoreError && (
+        <p role="alert" className="w-full max-w-lg px-4 py-2 text-sm bg-zinc-900 text-amber-200 rounded-lg">
+          {logoRestoreError}
+        </p>
+      )}
       {user && sanctuarySaveError ? (
         <div
           role="alert"
@@ -946,7 +959,8 @@ export default function Home() {
                   pointerEvents: 'none',
                   maxWidth: '85%',
                   margin: '0 auto',
-                  lineHeight: '1.1'
+                  lineHeight: '1.1',
+                  textShadow: nameEdgeShadow,
                 }}
               >
                 {profile?.artist_name || "ArtisTalks"}
@@ -998,6 +1012,7 @@ export default function Home() {
                     }}
                     containerRef={featuredContentRef}
                     theme={{
+                      popColor: currentPopColor,
                       fontFamily: mergedProfile?.font_family || undefined,
                       bodyFontFamily: mergedProfile?.body_font_family || undefined,
                       primaryColor: mergedProfile?.primary_color || mergedProfile?.brand_color || undefined,
@@ -1037,6 +1052,7 @@ export default function Home() {
                     maxWidth: '85%',
                     margin: '0 auto',
                     lineHeight: '1.1',
+                    textShadow: nameEdgeShadow,
                   }}
                 >
                   {anonymousLiveName}
@@ -1090,6 +1106,7 @@ export default function Home() {
                     }}
                     containerRef={featuredContentRef}
                     theme={{
+                      popColor: currentPopColor,
                       fontFamily: chatProfile?.font_family || undefined,
                       bodyFontFamily: chatProfile?.body_font_family || undefined,
                       primaryColor: chatProfile?.primary_color || chatProfile?.brand_color || undefined,

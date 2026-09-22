@@ -31,6 +31,8 @@ interface InlineColorPickerProps {
   }) => void
   sessionPalette?: PaletteSessionState
   hasSavedArtistColors?: boolean
+  onGestureStart?: () => void
+  onGestureEnd?: () => void
   /** `colors` = palette only (V2 brand spine). `full` = legacy combined panel. */
   variant?: 'colors' | 'full'
 }
@@ -83,9 +85,31 @@ export default function InlineColorPicker({
   onPreviewChange,
   sessionPalette,
   hasSavedArtistColors = false,
+  onGestureStart,
+  onGestureEnd,
   variant = 'colors',
 }: InlineColorPickerProps) {
   const showExtras = variant === 'full'
+  const nativePickerRef = useRef<HTMLInputElement>(null)
+  const nativeGestureActive = useRef(false)
+  const gestureEndRef = useRef(onGestureEnd)
+  gestureEndRef.current = onGestureEnd
+  useEffect(() => {
+    // Native change is the picker commit; React onChange also receives live input.
+    const node = nativePickerRef.current
+    const finish = () => {
+      // Run after React publishes the final native change value.
+      queueMicrotask(() => {
+        nativeGestureActive.current = false
+        gestureEndRef.current?.()
+      })
+    }
+    node?.addEventListener('change', finish)
+    return () => {
+      node?.removeEventListener('change', finish)
+      finish()
+    }
+  }, [])
   const initialPaletteRef = useRef<PaletteSessionState | null>(null)
   if (!initialPaletteRef.current) {
     const logoSuggestion = getLogoPaletteSuggestion()
@@ -322,6 +346,14 @@ export default function InlineColorPicker({
     }
     if (profile?.logo_use_background !== undefined && profile.logo_use_background !== null) setLogoUseBackground(profile.logo_use_background)
   }, [profile?.primary_color, profile?.accent_color, profile?.pop_color, profile?.font_family, profile?.logo_url, profile?.logo_use_background])
+
+  // Undo restores the parent session without generating another palette edit.
+  useEffect(() => {
+    if (!sessionPalette) return
+    setPrimaryColor(sessionPalette.primary_color)
+    setAccentColor(sessionPalette.accent_color)
+    setPopColor(sessionPalette.pop_color)
+  }, [sessionPalette?.primary_color, sessionPalette?.accent_color, sessionPalette?.pop_color])
   
   const applyPrimaryPreset = (presetKey: string) => {
     const preset = COLOR_PRESETS[presetKey as keyof typeof COLOR_PRESETS]
@@ -344,6 +376,7 @@ export default function InlineColorPicker({
   }
 
   const flipMainAndSupport = () => {
+    onGestureEnd?.()
     const nextPrimary = accentColor
     const nextAccent = primaryColor
     setPrimaryColor(nextPrimary)
@@ -438,6 +471,7 @@ export default function InlineColorPicker({
 
   // EyeDropper handler (HTML5 API)
   const handleEyeDropper = async (role: PaletteRole) => {
+    onGestureEnd?.()
     const EyeDropperApi = (window as EyeDropperWindow).EyeDropper
     if (!EyeDropperApi) return
     
@@ -497,10 +531,11 @@ export default function InlineColorPicker({
                   tabIndex={0}
                   aria-label={`${item.ratio} percent ${item.label}`}
                   aria-pressed={selectedRole === item.role}
-                  onClick={() => setSelectedRole(item.role)}
+                  onClick={() => { onGestureEnd?.(); setSelectedRole(item.role) }}
                   onKeyDown={(event) => {
                     if (event.key !== 'Enter' && event.key !== ' ') return
                     event.preventDefault()
+                    onGestureEnd?.()
                     setSelectedRole(item.role)
                   }}
                 />
@@ -546,6 +581,7 @@ export default function InlineColorPicker({
               className="artis-palette-select"
               value={selectedNamedColor}
               onChange={(event) => {
+                onGestureEnd?.()
                 const choice = namedColorChoices.find(
                   (item) => item.value === event.target.value
                 )
@@ -571,9 +607,15 @@ export default function InlineColorPicker({
 
             <div className="artis-palette-manual">
               <input
+                ref={nativePickerRef}
                 type="color"
                 value={selectedColor || '#6b7280'}
-                onChange={(event) => applyRoleColor(selectedRole, event.target.value)}
+                onClick={() => { onGestureEnd?.(); nativeGestureActive.current = true; onGestureStart?.() }}
+                onBlur={() => { nativeGestureActive.current = false; onGestureEnd?.() }}
+                onChange={(event) => {
+                  if (!nativeGestureActive.current) { nativeGestureActive.current = true; onGestureStart?.() }
+                  applyRoleColor(selectedRole, event.target.value)
+                }}
                 className="artis-color-picker-native"
                 aria-label={`Custom ${selectedRole} color picker`}
               />
@@ -591,13 +633,14 @@ export default function InlineColorPicker({
               <input
                 type="text"
                 value={hexDraft}
+                onFocus={() => { onGestureEnd?.(); onGestureStart?.() }}
                 onChange={(event) => {
                   const next = event.target.value
                   setHexDraft(next)
                   const normalized = normalizeHexColor(next)
                   if (normalized) applyRoleColor(selectedRole, normalized)
                 }}
-                onBlur={() => setHexDraft(selectedColor || '')}
+                onBlur={() => { setHexDraft(selectedColor || ''); onGestureEnd?.() }}
                 className="artis-color-picker-hex"
                 placeholder={selectedRole === 'pop' && !popColor ? 'Optional Pop' : '#RRGGBB'}
                 spellCheck={false}

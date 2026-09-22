@@ -52,7 +52,7 @@ export default function DataReset({ isAnonymous = false }: DataResetProps) {
     try {
       if (isAnonymous) {
         // Local unsaved free taste only — nothing durable exists yet.
-        clearDraft()
+        await clearDraft()
         clearReturningClaimMarker()
         window.location.href = '/'
         return

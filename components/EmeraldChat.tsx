@@ -27,6 +27,7 @@ import {
   type LogoPaletteGuess,
 } from '@/utils/extractLogoPalette'
 import { previewArtistPalette } from '@/utils/previewArtistPalette'
+import { normalizePageVibe, VIBE_OPTIONS, type PageVibe } from '@/utils/vibeAppearance'
 import InlineFontPicker from '@/components/InlineFontPicker'
 import InlineSelectPicker from '@/components/InlineSelectPicker'
 import {
@@ -111,7 +112,18 @@ interface EmeraldChatProps {
   /** Durable saved colors (profile/draft/colors_set). Never infer from live preview. */
   hasSavedArtistColors?: boolean
   onLiveLogoChange?: (logoUrl: string | null, removed: boolean) => void
+  onVibePreview?: (vibe: PageVibe | null) => void
 }
+
+type VisualEditState = PaletteSessionState & { page_vibe: PageVibe | null }
+type VisualEditSession = {
+  opening: VisualEditState
+  current: VisualEditState
+  undo: VisualEditState[]
+}
+const sameVisualState = (a: VisualEditState, b: VisualEditState) =>
+  a.primary_color === b.primary_color && a.accent_color === b.accent_color &&
+  a.pop_color === b.pop_color && a.page_vibe === b.page_vibe
 
 const INIT_WELCOME_HEADLINE = 'Welcome, my champion...'
 
@@ -140,6 +152,7 @@ export default function EmeraldChat({
   isDocked = false,
   hasSavedArtistColors = false,
   onLiveLogoChange,
+  onVibePreview,
 }: EmeraldChatProps) {
   const [currentStepId, setCurrentStepId] = useState<StepId>('INIT')
   const [previousStepId, setPreviousStepId] = useState<StepId | null>(null)
@@ -157,6 +170,88 @@ export default function EmeraldChat({
     logo?: { logo_url?: string | null; logo_use_background?: boolean | null }
     font?: { font_family?: string | null; body_font_family?: string | null }
   }>({})
+  const [colorsClosed, setColorsClosed] = useState(false)
+  const [visualSession, setVisualSession] = useState<VisualEditSession | null>(null)
+  const visualSessionRef = useRef<VisualEditSession | null>(null)
+  const visualGestureRef = useRef<{ recorded: boolean } | null>(null)
+  const visualOwnerRef = useRef(profile?.id ?? (isAnonymous ? 'anonymous' : null))
+  useEffect(() => {
+    const owner = profile?.id ?? (isAnonymous ? 'anonymous' : null)
+    if (visualOwnerRef.current === owner) return
+    visualOwnerRef.current = owner
+    visualSessionRef.current = null
+    visualGestureRef.current = null
+    setVisualSession(null)
+    setColorsClosed(false)
+    setCurrentPickerState((previous) => ({ ...previous, colors: undefined }))
+  }, [profile?.id, isAnonymous])
+
+  const setVisualWorking = useCallback((next: VisualEditState) => {
+    const session = visualSessionRef.current
+    if (session && sameVisualState(session.current, next)) return
+    const shouldRecord = session && !visualGestureRef.current?.recorded
+    const updated: VisualEditSession = session
+      ? { ...session, current: next, undo: shouldRecord ? [...session.undo, session.current] : session.undo }
+      : { opening: next, current: next, undo: [] }
+    if (shouldRecord && visualGestureRef.current) visualGestureRef.current.recorded = true
+    visualSessionRef.current = updated
+    setVisualSession(updated)
+    setCurrentPickerState((prev) => ({ ...prev, colors: next }))
+  }, [])
+  const beginVisualGesture = useCallback(() => {
+    visualGestureRef.current = { recorded: false }
+  }, [])
+  const endVisualGesture = useCallback(() => {
+    const session = visualSessionRef.current
+    const previous = session?.undo.at(-1)
+    if (visualGestureRef.current?.recorded && session && previous && sameVisualState(previous, session.current)) {
+      const updated = { ...session, undo: session.undo.slice(0, -1) }
+      visualSessionRef.current = updated
+      setVisualSession(updated)
+    }
+    visualGestureRef.current = null
+  }, [])
+  const handlePaletteChange = useCallback((updates: Partial<Profile>) => {
+    setVisualWorking({
+      ...(updates as PaletteSessionState),
+      page_vibe: visualSessionRef.current ? visualSessionRef.current.current.page_vibe : profile?.page_vibe ?? null,
+    })
+  }, [profile?.page_vibe, setVisualWorking])
+
+  const previewVisualState = (state: VisualEditState) => {
+    previewArtistPalette({
+      primary: state.primary_color, accent: state.accent_color, pop: state.pop_color,
+      logoUrl: profile?.logo_url, logoUseBackground: profile?.logo_use_background ?? undefined,
+      fontFamily: profile?.font_family, bodyFontFamily: profile?.body_font_family,
+    })
+    onVibePreview?.(state.page_vibe)
+    setCurrentPickerState((prev) => ({ ...prev, colors: state }))
+  }
+  const undoVisualAction = () => {
+    endVisualGesture()
+    const session = visualSessionRef.current
+    const previous = session?.undo.at(-1)
+    if (!session || !previous) return
+    const updated = { ...session, current: previous, undo: session.undo.slice(0, -1) }
+    visualSessionRef.current = updated
+    setVisualSession(updated)
+    previewVisualState(previous)
+  }
+  const closeVisualSession = () => {
+    endVisualGesture()
+    visualSessionRef.current = null
+    setVisualSession(null)
+    setCurrentPickerState((prev) => ({ ...prev, colors: undefined }))
+    setColorsClosed(true)
+    setIsSurfaceExpanded(false)
+  }
+  const undoAllVisualChanges = () => {
+    if (isSubmitting) return
+    const opening = visualSessionRef.current?.opening
+    if (opening) previewVisualState(opening)
+    setSaveError('')
+    closeVisualSession()
+  }
   const [logoDescription, setLogoDescription] = useState('')
   const [logoUploading, setLogoUploading] = useState(false)
   const paletteSuggestionOwnerRef = useRef<string | null>(null)
@@ -353,6 +448,7 @@ export default function EmeraldChat({
     if (isBrandPanelStep(finalStep)) {
       keepPickerOpenRef.current = true
       setPickerOpenedExplicitly(true)
+      if (isColorsPanelStep(finalStep)) setColorsClosed(false)
       setLogoDescription('')
       setSaveError('')
     }
@@ -373,6 +469,7 @@ export default function EmeraldChat({
       cancelPendingStepAdvance()
       keepPickerOpenRef.current = true
       setPickerOpenedExplicitly(true)
+      if (isColorsPanelStep(getStep(stepId))) setColorsClosed(false)
       setInput('')
       setSaveError('')
     },
@@ -546,7 +643,7 @@ export default function EmeraldChat({
   const isColorsStep = isColorsPanelStep(getStep(currentStepId))
   const isFontStep = isFontPanelStep(getStep(currentStepId))
   const isSelectInputStep = isSelectStep(getStep(currentStepId))
-  const showBrandPicker = isBrandStep
+  const showBrandPicker = isBrandStep && !(isColorsStep && colorsClosed)
   const showBrandSummary = false
   const requiresExpandedSurface =
     !isDocked ||
@@ -569,7 +666,7 @@ export default function EmeraldChat({
   const showCompactQuestionCue =
     isDocked &&
     !emeraldExpanded &&
-    isEligibleCompactRestStep(currentStepId) &&
+    (isEligibleCompactRestStep(currentStepId) || (isColorsStep && colorsClosed)) &&
     !!currentQuestionText
   const isSpecialLongContentSurface =
     showClaimedGate ||
@@ -770,9 +867,9 @@ export default function EmeraldChat({
 
   function applyLiveLogoState(
     next: { logo_url?: string | null; logo_use_background?: boolean | null },
-    options?: { recordUndo?: boolean }
+    options?: { recordUndo?: boolean; before?: { logo_url: string | null; logo_use_background: boolean | null } }
   ) {
-    const before = liveLogoSnapshotRef.current
+    const before = options?.before ?? liveLogoSnapshotRef.current
     const after = {
       logo_url: next.logo_url !== undefined ? next.logo_url : before.logo_url,
       logo_use_background:
@@ -1374,6 +1471,11 @@ export default function EmeraldChat({
       currentPickerState.logo?.logo_url !== undefined
         ? currentPickerState.logo.logo_url
         : profile?.logo_url
+    if (mode === 'save' && isAnonymous && logoUploading) {
+      setSaveError('Your image is still being saved in this browser. Try Save in a moment.')
+      setIsSubmitting(false)
+      return
+    }
     if (
       mode === 'save' &&
       !isAnonymous &&
@@ -1442,6 +1544,18 @@ export default function EmeraldChat({
   ) {
     stashLogoPaletteSuggestion(guess)
     if (hasSavedArtistColors) return
+    // An open visual session may survive browsing back to Logo. Keep its working
+    // palette aligned with the existing suggestion preview without resetting Undo.
+    if (visualSessionRef.current) {
+      endVisualGesture()
+      setVisualWorking({
+        primary_color: guess.primary,
+        accent_color: guess.accent,
+        pop_color: guess.pop,
+        brand_color: guess.primary,
+        page_vibe: visualSessionRef.current.current.page_vibe,
+      })
+    }
     setCurrentPickerState((previous) => ({
       ...previous,
       colors: {
@@ -1471,7 +1585,8 @@ export default function EmeraldChat({
     setIsSubmitting(true)
     setSaveError('')
 
-    const sessionColors = currentPickerState.colors
+    endVisualGesture()
+    const sessionColors = visualSessionRef.current?.current || currentPickerState.colors
     const primaryColor =
       sessionColors?.primary_color || profile?.primary_color || profile?.brand_color
     const accentColor = sessionColors?.accent_color || profile?.accent_color
@@ -1501,6 +1616,7 @@ export default function EmeraldChat({
       accent_color: accentColor,
       pop_color: popColor,
       brand_color: primaryColor,
+      page_vibe: visualSessionRef.current ? visualSessionRef.current.current.page_vibe : profile?.page_vibe ?? null,
     }
 
     if (!isAnonymous) {
@@ -1524,23 +1640,29 @@ export default function EmeraldChat({
       }
     }
 
-    const ok = await persistPanelAnswer('colors_set', answerData)
-    if (!ok) {
+    try {
+      const ok = await persistPanelAnswer('colors_set', answerData)
+      if (!ok) throw new Error('Colors step save incomplete')
+      if (isAnonymous) {
+        setDraftProfilePreview({
+          primary_color: primaryColor,
+          accent_color: accentColor,
+          pop_color: popColor,
+          brand_color: primaryColor,
+          page_vibe: displayedColors.page_vibe,
+        })
+        onDraftRefresh?.()
+      }
+    } catch {
+      setSaveError(isAnonymous
+        ? 'Colors and Vibe could not finish saving in this browser. Try again.'
+        : 'Your profile appearance was saved, but this step could not finish saving. Try Save & Close again.')
       setIsSubmitting(false)
       return
     }
 
-    if (isAnonymous) {
-      setDraftProfilePreview({
-        primary_color: primaryColor,
-        accent_color: accentColor,
-        pop_color: popColor,
-        brand_color: primaryColor,
-      })
-      onDraftRefresh?.()
-    }
-
     finishPanelStep('colors_set', stepIdAtStart, isFirstCompletion)
+    closeVisualSession()
     setIsSubmitting(false)
   }
 
@@ -2648,6 +2770,7 @@ export default function EmeraldChat({
                   inputRef.current?.blur()
                 }
               } else {
+                if (isColorsStep && colorsClosed) enterBrandPanel(currentStepId)
                 setIsSurfaceExpanded(true)
               }
             }}
@@ -2838,14 +2961,15 @@ export default function EmeraldChat({
                     sessionPreviewUrl={liveLogoUrl}
                     onUploadingChange={setLogoUploading}
                     onLogoChange={async (updates) => {
+                      const before = liveLogoSnapshotRef.current
+                      if (onProfileUpdate) await onProfileUpdate(updates)
                       applyLiveLogoState(
                         {
                           logo_url: updates.logo_url,
                           logo_use_background: updates.logo_use_background,
                         },
-                        { recordUndo: true }
+                        { recordUndo: true, before }
                       )
-                      if (onProfileUpdate) await onProfileUpdate(updates)
                     }}
                     onPreviewChange={(previewUrl, useBackground) => {
                       applyLiveLogoState(
@@ -2887,7 +3011,7 @@ export default function EmeraldChat({
                     }}
                   >
                     {logoUploading
-                      ? 'Uploading...'
+                      ? isAnonymous ? 'Saving image...' : 'Uploading...'
                       : isSubmitting
                         ? 'Saving...'
                         : 'Save logo'}
@@ -2903,29 +3027,48 @@ export default function EmeraldChat({
                 </div>
               </div>
             ) : showBrandPicker && isColorsStep ? (
-              <div className="artis-emerald-brand-shell">
+              <div className="artis-emerald-brand-shell artis-emerald-colors-shell">
                 <h2 className="artis-emerald-question gold-etched" style={{ marginTop: '0' }}>
                   {currentQuestionText}
                 </h2>
-                <div className="artis-emerald-editor">
+                <fieldset className="artis-emerald-editor artis-emerald-colors-editor" disabled={isSubmitting}>
                   <InlineColorPicker
                     variant="colors"
                     profile={profile || null}
-                    sessionPalette={currentPickerState.colors}
+                    sessionPalette={visualSession?.current || currentPickerState.colors}
                     hasSavedArtistColors={hasSavedArtistColors}
-                    onColorChange={(updates) => {
-                      const colors = updates as PaletteSessionState
-                      setCurrentPickerState((prev) => ({
-                        ...prev,
-                        colors,
-                      }))
-                    }}
+                    onColorChange={handlePaletteChange}
+                    onGestureStart={beginVisualGesture}
+                    onGestureEnd={endVisualGesture}
                   />
+                  <div className="artis-vibe-controls">
+                    <label htmlFor="artis-page-vibe">Vibe</label>
+                    <select
+                      id="artis-page-vibe"
+                      value={normalizePageVibe(visualSession ? visualSession.current.page_vibe : profile?.page_vibe)}
+                      onChange={(event) => {
+                        endVisualGesture()
+                        const session = visualSessionRef.current
+                        if (!session) return
+                        const vibe = normalizePageVibe(event.target.value)
+                        setVisualWorking({ ...session.current, page_vibe: vibe })
+                        onVibePreview?.(vibe)
+                      }}
+                    >
+                      {VIBE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <button type="button" onClick={undoVisualAction} disabled={!visualSession?.undo.length}>
+                      <Undo2 size={14} aria-hidden="true" /> Undo
+                    </button>
+                  </div>
                   {saveError && (
                     <p className="text-red-400 text-sm text-center mt-2">{saveError}</p>
                   )}
-                </div>
-                <div className="artis-emerald-actions artis-emerald-brand-actions">
+                </fieldset>
+                <div className="artis-emerald-actions artis-emerald-brand-actions artis-visual-session-actions">
+                  <button type="button" className="artis-emerald-brand-skip" onClick={undoAllVisualChanges} disabled={isSubmitting}>
+                    Undo All &amp; Close
+                  </button>
                   <button
                     type="button"
                     className="artis-emerald-brand-save"
@@ -2941,7 +3084,7 @@ export default function EmeraldChat({
                       boxShadow: '0 0 5px rgba(255, 215, 0, 0.8)',
                     }}
                   >
-                    {isSubmitting ? 'Saving...' : 'Save colors'}
+                    {isSubmitting ? 'Saving...' : 'Save & Close'}
                   </button>
                 </div>
               </div>

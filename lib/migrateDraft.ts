@@ -9,6 +9,16 @@ import {
   type DraftProfilePreview,
 } from '@/lib/draft'
 import { assembleLivingAffirmation } from '@/lib/livingAffirmation'
+import { normalizePageVibe } from '@/utils/vibeAppearance'
+import {
+  getDraftLogoGeneration,
+  readDraftLogoAsset,
+  readDraftLogoUpload,
+  readSessionLogoFile,
+  readSessionLogoUpload,
+  rememberSessionLogoUpload,
+  saveDraftLogoUpload,
+} from '@/lib/draftLogoAsset'
 
 export interface MigrateDraftResult {
   skipped: boolean
@@ -26,9 +36,11 @@ function hasDraftContent(draft: AnonymousDraft): boolean {
       p.primary_color ||
       p.accent_color ||
       p.pop_color ||
+      p.page_vibe ||
       p.brand_color ||
       p.font_family ||
-      p.logo_url
+      p.logo_url ||
+      p.logo_asset_id
   )
 }
 
@@ -79,6 +91,15 @@ function buildProfileFill(
   if (isBlank(existing?.pop_color) && preview.pop_color) {
     fill.pop_color = preview.pop_color
   }
+  // A missing value renders as Glow but must not become a migration write.
+  // Validate browser draft data before filling an unset account preference.
+  if (
+    isBlank(existing?.page_vibe) &&
+    typeof preview.page_vibe === 'string' &&
+    normalizePageVibe(preview.page_vibe) === preview.page_vibe
+  ) {
+    fill.page_vibe = preview.page_vibe
+  }
   if (isBlank(existing?.brand_color) && preview.brand_color) {
     fill.brand_color = preview.brand_color
   }
@@ -122,24 +143,45 @@ function buildProfileFill(
   return fill
 }
 
+function isDurableLogoUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  return /^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value)
+}
+
+/** Runtime object URLs are not part of the persisted identity of this draft. */
+function draftSignature(draft: AnonymousDraft): string {
+  return JSON.stringify(draft, (_key, value: unknown) =>
+    typeof value === 'string' && value.startsWith('blob:') ? null : value
+  )
+}
+
+async function answerExists(
+  supabase: SupabaseClient,
+  userId: string,
+  questionKey: string
+): Promise<boolean> {
+  const { data: existing, error } = await supabase
+    .from('curriculum_answers')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('question_key', questionKey)
+    .is('project_id', null)
+    .maybeSingle()
+
+  if (error) throw formatSupabaseError('Failed checking answer', questionKey, error)
+  return Boolean(existing)
+}
+
 async function insertAnswerIfMissing(
   supabase: SupabaseClient,
   userId: string,
   question_key: string,
-  answer_data: Record<string, unknown>
+  answer_data: Record<string, unknown>,
+  assertCurrentDraft: () => void
 ): Promise<boolean> {
-  const { data: existing, error: checkError } = await supabase
-    .from('curriculum_answers')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('question_key', question_key)
-    .is('project_id', null)
-    .maybeSingle()
-
-  if (checkError) {
-    throw formatSupabaseError('Failed checking answer', question_key, checkError)
-  }
-
+  // Recheck after upload/profile work so an existing account answer still wins.
+  const existing = await answerExists(supabase, userId, question_key)
+  assertCurrentDraft()
   if (existing) return false
 
   const { error: insertError } = await supabase.from('curriculum_answers').insert({
@@ -152,7 +194,7 @@ async function insertAnswerIfMissing(
   if (insertError) {
     throw formatSupabaseError('Failed inserting answer', question_key, insertError)
   }
-
+  assertCurrentDraft()
   return true
 }
 
@@ -167,6 +209,26 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
   const draft = loadDraft()
   if (!draft || !hasDraftContent(draft)) {
     return { skipped: true, migratedAnswerKeys: [], profileFieldsWritten: [] }
+  }
+
+  // Refuse a profile-only save before uploading bytes or writing account data.
+  if (draft.answers.length === 0) {
+    throw new Error(
+      'Cannot finish sanctuary save: draft has no curriculum answers to store. Your work is still in this browser.'
+    )
+  }
+
+  const generation = getDraftLogoGeneration()
+  const sourceSignature = draftSignature(draft)
+  const assertCurrentDraft = () => {
+    const latest = loadDraft()
+    if (
+      getDraftLogoGeneration() !== generation ||
+      !latest ||
+      draftSignature(latest) !== sourceSignature
+    ) {
+      throw new Error('Your draft changed while saving. Your current work remains in this browser. Try saving again.')
+    }
   }
 
   const supabase = createClient()
@@ -189,9 +251,129 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
     throw formatSupabaseError('Failed loading profile', null, profileError)
   }
 
+  assertCurrentDraft()
+
+  // Know which references need migration before uploading anything. Existing
+  // account profile fields and answer rows retain their current values.
+  const existingAnswerKeys = new Set<string>()
+  for (const answer of draft.answers) {
+    if (!answer?.question_key) {
+      throw new Error('Cannot finish sanctuary save: draft contains an answer without a question key.')
+    }
+    if (await answerExists(supabase, userId, answer.question_key)) {
+      existingAnswerKeys.add(answer.question_key)
+    }
+    assertCurrentDraft()
+  }
+
+  const resolvedUploads = new Map<string, string>()
+  const resolveLogo = async (url: unknown, assetId: unknown): Promise<string | undefined> => {
+    if (typeof assetId === 'string' && assetId) {
+      const alreadyResolved = resolvedUploads.get(assetId)
+      if (alreadyResolved) return alreadyResolved
+
+      const sessionFile = readSessionLogoFile(assetId)
+      let uploadedUrl: string | null = null
+      try {
+        uploadedUrl = await readDraftLogoUpload(assetId, userId)
+      } catch (error) {
+        uploadedUrl = readSessionLogoUpload(assetId, userId)
+        if (!uploadedUrl && !sessionFile) throw error
+      }
+      assertCurrentDraft()
+      if (isDurableLogoUrl(uploadedUrl)) {
+        resolvedUploads.set(assetId, uploadedUrl)
+        return uploadedUrl
+      }
+
+      let blob: Blob | null = null
+      let name = 'logo'
+      let fromSession = false
+      try {
+        const asset = await readDraftLogoAsset(assetId)
+        assertCurrentDraft()
+        if (asset) {
+          blob = asset.blob
+          name = asset.name
+        }
+      } catch (error) {
+        assertCurrentDraft()
+        if (!sessionFile) throw error
+      }
+      if (!blob && sessionFile) {
+        blob = sessionFile
+        name = sessionFile.name || 'logo'
+        fromSession = true
+      }
+      if (!blob) {
+        throw new Error('Your saved logo file is not available in this browser. Choose it again before saving your sanctuary.')
+      }
+      const formData = new FormData()
+      formData.append('file', blob, name)
+      formData.append('userId', userId)
+      const response = await fetch('/api/uploadLogo', { method: 'POST', body: formData })
+      const result = await response.json() as { success?: boolean; logoUrl?: unknown }
+      assertCurrentDraft()
+      if (!response.ok || !result.success || !isDurableLogoUrl(result.logoUrl)) {
+        throw new Error('Your logo could not be uploaded. Your work remains in this browser. Try saving again.')
+      }
+
+      // Keep original bytes and an account-scoped receipt until the entire
+      // migration succeeds. A retry, including after reload, reuses this URL.
+      // A same-tab session File uses that same upload, then drops its bytes.
+      try {
+        await saveDraftLogoUpload(assetId, userId, result.logoUrl)
+      } catch (error) {
+        if (!fromSession) throw error
+        rememberSessionLogoUpload(assetId, userId, result.logoUrl)
+      }
+      if (fromSession) rememberSessionLogoUpload(assetId, userId, result.logoUrl)
+      assertCurrentDraft()
+      resolvedUploads.set(assetId, result.logoUrl)
+      return result.logoUrl
+    }
+    if (url == null || url === '') return undefined
+    if (isDurableLogoUrl(url)) return url
+    throw new Error('Your logo needs to be selected again before saving your sanctuary. Your other work remains in this browser.')
+  }
+
+  const profilePreview: DraftProfilePreview = { ...draft.profilePreview }
+  // Resolve profile and answer references independently: a later unsaved Logo
+  // choice may differ from the Logo answer already completed in the draft.
+  if (isBlank(existingProfile?.logo_url) && !profilePreview.logo_removed) {
+    if (profilePreview.logo_missing) throw new Error('Select your logo again before saving your sanctuary. Your other work remains in this browser.')
+    profilePreview.logo_url = await resolveLogo(
+      profilePreview.logo_url,
+      profilePreview.logo_asset_id
+    )
+  } else {
+    delete profilePreview.logo_url
+  }
+
+  const preparedAnswers = new Map<string, Record<string, unknown>>()
+  for (const answer of draft.answers) {
+    if (existingAnswerKeys.has(answer.question_key)) continue
+    const data = { ...answer.answer_data }
+    if (answer.question_key === 'logo_uploaded') {
+      const assetId = data.asset_id
+      delete data.asset_id
+      if (data.asset_missing && data.skipped !== true && !draft.profilePreview.logo_removed) throw new Error('Select your logo again and Save Logo before saving your sanctuary.')
+      delete data.asset_missing
+      if (data.skipped === true || draft.profilePreview.logo_removed) {
+        delete data.url
+      } else {
+        const durableUrl = await resolveLogo(data.url, assetId)
+        if (durableUrl) data.url = durableUrl
+        else delete data.url
+      }
+    }
+    preparedAnswers.set(answer.question_key, data)
+  }
+  assertCurrentDraft()
+
   const profileFill = buildProfileFill(
     existingProfile as Profile | null,
-    draft.profilePreview,
+    profilePreview,
     user.email ?? null
   )
 
@@ -211,7 +393,9 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
       pop_color: existingProfile?.pop_color ?? null,
       brand_color: existingProfile?.brand_color ?? null,
       font_family: existingProfile?.font_family ?? null,
-      logo_url: existingProfile?.logo_url ?? null,
+      ...(isDurableLogoUrl(existingProfile?.logo_url)
+        ? { logo_url: existingProfile.logo_url }
+        : {}),
       logo_use_background: existingProfile?.logo_use_background ?? null,
       ...fieldsToWrite,
     }
@@ -221,6 +405,7 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
       throw formatSupabaseError('Failed upserting profile', null, upsertError)
     }
 
+    assertCurrentDraft()
     profileFieldsWritten.push(...Object.keys(fieldsToWrite))
   } else if (!existingProfile) {
     const { error: insertError } = await supabase.from('profiles').upsert({
@@ -232,28 +417,24 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
     if (insertError) {
       throw formatSupabaseError('Failed creating profile row', null, insertError)
     }
-  }
-
-  // Never treat profile-only content as a completed sanctuary save.
-  // Clearing the draft with zero source answers was the silent-loss path.
-  if (draft.answers.length === 0) {
-    throw new Error(
-      'Cannot finish sanctuary save: draft has no curriculum answers to store. Your work is still in this browser.'
-    )
+    assertCurrentDraft()
   }
 
   const migratedAnswerKeys: string[] = []
   const confirmedAnswerKeys: string[] = []
 
   for (const answer of draft.answers) {
-    if (!answer?.question_key) {
-      throw new Error('Cannot finish sanctuary save: draft contains an answer without a question key.')
+    assertCurrentDraft()
+    if (existingAnswerKeys.has(answer.question_key)) {
+      confirmedAnswerKeys.push(answer.question_key)
+      continue
     }
     const inserted = await insertAnswerIfMissing(
       supabase,
       userId,
       answer.question_key,
-      answer.answer_data ?? {}
+      preparedAnswers.get(answer.question_key) ?? {},
+      assertCurrentDraft
     )
     if (inserted) migratedAnswerKeys.push(answer.question_key)
     confirmedAnswerKeys.push(answer.question_key)
@@ -269,7 +450,8 @@ export async function migrateAnonymousDraft(userId: string): Promise<MigrateDraf
   }
 
   // Clear local draft only after profile writes and every draft answer is confirmed.
-  clearDraft()
+  assertCurrentDraft()
+  await clearDraft()
 
   return {
     skipped: false,

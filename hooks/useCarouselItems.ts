@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { CURRICULUM, getCurriculumSpineOrder, getStep, StepId } from '@/lib/curriculum'
 import { loadDraft } from '@/lib/draft'
+import { isManagedDraftLogoUrl } from '@/lib/draftLogoAsset'
 
 export interface CarouselItem {
   id: string
@@ -191,6 +192,10 @@ export function useCarouselItems(
         answerData?.imageUrl || answerData?.image_url || answerData?.url || undefined
 
       if (answer.question_key === 'logo_uploaded') {
+        // Historical object URLs have no image after a reload. Current live media wins below.
+        if (typeof imageUrl === 'string' && imageUrl.startsWith('blob:') && !isManagedDraftLogoUrl(imageUrl)) {
+          imageUrl = undefined
+        }
         const liveUrl = liveMediaRef.current?.logoUrl
         const liveRemoved = liveMediaRef.current?.logoRemoved === true
         if (liveUrl) {
